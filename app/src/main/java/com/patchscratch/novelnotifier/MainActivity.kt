@@ -13,29 +13,42 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -43,6 +56,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.edit
 import com.patchscratch.novelnotifier.ui.theme.NovelNotifierTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
@@ -51,6 +65,10 @@ import java.net.URL
 data class Novel(
     val title: String,
     val latestChapter: String
+)
+
+data class ReadingList(
+    val name: String
 )
 
 class MainActivity : ComponentActivity() {
@@ -220,6 +238,16 @@ fun parseRssTitles(xml: String): List<String> {
     return titles
 }
 
+fun unwrapJsResult(result: String?): String {
+    if (result.isNullOrBlank() || result == "null") return ""
+    return result
+        .removeSurrounding("\"")
+        .replace("\\\"", "\"")
+        .replace("\\n", "\n")
+        .replace("\\\\", "\\")
+}
+
+@SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NovelListScreen(
@@ -233,44 +261,95 @@ fun NovelListScreen(
     onNovelClick: (Novel) -> Unit,
     onOpenSettings: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "My Reading List",
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onClick = onOpenSettings) { Text("Settings") }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    var lists by remember { mutableStateOf(emptyList<ReadingList>()) }
+    var selectedList by remember { mutableStateOf("My Reading List") }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Text(
+                    text = "Reading List",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(16.dp)
+                )
+                HorizontalDivider()
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(lists.size) { index ->
+                        val list = lists[index]
+                        NavigationDrawerItem(
+                            label = { Text(list.name) },
+                            selected = selectedList == list.name,
+                            onClick = {
+                                selectedList = list.name
+                                scope.launch { drawerState.close() }
+                            }
+                        )
+                    }
+                }
+                HorizontalDivider()
+                NavigationDrawerItem(
+                    label = { Text("Settings") },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenSettings()
+                    }
+                )
+            }
         }
-        Text(
-            text = "$statusMessage\nCheck interval: every $checkHours hours\n$loginState",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
-        PullToRefreshBox(
-            isRefreshing = isRefreshing,
-            onRefresh = onRefresh,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(novels.size) { index ->
-                    val novel = novels[index]
-                    val isRead = novel.title in readTitles
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp)
-                            .clickable { onNovelClick(novel) }
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(text = novel.title, style = MaterialTheme.typography.titleMedium)
-                            Text(text = novel.latestChapter, style = MaterialTheme.typography.bodyMedium)
-                            if (isRead) {
-                                Text(
-                                    text = "Read",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.padding(top = 4.dp)
-                                )
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(selectedList) },
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Text("☰", style = MaterialTheme.typography.headlineSmall)
+                        }
+                    }
+                )
+            }
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(horizontal = 16.dp)
+            ) {
+                Text(
+                    text = "$statusMessage\nCheck interval: every $checkHours hours\n$loginState",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        items(novels.size) { index ->
+                            val novel = novels[index]
+                            val isRead = novel.title in readTitles
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                                    .clickable { onNovelClick(novel) }
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(text = novel.title, style = MaterialTheme.typography.titleMedium)
+                                    Text(text = novel.latestChapter, style = MaterialTheme.typography.bodyMedium)
+                                    if (isRead) {
+                                        Text(
+                                            text = "Read",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -278,6 +357,59 @@ fun NovelListScreen(
             }
         }
     }
+
+    AndroidView(
+        modifier = Modifier
+            .size(1.dp)
+            .alpha(0f)
+            .offset(x = 4000.dp),
+        factory = { context ->
+            WebView(context).apply {
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                CookieManager.getInstance().setAcceptCookie(true)
+                CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        val script = """
+                            (function() {
+                              var names = [];
+                              var moveSelect = null;
+                              document.querySelectorAll('select').forEach(function(sel) {
+                                var texts = [];
+                                for (var i = 0; i < sel.options.length; i++) {
+                                  texts.push((sel.options[i].textContent || '').trim());
+                                }
+                                if (texts.indexOf('---') !== -1) {
+                                  moveSelect = sel;
+                                }
+                              });
+                              if (moveSelect) {
+                                for (var j = 0; j < moveSelect.options.length; j++) {
+                                  var t = (moveSelect.options[j].textContent || '').trim();
+                                  if (t && t !== '---') names.push(t);
+                                }
+                              }
+                              return names.join('|||');
+                            })();
+                        """.trimIndent()
+                        view?.evaluateJavascript(script) { result ->
+                            val raw = unwrapJsResult(result)
+                            val parsed = raw.split("|||")
+                                .map { it.trim() }
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                            if (parsed.isNotEmpty()) {
+                                lists = parsed.map { ReadingList(it) }
+                            }
+                        }
+                    }
+                }
+                loadUrl("https://www.novelupdates.com/reading-list/")
+            }
+        }
+    )
 }
 
 @Composable
@@ -287,7 +419,11 @@ fun NovelDetailScreen(
     onMarkRead: () -> Unit,
     onBackClick: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
         Text(
             text = novel.title,
             style = MaterialTheme.typography.headlineSmall,
@@ -348,13 +484,17 @@ fun SettingsScreen(
             value = url,
             onValueChange = { url = it },
             label = { Text("Novel Updates RSS URL") },
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp, bottom = 16.dp)
         )
         Text(text = "Check for updates every", style = MaterialTheme.typography.titleMedium)
         options.forEach { option ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().clickable { hours = option }
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { hours = option }
             ) {
                 RadioButton(selected = hours == option, onClick = { hours = option })
                 Text("$option hour" + if (option == 1) "" else "s")
@@ -362,7 +502,9 @@ fun SettingsScreen(
         }
         Button(
             onClick = { onSave(url, hours) },
-            modifier = Modifier.padding(top = 16.dp).fillMaxWidth()
+            modifier = Modifier
+                .padding(top = 16.dp)
+                .fillMaxWidth()
         ) { Text("Save") }
         TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
     }
@@ -376,10 +518,16 @@ fun LoginWebScreen(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = "Log in", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(
+                text = "Log in",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f)
+            )
             TextButton(onClick = onCancel) { Text("Cancel") }
         }
         AndroidView(
