@@ -1119,7 +1119,7 @@ fun NovelDetailScreen(
                             changeLists.forEach { list ->
                                 TextButton(
                                     onClick = {
-                                        pendingMoveId = list.id
+                                        pendingMoveId = list.id + ":::" + list.name
                                         listStatus = "Moving to ${list.name}..."
                                         showChangeList = false
                                     },
@@ -1455,25 +1455,43 @@ fun NovelDetailScreen(
                     pendingMoveId = null
                     val moveScript = """
                         (function() {
-                          var want = ${JSONObject.quote(moveId)};
-                          var post = (document.querySelector('#mypostid') || {}).value || '';
-                          if (typeof addtolist === 'function') { addtolist(want); return 'ok'; }
-                          if (!post) return 'no-id';
-                          try {
-                            var xhr = new XMLHttpRequest();
-                            xhr.open('GET', '/readinglist_update.php?sid=' + encodeURIComponent(post) + '&lid=' + encodeURIComponent(want) + '&checked=yes', false);
-                            xhr.send(null);
-                            return (xhr.status >= 200 && xhr.status < 400) ? 'ok' : 'fail';
-                          } catch (e) {
-                            return 'fail';
+                          var raw = ${JSONObject.quote(moveId)};
+                          var parts = raw.split(':::');
+                          var wantId = parts[0] || '';
+                          var wantName = (parts[1] || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                          var sel = document.querySelector('select#taskOption, select[name="taskOption"], select.taskOption');
+                          if (!sel) {
+                            document.querySelectorAll('select').forEach(function(s) {
+                              var blob = '';
+                              for (var i = 0; i < s.options.length; i++) blob += (s.options[i].textContent || '');
+                              if (/ongoing|ecchi|completed/i.test(blob)) sel = s;
+                            });
                           }
+                          if (!sel) return 'no-taskOption';
+                          var picked = '';
+                          for (var i = 0; i < sel.options.length; i++) {
+                            var t = (sel.options[i].textContent || '').replace(/\s+/g, ' ').trim();
+                            var v = (sel.options[i].value || '').trim();
+                            if (v === wantId || t.toLowerCase() === wantName) {
+                              sel.selectedIndex = i;
+                              sel.value = v;
+                              picked = v + '/' + t;
+                              break;
+                            }
+                          }
+                          if (!picked) return 'no-match options=' + sel.options.length;
+                          if (sel.onchange) sel.onchange();
+                          sel.dispatchEvent(new Event('change', { bubbles: true }));
+                          sel.dispatchEvent(new Event('input', { bubbles: true }));
+                          return 'picked=' + picked + ' value=' + sel.value;
                         })();
                     """.trimIndent()
                     webView.evaluateJavascript(moveScript) { jsResult ->
-                        listStatus = if (unwrapJsResult(jsResult) == "ok") {
-                            "List updated on Novel Updates"
+                        val raw = unwrapJsResult(jsResult)
+                        listStatus = if (raw.startsWith("picked=")) {
+                            "Moved on Novel Updates"
                         } else {
-                            "Could not change list on the site"
+                            raw.ifBlank { "Could not change list on the site" }
                         }
                     }
                 } else if ((webView.url ?: "") != target) {
