@@ -99,7 +99,8 @@ data class Release(
     val chapter: String,
     val group: String,
     val date: String,
-    val url: String
+    val url: String,
+    val rid: String = ""
 )
 
 data class SeriesPage(
@@ -170,7 +171,8 @@ fun parseSeriesPage(raw: String): SeriesPage {
                         chapter = item.optString("chapter"),
                         group = item.optString("group"),
                         date = item.optString("date"),
-                        url = item.optString("url")
+                        url = item.optString("url"),
+                        rid = item.optString("rid")
                     )
                 )
             }
@@ -991,6 +993,7 @@ fun NovelDetailScreen(
     var showOrder by remember { mutableStateOf(false) }
     var showChangeList by remember { mutableStateOf(false) }
     var pendingMoveId by remember { mutableStateOf<String?>(null) }
+    var pendingReadRid by remember { mutableStateOf<String?>(null) }
     var listStatus by remember { mutableStateOf("") }
     var loadedPage by remember { mutableIntStateOf(1) }
     var maxPage by remember { mutableIntStateOf(1) }
@@ -1164,7 +1167,10 @@ fun NovelDetailScreen(
                                     enabled = nextUnread?.url?.isNotBlank() == true
                                 ) { Text("READ CHAPTER") }
                                 TextButton(onClick = {
-                                    nextUnread?.let { onSetLastRead(it.chapter, it.url, true) }
+                                    nextUnread?.let {
+                                        onSetLastRead(it.chapter, it.url, true)
+                                        if (it.rid.isNotBlank()) pendingReadRid = it.rid
+                                    }
                                     onMarkRead()
                                 }) { Text("MARK AS READ") }
                             }
@@ -1318,6 +1324,9 @@ fun NovelDetailScreen(
                                         checked = isLastRead,
                                         onCheckedChange = { checked ->
                                             onSetLastRead(release.chapter, release.url, checked)
+                                            if (checked && release.rid.isNotBlank()) {
+                                                pendingReadRid = release.rid
+                                            }
                                         }
                                     )
                                 }
@@ -1386,11 +1395,19 @@ fun NovelDetailScreen(
                                 if (!link) return;
                                 var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
                                 if (!chapter) return;
+                                var cb = tr.querySelector('input[type=checkbox]');
+                                var rid = '';
+                                if (cb && cb.id && cb.id.indexOf('chklist') === 0) {
+                                  rid = cb.id.replace('chklist', '');
+                                } else if (cb && cb.value && cb.value !== 'notset') {
+                                  rid = cb.value;
+                                }
                                 releases.push({
                                   chapter: chapter,
                                   group: tds[1] ? tds[1].textContent.replace(/\s+/g, ' ').trim() : '',
                                   date: tds[0] ? tds[0].textContent.replace(/\s+/g, ' ').trim() : '',
-                                  url: link.href || ''
+                                  url: link.href || '',
+                                  rid: rid
                                 });
                               });
                               var max = 1;
@@ -1479,11 +1496,13 @@ fun NovelDetailScreen(
                               break;
                             }
                           }
-                          if (!picked) return 'no-match options=' + sel.options.length;
+                          if (!picked) return 'no-match';
+                          var jq = (typeof jQuery === 'function');
+                          if (jq) jQuery(sel).val(sel.value).trigger('change').trigger('input');
                           if (sel.onchange) sel.onchange();
                           sel.dispatchEvent(new Event('change', { bubbles: true }));
                           sel.dispatchEvent(new Event('input', { bubbles: true }));
-                          return 'picked=' + picked + ' value=' + sel.value;
+                          return 'picked=' + picked;
                         })();
                     """.trimIndent()
                     webView.evaluateJavascript(moveScript) { jsResult ->
@@ -1493,6 +1512,29 @@ fun NovelDetailScreen(
                         } else {
                             raw.ifBlank { "Could not change list on the site" }
                         }
+                    }
+                } else if (pendingReadRid != null && (webView.url ?: "").contains("/series/")) {
+                    val readRid = pendingReadRid
+                    pendingReadRid = null
+                    val readScript = """
+                        (function() {
+                          var rid = ${JSONObject.quote(readRid ?: "")};
+                          var sid = (document.querySelector('#mypostid') || {}).value || '';
+                          if (!rid || !sid) return 'missing rid=' + rid + ' sid=' + sid;
+                          var box = document.getElementById('chklist' + rid);
+                          if (box) { box.checked = true; box.click(); }
+                          try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open('GET', '/readinglist_update.php?rid=' + encodeURIComponent(rid) + '&sid=' + encodeURIComponent(sid) + '&checked=yes', false);
+                            xhr.send(null);
+                            return 'read ' + xhr.status + ' rid=' + rid;
+                          } catch (e) {
+                            return 'read-err';
+                          }
+                        })();
+                    """.trimIndent()
+                    webView.evaluateJavascript(readScript) { jsResult ->
+                        listStatus = unwrapJsResult(jsResult).ifBlank { "Read update sent" }
                     }
                 } else if ((webView.url ?: "") != target) {
                     webView.loadUrl(target)
