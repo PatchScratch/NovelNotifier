@@ -1541,7 +1541,12 @@ fun NovelDetailScreen(
                         })();
                     """.trimIndent()
                     webView.evaluateJavascript(readScript) { jsResult ->
-                        listStatus = unwrapJsResult(jsResult).ifBlank { "Read update sent" }
+                        val raw = unwrapJsResult(jsResult)
+                        listStatus = if (raw.startsWith("read 200")) {
+                            "Marked as read on Novel Updates"
+                        } else {
+                            raw.ifBlank { "Could not mark as read on the site" }
+                        }
                     }
                 } else if ((webView.url ?: "") != target) {
                     webView.loadUrl(target)
