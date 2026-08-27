@@ -400,7 +400,6 @@ fun NovelApp() {
         )
         else -> NovelDetailScreen(
             novel = selectedWithCover,
-            isRead = selectedWithCover.title in readTitles,
             lastRead = lastRead[selectedWithCover.title],
             notifyOn = selectedWithCover.title !in seriesNotifyOff,
             availableLists = readingLists,
@@ -741,8 +740,8 @@ fun NovelListScreen(
                                 } else {
                                     parsedNovels.filter {
                                         it.coverUrl.isBlank() &&
-                                                it.seriesUrl.isNotBlank() &&
-                                                coverCache[it.title].isNullOrBlank()
+                                            it.seriesUrl.isNotBlank() &&
+                                            coverCache[it.title].isNullOrBlank()
                                     }
                                 }
                                 listStatus = if (parsedNovels.isEmpty()) {
@@ -974,7 +973,6 @@ fun CoverThumb(url: String, modifier: Modifier = Modifier) {
 @Composable
 fun NovelDetailScreen(
     novel: Novel,
-    isRead: Boolean,
     lastRead: Pair<String, String>?,
     notifyOn: Boolean,
     availableLists: List<ReadingList>,
@@ -1359,36 +1357,6 @@ fun NovelDetailScreen(
             update = { webView ->
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        val moveId = pendingMoveId
-                        if (moveId != null) {
-                            val moveScript = """
-                                (function() {
-                                  var want = ${JSONObject.quote(moveId)};
-                                  var sel = null;
-                                  document.querySelectorAll('select').forEach(function(s) {
-                                    var opts = [];
-                                    for (var i = 0; i < s.options.length; i++) {
-                                      opts.push((s.options[i].textContent || '').trim());
-                                    }
-                                    if (opts.indexOf('---') !== -1 || /list/i.test(s.id + s.name)) sel = s;
-                                  });
-                                  if (!sel) return 'no-select';
-                                  sel.value = want;
-                                  if (sel.onchange) sel.onchange();
-                                  sel.dispatchEvent(new Event('change', { bubbles: true }));
-                                  return 'ok';
-                                })();
-                            """.trimIndent()
-                            view?.evaluateJavascript(moveScript) { result ->
-                                pendingMoveId = null
-                                listStatus = if (unwrapJsResult(result) == "ok") {
-                                    "List updated on Novel Updates"
-                                } else {
-                                    "Could not change list on the site"
-                                }
-                            }
-                            return
-                        }
                         val script = """
                             (function() {
                               function text(sel) {
@@ -1433,27 +1401,6 @@ fun NovelDetailScreen(
                                   if (n > max) max = n;
                                 }
                               });
-                              var listSel = null;
-                              document.querySelectorAll('select').forEach(function(sel) {
-                                var opts = [];
-                                for (var i = 0; i < sel.options.length; i++) {
-                                  opts.push((sel.options[i].textContent || '').trim());
-                                }
-                                if (opts.indexOf('---') !== -1 || opts.indexOf('--') !== -1 || /list/i.test(sel.id + sel.name)) {
-                                  listSel = sel;
-                                }
-                              });
-                              var lists = [];
-                              var currentList = '';
-                              if (listSel) {
-                                for (var i = 0; i < listSel.options.length; i++) {
-                                  var name = (listSel.options[i].textContent || '').replace(/\s+/g, ' ').trim();
-                                  var id = (listSel.options[i].value || '').trim();
-                                  if (!name || name === '---' || name === '--') continue;
-                                  lists.push({ id: id, name: name });
-                                  if (listSel.options[i].selected) currentList = name;
-                                }
-                              }
                               return JSON.stringify({
                                 title: text('#editsn, .seriestitle, h4.seriestitle') || document.title.replace(' - Novel Updates', ''),
                                 author: texts('#showauthors a, #editaid a'),
@@ -1465,8 +1412,8 @@ fun NovelDetailScreen(
                                 status: text('#editstatus, #showstatus'),
                                 cover: img ? (img.src || '') : '',
                                 maxPage: max,
-                                currentList: currentList,
-                                lists: lists,
+                                currentList: '',
+                                lists: [],
                                 releases: releases
                               });
                             })();
@@ -1476,27 +1423,61 @@ fun NovelDetailScreen(
                             if (parsed.maxPage > maxPage) maxPage = parsed.maxPage
                             if (parsed.coverUrl.startsWith("http")) onCoverFound(parsed.coverUrl)
                             val incoming = if (newestFirst) parsed.releases else parsed.releases.asReversed()
-                            page = if (page.releases.isEmpty()) {
-                                parsed.copy(releases = incoming)
+                            val mergedReleases = if (page.releases.isEmpty()) {
+                                incoming
                             } else {
                                 val existing = page.releases.map { it.chapter + "|" + it.url }.toSet()
-                                val extra = incoming.filter { it.chapter + "|" + it.url !in existing }
-                                parsed.copy(
-                                    releases = page.releases + extra,
-                                    lists = if (parsed.lists.isNotEmpty()) parsed.lists else page.lists,
-                                    currentList = parsed.currentList.ifBlank { page.currentList }
-                                )
+                                page.releases + incoming.filter { it.chapter + "|" + it.url !in existing }
                             }
+                            page = page.copy(
+                                title = parsed.title.ifBlank { page.title },
+                                author = parsed.author.ifBlank { page.author },
+                                rating = parsed.rating.ifBlank { page.rating },
+                                description = parsed.description.ifBlank { page.description },
+                                genres = parsed.genres.ifBlank { page.genres },
+                                tags = parsed.tags.ifBlank { page.tags },
+                                type = parsed.type.ifBlank { page.type },
+                                status = parsed.status.ifBlank { page.status },
+                                coverUrl = parsed.coverUrl.ifBlank { page.coverUrl },
+                                currentList = parsed.currentList.ifBlank { page.currentList },
+                                lists = parsed.lists.ifEmpty { page.lists },
+                                releases = mergedReleases,
+                                maxPage = maxOf(page.maxPage, parsed.maxPage)
+                            )
                             loadingMore = false
                         }
                     }
                 }
                 val base = novel.seriesUrl.trimEnd('/')
                 val target = if (loadedPage <= 1) "$base/" else "$base/?pg=$loadedPage"
-                val current = webView.url ?: ""
-                if (pendingMoveId != null || current != target) {
-                    if (current != target) webView.loadUrl(target)
-                    else webView.reload()
+                val moveId = pendingMoveId
+                if (moveId != null && (webView.url ?: "").contains("/series/")) {
+                    pendingMoveId = null
+                    val moveScript = """
+                        (function() {
+                          var want = ${JSONObject.quote(moveId)};
+                          var post = (document.querySelector('#mypostid') || {}).value || '';
+                          if (typeof addtolist === 'function') { addtolist(want); return 'ok'; }
+                          if (!post) return 'no-id';
+                          try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open('GET', '/readinglist_update.php?sid=' + encodeURIComponent(post) + '&lid=' + encodeURIComponent(want) + '&checked=yes', false);
+                            xhr.send(null);
+                            return (xhr.status >= 200 && xhr.status < 400) ? 'ok' : 'fail';
+                          } catch (e) {
+                            return 'fail';
+                          }
+                        })();
+                    """.trimIndent()
+                    webView.evaluateJavascript(moveScript) { jsResult ->
+                        listStatus = if (unwrapJsResult(jsResult) == "ok") {
+                            "List updated on Novel Updates"
+                        } else {
+                            "Could not change list on the site"
+                        }
+                    }
+                } else if ((webView.url ?: "") != target) {
+                    webView.loadUrl(target)
                 }
             }
         )
