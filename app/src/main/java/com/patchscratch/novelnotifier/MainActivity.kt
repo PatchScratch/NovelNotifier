@@ -116,7 +116,8 @@ data class SeriesPage(
     val releases: List<Release> = emptyList(),
     val maxPage: Int = 1,
     val currentList: String = "",
-    val lists: List<ReadingList> = emptyList()
+    val lists: List<ReadingList> = emptyList(),
+    val sid: String = ""
 )
 
 fun loadCoverCache(prefs: android.content.SharedPreferences): Map<String, String> {
@@ -199,7 +200,8 @@ fun parseSeriesPage(raw: String): SeriesPage {
             releases = releases,
             maxPage = json.optInt("maxPage", 1).coerceAtLeast(1),
             currentList = json.optString("currentList"),
-            lists = lists
+            lists = lists,
+            sid = json.optString("sid")
         )
     } catch (_: Exception) {
         SeriesPage()
@@ -986,6 +988,7 @@ fun NovelDetailScreen(
 ) {
     val context = LocalContext.current
     var page by remember { mutableStateOf(SeriesPage()) }
+    var seriesSid by remember { mutableStateOf("") }
     var tab by remember { mutableIntStateOf(0) }
     var newestFirst by remember { mutableStateOf(true) }
     var hideRead by remember { mutableStateOf(false) }
@@ -1393,9 +1396,9 @@ fun NovelDetailScreen(
                                   }) || links[links.length - 1];
                                 }
                                 if (!link) return;
-                                    var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
+                                var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
                                 if (!chapter) return;
-                                if (/^[\-\–—._\s]+$/.test(chapter)) return;
+                                if (/^[\\-–—._\\s]+$/.test(chapter)) return;
                                 var cb = tr.querySelector('input[type=checkbox]');
                                 var rid = '';
                                 if (cb && cb.id && cb.id.indexOf('chklist') === 0) {
@@ -1431,6 +1434,7 @@ fun NovelDetailScreen(
                                 cover: img ? (img.src || '') : '',
                                 maxPage: max,
                                 currentList: '',
+                                sid: (document.querySelector('#mypostid') || {}).value || '',
                                 lists: [],
                                 releases: releases
                               });
@@ -1460,8 +1464,10 @@ fun NovelDetailScreen(
                                 currentList = parsed.currentList.ifBlank { page.currentList },
                                 lists = parsed.lists.ifEmpty { page.lists },
                                 releases = mergedReleases,
-                                maxPage = maxOf(page.maxPage, parsed.maxPage)
+                                maxPage = maxOf(page.maxPage, parsed.maxPage),
+                                sid = parsed.sid.ifBlank { page.sid }
                             )
+                            if (parsed.sid.isNotBlank()) seriesSid = parsed.sid
                             loadingMore = false
                         }
                     }
@@ -1520,7 +1526,7 @@ fun NovelDetailScreen(
                     val readScript = """
                         (function() {
                           var rid = ${JSONObject.quote(readRid ?: "")};
-                          var sid = (document.querySelector('#mypostid') || {}).value || '';
+                          var sid = (document.querySelector('#mypostid') || {}).value || ${JSONObject.quote(seriesSid)};
                           if (!rid || !sid) return 'missing rid=' + rid + ' sid=' + sid;
                           var box = document.getElementById('chklist' + rid);
                           if (box) { box.checked = true; box.click(); }
