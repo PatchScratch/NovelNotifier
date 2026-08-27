@@ -1393,8 +1393,9 @@ fun NovelDetailScreen(
                                   }) || links[links.length - 1];
                                 }
                                 if (!link) return;
-                                var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
+                                    var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
                                 if (!chapter) return;
+                                if (/^[\-\–—._\s]+$/.test(chapter)) return;
                                 var cb = tr.querySelector('input[type=checkbox]');
                                 var rid = '';
                                 if (cb && cb.id && cb.id.indexOf('chklist') === 0) {
