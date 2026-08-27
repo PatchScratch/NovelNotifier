@@ -2,6 +2,8 @@ package com.patchscratch.novelnotifier
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -23,10 +25,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -40,6 +44,8 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -48,11 +54,13 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -69,6 +77,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.net.URL
@@ -84,6 +93,29 @@ data class Novel(
 data class ReadingList(
     val id: String,
     val name: String
+)
+
+data class Release(
+    val chapter: String,
+    val group: String,
+    val date: String,
+    val url: String
+)
+
+data class SeriesPage(
+    val title: String = "",
+    val author: String = "",
+    val rating: String = "",
+    val description: String = "",
+    val genres: String = "",
+    val tags: String = "",
+    val type: String = "",
+    val status: String = "",
+    val coverUrl: String = "",
+    val releases: List<Release> = emptyList(),
+    val maxPage: Int = 1,
+    val currentList: String = "",
+    val lists: List<ReadingList> = emptyList()
 )
 
 fun loadCoverCache(prefs: android.content.SharedPreferences): Map<String, String> {
@@ -102,6 +134,74 @@ fun saveCoverCache(prefs: android.content.SharedPreferences, cache: Map<String, 
 
 fun loadIdSet(prefs: android.content.SharedPreferences, key: String): Set<String> {
     return prefs.getStringSet(key, emptySet()) ?: emptySet()
+}
+
+fun loadLastRead(prefs: android.content.SharedPreferences): Map<String, Pair<String, String>> {
+    return loadIdSet(prefs, "last_read").mapNotNull { row ->
+        val parts = row.split("|||", limit = 3)
+        if (parts.size == 3) parts[0] to (parts[1] to parts[2]) else null
+    }.toMap()
+}
+
+fun chapterNum(text: String): Int {
+    return Regex("""c(\d+)""", RegexOption.IGNORE_CASE).find(text)?.groupValues?.get(1)?.toIntOrNull() ?: -1
+}
+
+fun unwrapJsResult(result: String?): String {
+    if (result.isNullOrBlank() || result == "null") return ""
+    return result
+        .removeSurrounding("\"")
+        .replace("\\\"", "\"")
+        .replace("\\n", "\n")
+        .replace("\\\\", "\\")
+}
+
+fun parseSeriesPage(raw: String): SeriesPage {
+    if (raw.isBlank()) return SeriesPage()
+    return try {
+        val json = JSONObject(raw)
+        val releasesJson = json.optJSONArray("releases")
+        val releases = mutableListOf<Release>()
+        if (releasesJson != null) {
+            for (i in 0 until releasesJson.length()) {
+                val item = releasesJson.optJSONObject(i) ?: continue
+                releases.add(
+                    Release(
+                        chapter = item.optString("chapter"),
+                        group = item.optString("group"),
+                        date = item.optString("date"),
+                        url = item.optString("url")
+                    )
+                )
+            }
+        }
+        val listsJson = json.optJSONArray("lists")
+        val lists = mutableListOf<ReadingList>()
+        if (listsJson != null) {
+            for (i in 0 until listsJson.length()) {
+                val item = listsJson.optJSONObject(i) ?: continue
+                val name = item.optString("name")
+                if (name.isNotBlank()) lists.add(ReadingList(item.optString("id"), name))
+            }
+        }
+        SeriesPage(
+            title = json.optString("title"),
+            author = json.optString("author"),
+            rating = json.optString("rating"),
+            description = json.optString("description"),
+            genres = json.optString("genres"),
+            tags = json.optString("tags"),
+            type = json.optString("type"),
+            status = json.optString("status"),
+            coverUrl = json.optString("cover"),
+            releases = releases,
+            maxPage = json.optInt("maxPage", 1).coerceAtLeast(1),
+            currentList = json.optString("currentList"),
+            lists = lists
+        )
+    } catch (_: Exception) {
+        SeriesPage()
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -132,12 +232,15 @@ fun NovelApp() {
     var showSettings by remember { mutableStateOf(false) }
     var showLoginWeb by remember { mutableStateOf(false) }
     var showEditLists by remember { mutableStateOf(false) }
+    var readingLists by remember { mutableStateOf(emptyList<ReadingList>()) }
     var readTitles by remember {
         mutableStateOf(prefs.getStringSet("read_titles", emptySet()) ?: emptySet())
     }
+    var lastRead by remember { mutableStateOf(loadLastRead(prefs)) }
     var coverCache by remember { mutableStateOf(loadCoverCache(prefs)) }
     var notifyOff by remember { mutableStateOf(loadIdSet(prefs, "list_notify_off")) }
     var updateOff by remember { mutableStateOf(loadIdSet(prefs, "list_update_off")) }
+    var seriesNotifyOff by remember { mutableStateOf(loadIdSet(prefs, "series_notify_off")) }
     var rssUrl by remember { mutableStateOf(prefs.getString("rss_url", "") ?: "") }
     var checkHours by remember { mutableIntStateOf(prefs.getInt("check_hours", 12)) }
     var refreshKey by remember { mutableIntStateOf(0) }
@@ -205,6 +308,21 @@ fun NovelApp() {
         prefs.edit { putStringSet("read_titles", updated) }
     }
 
+    fun setLastRead(title: String, chapter: String, url: String, read: Boolean) {
+        lastRead = if (read) lastRead + (title to (chapter to url)) else lastRead - title
+        prefs.edit {
+            putStringSet(
+                "last_read",
+                lastRead.map { "${it.key}|||${it.value.first}|||${it.value.second}" }.toSet()
+            )
+        }
+    }
+
+    fun toggleSeriesNotify(title: String) {
+        seriesNotifyOff = if (title in seriesNotifyOff) seriesNotifyOff - title else seriesNotifyOff + title
+        prefs.edit { putStringSet("series_notify_off", seriesNotifyOff) }
+    }
+
     fun saveSettings(newUrl: String, newHours: Int) {
         rssUrl = newUrl.trim()
         checkHours = newHours
@@ -268,6 +386,7 @@ fun NovelApp() {
             onRefresh = { refreshKey += 1 },
             onNovelClick = { novel -> selectedNovel = novel },
             onCoverFound = { title, url -> rememberCover(title, url) },
+            onListsLoaded = { parsed -> if (parsed.isNotEmpty()) readingLists = parsed },
             onOpenSettings = { showSettings = true },
             onEditLists = { showEditLists = true },
             onSaveListOptions = { newNotifyOff, newUpdateOff ->
@@ -282,7 +401,14 @@ fun NovelApp() {
         else -> NovelDetailScreen(
             novel = selectedWithCover,
             isRead = selectedWithCover.title in readTitles,
+            lastRead = lastRead[selectedWithCover.title],
+            notifyOn = selectedWithCover.title !in seriesNotifyOff,
+            availableLists = readingLists,
             onMarkRead = { markAsRead(selectedWithCover.title) },
+            onSetLastRead = { chapter, url, read ->
+                setLastRead(selectedWithCover.title, chapter, url, read)
+            },
+            onToggleNotify = { toggleSeriesNotify(selectedWithCover.title) },
             onCoverFound = { url -> rememberCover(selectedWithCover.title, url) },
             onBackClick = { selectedNovel = null }
         )
@@ -310,15 +436,6 @@ fun parseRssTitles(xml: String): List<String> {
     return titles
 }
 
-fun unwrapJsResult(result: String?): String {
-    if (result.isNullOrBlank() || result == "null") return ""
-    return result
-        .removeSurrounding("\"")
-        .replace("\\\"", "\"")
-        .replace("\\n", "\n")
-        .replace("\\\\", "\\")
-}
-
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -335,6 +452,7 @@ fun NovelListScreen(
     onRefresh: () -> Unit,
     onNovelClick: (Novel) -> Unit,
     onCoverFound: (String, String) -> Unit,
+    onListsLoaded: (List<ReadingList>) -> Unit,
     onOpenSettings: () -> Unit,
     onEditLists: () -> Unit,
     onSaveListOptions: (Set<String>, Set<String>) -> Unit
@@ -597,7 +715,10 @@ fun NovelListScreen(
                                     val bits = item.split("===", limit = 2)
                                     if (bits.size == 2) ReadingList(bits[0], bits[1]) else null
                                 }.distinctBy { it.name }
-                                if (parsedLists.isNotEmpty()) lists = parsedLists
+                                if (parsedLists.isNotEmpty()) {
+                                    lists = parsedLists
+                                    onListsLoaded(parsedLists)
+                                }
                             }
                             if (selectedListId.isNotBlank()) {
                                 val parsedNovels = novelPart.split("|||").mapNotNull { item ->
@@ -848,45 +969,377 @@ fun CoverThumb(url: String, modifier: Modifier = Modifier) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun NovelDetailScreen(
     novel: Novel,
     isRead: Boolean,
+    lastRead: Pair<String, String>?,
+    notifyOn: Boolean,
+    availableLists: List<ReadingList>,
     onMarkRead: () -> Unit,
+    onSetLastRead: (String, String, Boolean) -> Unit,
+    onToggleNotify: () -> Unit,
     onCoverFound: (String) -> Unit,
     onBackClick: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            CoverThumb(
-                url = novel.coverUrl,
+    val context = LocalContext.current
+    var page by remember { mutableStateOf(SeriesPage()) }
+    var tab by remember { mutableIntStateOf(0) }
+    var newestFirst by remember { mutableStateOf(true) }
+    var hideRead by remember { mutableStateOf(false) }
+    var descExpanded by remember { mutableStateOf(false) }
+    var showOrder by remember { mutableStateOf(false) }
+    var showChangeList by remember { mutableStateOf(false) }
+    var pendingMoveId by remember { mutableStateOf<String?>(null) }
+    var listStatus by remember { mutableStateOf("") }
+    var loadedPage by remember { mutableIntStateOf(1) }
+    var maxPage by remember { mutableIntStateOf(1) }
+    var loadingMore by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val changeLists = availableLists.ifEmpty { page.lists }
+
+    val cover = page.coverUrl.ifBlank { novel.coverUrl }
+    val lastReadNum = lastRead?.first?.let(::chapterNum) ?: -1
+    val nextUnread = page.releases
+        .filter { lastReadNum < 0 || chapterNum(it.chapter) > lastReadNum }
+        .minByOrNull { chapterNum(it.chapter) }
+        ?: page.releases.firstOrNull()
+    val shownReleases = page.releases.filter { release ->
+        !hideRead || lastRead == null || chapterNum(release.chapter) >= lastReadNum
+    }
+
+    fun openUrl(url: String) {
+        if (url.isBlank()) return
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
+
+    fun applyOrder(newest: Boolean) {
+        newestFirst = newest
+        page = page.copy(releases = emptyList())
+        loadedPage = if (newest) 1 else maxPage.coerceAtLeast(1)
+        loadingMore = true
+        showOrder = false
+    }
+
+    LaunchedEffect(listState, shownReleases.size, loadedPage, maxPage, loadingMore, tab, newestFirst) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
+            .collect { last ->
+                if (tab != 1 || last == null || loadingMore) return@collect
+                if (last < shownReleases.size - 3) return@collect
+                if (newestFirst && loadedPage < maxPage) {
+                    loadingMore = true
+                    loadedPage += 1
+                } else if (!newestFirst && loadedPage > 1) {
+                    loadingMore = true
+                    loadedPage -= 1
+                }
+            }
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            Row(
                 modifier = Modifier
-                    .width(96.dp)
-                    .height(128.dp)
-            )
-            Column(modifier = Modifier.padding(start = 16.dp)) {
-                Text(text = novel.title, style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    text = "Latest: ${novel.latestChapter}",
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-                Text(
-                    text = if (isRead) "Status: Read" else "Status: Unread",
-                    modifier = Modifier.padding(top = 8.dp)
-                )
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onBackClick) { Text("←") }
             }
         }
-        if (!isRead) {
-            Button(onClick = onMarkRead, modifier = Modifier.padding(top = 24.dp)) {
-                Text("Mark as read")
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .navigationBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                CoverThumb(
+                    url = cover,
+                    modifier = Modifier
+                        .width(96.dp)
+                        .height(128.dp)
+                )
+                Column(modifier = Modifier.padding(start = 12.dp)) {
+                    Text(
+                        text = page.title.ifBlank { novel.title },
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    if (page.author.isNotBlank()) {
+                        Text(page.author, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (page.rating.isNotBlank()) {
+                        Text(page.rating, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    if (page.currentList.isNotBlank()) {
+                        Text(
+                            text = page.currentList,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
+                        Button(onClick = { showChangeList = true }) { Text("CHANGE LIST") }
+                        TextButton(onClick = onToggleNotify) {
+                            Text(
+                                text = if (notifyOn) "🔔" else "🔕",
+                                style = MaterialTheme.typography.headlineSmall
+                            )
+                        }
+                    }
+                    if (listStatus.isNotBlank()) {
+                        Text(listStatus, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            if (showChangeList) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Change list", style = MaterialTheme.typography.titleMedium)
+                        if (changeLists.isEmpty()) {
+                            Text(
+                                "Open the hamburger menu once so lists can load, then try again.",
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        } else {
+                            changeLists.forEach { list ->
+                                TextButton(
+                                    onClick = {
+                                        pendingMoveId = list.id
+                                        listStatus = "Moving to ${list.name}..."
+                                        showChangeList = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(if (list.name == page.currentList) "✓  ${list.name}" else list.name)
+                                }
+                            }
+                        }
+                        TextButton(
+                            onClick = { showChangeList = false },
+                            modifier = Modifier.align(Alignment.End)
+                        ) { Text("Cancel") }
+                    }
+                }
+            }
+            TabRow(selectedTabIndex = tab) {
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("INFO") })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("RELEASES") })
+            }
+            if (tab == 0) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                ) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("Next Chapter", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = if (nextUnread == null) {
+                                    "No chapter link found"
+                                } else {
+                                    "${nextUnread.chapter}  by ${nextUnread.group}"
+                                },
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            Row(modifier = Modifier.padding(top = 8.dp)) {
+                                TextButton(
+                                    onClick = { nextUnread?.url?.let(::openUrl) },
+                                    enabled = nextUnread?.url?.isNotBlank() == true
+                                ) { Text("READ CHAPTER") }
+                                TextButton(onClick = {
+                                    nextUnread?.let { onSetLastRead(it.chapter, it.url, true) }
+                                    onMarkRead()
+                                }) { Text("MARK AS READ") }
+                            }
+                        }
+                    }
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .clickable { descExpanded = !descExpanded }
+                        ) {
+                            Text("Description", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = page.description.ifBlank { "No description yet." },
+                                maxLines = if (descExpanded) Int.MAX_VALUE else 6,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            Text(if (descExpanded) "▲" else "▼", modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                    if (page.type.isNotBlank() || page.status.isNotBlank()) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                if (page.type.isNotBlank()) Text("Type: ${page.type}")
+                                if (page.status.isNotBlank()) Text("Status: ${page.status}")
+                            }
+                        }
+                    }
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("Genres", style = MaterialTheme.typography.titleMedium)
+                            Text(page.genres.ifBlank { "None listed" }, modifier = Modifier.padding(top = 8.dp))
+                        }
+                    }
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("Tags", style = MaterialTheme.typography.titleMedium)
+                            Text(page.tags.ifBlank { "None listed" }, modifier = Modifier.padding(top = 8.dp))
+                        }
+                    }
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    TextButton(
+                        onClick = { showOrder = true },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text(if (newestFirst) "Newest First ▼" else "Oldest First ▼")
+                    }
+                    if (showOrder) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text("Release Ordering", style = MaterialTheme.typography.titleLarge)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { newestFirst = true }
+                                        .padding(top = 12.dp)
+                                ) {
+                                    RadioButton(selected = newestFirst, onClick = { newestFirst = true })
+                                    Column {
+                                        Text("Newest First")
+                                        Text(
+                                            "Show releases in a descending order",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { newestFirst = false }
+                                        .padding(top = 8.dp)
+                                ) {
+                                    RadioButton(selected = !newestFirst, onClick = { newestFirst = false })
+                                    Column {
+                                        Text("Oldest First")
+                                        Text(
+                                            "Show releases in an ascending order",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                ) {
+                                    Text("Hide read releases", modifier = Modifier.weight(1f))
+                                    Switch(checked = hideRead, onCheckedChange = { hideRead = it })
+                                }
+                                TextButton(
+                                    onClick = { applyOrder(newestFirst) },
+                                    modifier = Modifier.align(Alignment.End)
+                                ) { Text("SAVE") }
+                            }
+                        }
+                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(
+                            count = shownReleases.size,
+                            key = { index -> shownReleases[index].chapter + shownReleases[index].url + index }
+                        ) { index ->
+                            val release = shownReleases[index]
+                            val thisNum = chapterNum(release.chapter)
+                            val isLastRead = lastReadNum > 0 && thisNum == lastReadNum
+                            key("${release.chapter}|${release.url}|$index") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = release.chapter,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        modifier = Modifier
+                                            .width(88.dp)
+                                            .clickable { openUrl(release.url) }
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(release.group)
+                                        Text(release.date, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Checkbox(
+                                        checked = isLastRead,
+                                        onCheckedChange = { checked ->
+                                            onSetLastRead(release.chapter, release.url, checked)
+                                        }
+                                    )
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                        val moreLeft = if (newestFirst) loadedPage < maxPage else loadedPage > 1
+                        if (loadingMore || moreLeft) {
+                            item {
+                                Text(
+                                    text = if (loadingMore) "Loading more releases..." else "Scroll for more",
+                                    modifier = Modifier.padding(16.dp),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
-        Button(onClick = onBackClick, modifier = Modifier.padding(top = 12.dp)) { Text("Back") }
     }
 
     if (novel.seriesUrl.isNotBlank()) {
@@ -901,21 +1354,149 @@ fun NovelDetailScreen(
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     CookieManager.getInstance().setAcceptCookie(true)
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            val script = """
+                }
+            },
+            update = { webView ->
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        val moveId = pendingMoveId
+                        if (moveId != null) {
+                            val moveScript = """
                                 (function() {
-                                  var img = document.querySelector('.seriesimg img, .serieseditimg img');
-                                  return img ? (img.src || '') : '';
+                                  var want = ${JSONObject.quote(moveId)};
+                                  var sel = null;
+                                  document.querySelectorAll('select').forEach(function(s) {
+                                    var opts = [];
+                                    for (var i = 0; i < s.options.length; i++) {
+                                      opts.push((s.options[i].textContent || '').trim());
+                                    }
+                                    if (opts.indexOf('---') !== -1 || /list/i.test(s.id + s.name)) sel = s;
+                                  });
+                                  if (!sel) return 'no-select';
+                                  sel.value = want;
+                                  if (sel.onchange) sel.onchange();
+                                  sel.dispatchEvent(new Event('change', { bubbles: true }));
+                                  return 'ok';
                                 })();
                             """.trimIndent()
-                            view?.evaluateJavascript(script) { result ->
-                                val cover = unwrapJsResult(result)
-                                if (cover.startsWith("http")) onCoverFound(cover)
+                            view?.evaluateJavascript(moveScript) { result ->
+                                pendingMoveId = null
+                                listStatus = if (unwrapJsResult(result) == "ok") {
+                                    "List updated on Novel Updates"
+                                } else {
+                                    "Could not change list on the site"
+                                }
                             }
+                            return
+                        }
+                        val script = """
+                            (function() {
+                              function text(sel) {
+                                var el = document.querySelector(sel);
+                                return el ? (el.innerText || el.textContent || '').trim() : '';
+                              }
+                              function texts(sel) {
+                                var out = [];
+                                document.querySelectorAll(sel).forEach(function(a) {
+                                  var t = (a.textContent || '').trim();
+                                  if (t) out.push(t);
+                                });
+                                return out.join(', ');
+                              }
+                              var img = document.querySelector('.seriesimg img, .serieseditimg img');
+                              var releases = [];
+                              document.querySelectorAll('#myTable tbody tr').forEach(function(tr) {
+                                var tds = tr.querySelectorAll('td');
+                                if (!tds.length) return;
+                                var link = tr.querySelector('a.chp-release');
+                                if (!link) {
+                                  var links = Array.from(tr.querySelectorAll('a[href]'));
+                                  link = links.find(function(a) {
+                                    return /c\d+|v\d+/i.test((a.textContent || ''));
+                                  }) || links[links.length - 1];
+                                }
+                                if (!link) return;
+                                var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
+                                if (!chapter) return;
+                                releases.push({
+                                  chapter: chapter,
+                                  group: tds[1] ? tds[1].textContent.replace(/\s+/g, ' ').trim() : '',
+                                  date: tds[0] ? tds[0].textContent.replace(/\s+/g, ' ').trim() : '',
+                                  url: link.href || ''
+                                });
+                              });
+                              var max = 1;
+                              document.querySelectorAll('.digg_pagination a').forEach(function(a) {
+                                var m = ((a.getAttribute('href') || '') + (a.search || '')).match(/[?&]pg=(\d+)/);
+                                if (m) {
+                                  var n = parseInt(m[1], 10);
+                                  if (n > max) max = n;
+                                }
+                              });
+                              var listSel = null;
+                              document.querySelectorAll('select').forEach(function(sel) {
+                                var opts = [];
+                                for (var i = 0; i < sel.options.length; i++) {
+                                  opts.push((sel.options[i].textContent || '').trim());
+                                }
+                                if (opts.indexOf('---') !== -1 || opts.indexOf('--') !== -1 || /list/i.test(sel.id + sel.name)) {
+                                  listSel = sel;
+                                }
+                              });
+                              var lists = [];
+                              var currentList = '';
+                              if (listSel) {
+                                for (var i = 0; i < listSel.options.length; i++) {
+                                  var name = (listSel.options[i].textContent || '').replace(/\s+/g, ' ').trim();
+                                  var id = (listSel.options[i].value || '').trim();
+                                  if (!name || name === '---' || name === '--') continue;
+                                  lists.push({ id: id, name: name });
+                                  if (listSel.options[i].selected) currentList = name;
+                                }
+                              }
+                              return JSON.stringify({
+                                title: text('#editsn, .seriestitle, h4.seriestitle') || document.title.replace(' - Novel Updates', ''),
+                                author: texts('#showauthors a, #editaid a'),
+                                rating: text('.uvotes, #rateit, span.uvotes'),
+                                description: text('#editdescription, #editdesc'),
+                                genres: texts('#seriesgenre a, .seriesgenre a'),
+                                tags: texts('#showtags a, #edittags a'),
+                                type: text('#showtype, #edittype'),
+                                status: text('#editstatus, #showstatus'),
+                                cover: img ? (img.src || '') : '',
+                                maxPage: max,
+                                currentList: currentList,
+                                lists: lists,
+                                releases: releases
+                              });
+                            })();
+                        """.trimIndent()
+                        view?.evaluateJavascript(script) { result ->
+                            val parsed = parseSeriesPage(unwrapJsResult(result))
+                            if (parsed.maxPage > maxPage) maxPage = parsed.maxPage
+                            if (parsed.coverUrl.startsWith("http")) onCoverFound(parsed.coverUrl)
+                            val incoming = if (newestFirst) parsed.releases else parsed.releases.asReversed()
+                            page = if (page.releases.isEmpty()) {
+                                parsed.copy(releases = incoming)
+                            } else {
+                                val existing = page.releases.map { it.chapter + "|" + it.url }.toSet()
+                                val extra = incoming.filter { it.chapter + "|" + it.url !in existing }
+                                parsed.copy(
+                                    releases = page.releases + extra,
+                                    lists = if (parsed.lists.isNotEmpty()) parsed.lists else page.lists,
+                                    currentList = parsed.currentList.ifBlank { page.currentList }
+                                )
+                            }
+                            loadingMore = false
                         }
                     }
-                    loadUrl(novel.seriesUrl)
+                }
+                val base = novel.seriesUrl.trimEnd('/')
+                val target = if (loadedPage <= 1) "$base/" else "$base/?pg=$loadedPage"
+                val current = webView.url ?: ""
+                if (pendingMoveId != null || current != target) {
+                    if (current != target) webView.loadUrl(target)
+                    else webView.reload()
                 }
             }
         )
