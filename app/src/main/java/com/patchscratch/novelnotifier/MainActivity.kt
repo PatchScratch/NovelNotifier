@@ -11,7 +11,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -21,17 +20,37 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.patchscratch.novelnotifier.ui.theme.NovelNotifierTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.time.Duration.Companion.seconds
 import java.net.URL
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * App entry + navigation. This file does not draw the list or series page.
+ *
+ * MainActivity — Android launcher. Calls NovelApp().
+ * NovelApp     — holds shared state (RSS, prefs, queues) and picks one screen:
+ *                Login, Settings, Edit Lists, reading list, or series detail.
+ *
+ * Data flow:
+ *   SharedPreferences (Prefs.kt) + JSON files (Cache.kt)
+ *   → RSS fetch here
+ *   → NovelListScreen / NovelDetailScreen
+ *   → CoverPrefetchService / UpdateCheckWorker for background work
+ *
+ * getValue / setValue are used by the `by` keyword (property delegates).
+ * Android Studio may grey them out — they are not unused. Do not delete them.
+ */
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,7 +73,10 @@ class MainActivity : ComponentActivity() {
 fun NovelApp() {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { applySavedCookies(prefs) }
 
+    // --- persisted UI state ---
     var novels by remember { mutableStateOf(emptyList<Novel>()) }
     var statusMessage by remember { mutableStateOf("Set your RSS URL in Settings") }
     var selectedNovel by remember { mutableStateOf<Novel?>(null) }
@@ -75,21 +97,28 @@ fun NovelApp() {
     var refreshKey by remember { mutableIntStateOf(0) }
     var isRefreshing by remember { mutableStateOf(false) }
     var chapterFetchQueue by remember { mutableStateOf(emptyList<Novel>()) }
-    var coverPrefetchQueue by remember { mutableStateOf(emptyList<Novel>()) }
     var coverPrefetchStatus by remember { mutableStateOf(CoverPrefetchService.statusText(context)) }
+    var loginState by remember {
+        mutableStateOf(
+            if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
+            else "Logged in to Novel Updates"
+        )
+    }
+
+    // Android 13+ must grant POST_NOTIFICATIONS before the cover service can show its bar.
     val notifyPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted || Build.VERSION.SDK_INT < 33) {
-            val due = missingCoverQueue(context, coverCache, updateOff)
-            CoverPrefetchService.start(context, due)
+            CoverPrefetchService.startAll(context, coverCache, updateOff)
             coverPrefetchStatus = CoverPrefetchService.statusText(context)
-            if (due.isNotEmpty()) statusMessage = coverPrefetchStatus
+            if (coverPrefetchStatus != "Idle") statusMessage = coverPrefetchStatus
         } else {
             coverPrefetchStatus = "Notification permission needed for background prefetch"
         }
     }
 
+    // Cover service writes status to prefs. Poll so Settings can show "197 covers left".
     LaunchedEffect(Unit) {
         while (true) {
             delay(2.seconds)
@@ -97,12 +126,6 @@ fun NovelApp() {
             if (latest != coverPrefetchStatus) coverPrefetchStatus = latest
             coverCache = loadCoverCache(prefs)
         }
-    }
-    var loginState by remember {
-        mutableStateOf(
-            if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
-            else "Logged in to Novel Updates"
-        )
     }
 
     fun rememberCover(title: String, url: String) {
@@ -115,6 +138,7 @@ fun NovelApp() {
         }
     }
 
+    // RSS is the cheap change detector. Pull-to-refresh and Check now bump refreshKey.
     LaunchedEffect(rssUrl, refreshKey) {
         if (rssUrl.isBlank()) {
             statusMessage = "Set your RSS URL in Settings"
@@ -136,14 +160,9 @@ fun NovelApp() {
             val titles = parseRssTitles(xml)
             if (titles.isNotEmpty()) {
                 novels = titles.take(20).map { rawTitle ->
-                    val chapterMatch = Regex("""\s+c\d+\s*$""", RegexOption.IGNORE_CASE).find(rawTitle)
-                    val chapter = chapterMatch?.value?.trim() ?: "New release"
-                    val title = rawTitle.removeSuffix(chapterMatch?.value ?: "").trim()
-                    Novel(
-                        title = title,
-                        latestChapter = chapter,
-                        coverUrl = coverCache[title].orEmpty()
-                    )
+                    novelFromRssTitle(rawTitle, coverCache[rawTitle].orEmpty()).let { parsed ->
+                        parsed.copy(coverUrl = coverCache[parsed.title].orEmpty())
+                    }
                 }
                 val due = rssUpdatesToFetch(context, novels)
                 chapterFetchQueue = due
@@ -190,6 +209,11 @@ fun NovelApp() {
             putInt("check_hours", checkHours)
         }
         showSettings = false
+        scheduleUpdateChecks(context, checkHours)
+    }
+
+    LaunchedEffect(checkHours) {
+        scheduleUpdateChecks(context, checkHours)
     }
 
     fun onLoggedIn(cookieHeader: String) {
@@ -211,6 +235,7 @@ fun NovelApp() {
         if (cached.isNotBlank() && novel.coverUrl.isBlank()) novel.copy(coverUrl = cached) else novel
     }
 
+    // Only one screen is composed at a time. Order matters: login overlays settings.
     when {
         showLoginWeb -> LoginWebScreen(
             onLoggedIn = { cookies -> onLoggedIn(cookies) },
@@ -226,10 +251,9 @@ fun NovelApp() {
             coverPrefetchStatus = coverPrefetchStatus,
             onStartCoverPrefetch = {
                 val startJob = {
-                    val due = missingCoverQueue(context, coverCache, updateOff)
-                    CoverPrefetchService.start(context, due)
+                    CoverPrefetchService.startAll(context, coverCache, updateOff)
                     coverPrefetchStatus = CoverPrefetchService.statusText(context)
-                    if (due.isNotEmpty()) statusMessage = coverPrefetchStatus
+                    if (coverPrefetchStatus != "Idle") statusMessage = coverPrefetchStatus
                 }
                 if (Build.VERSION.SDK_INT >= 33 &&
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -242,8 +266,15 @@ fun NovelApp() {
             },
             onStopCoverPrefetch = {
                 CoverPrefetchService.stop(context)
-                coverPrefetchQueue = emptyList()
                 coverPrefetchStatus = "Stopped"
+            },
+            onCheckNow = {
+                showSettings = false
+                scope.launch {
+                    statusMessage = "Checking feed..."
+                    statusMessage = runUpdateCheck(context)
+                    refreshKey += 1
+                }
             },
             onSave = { url, hours -> saveSettings(url, hours) },
             onStartLogin = {
@@ -265,32 +296,34 @@ fun NovelApp() {
                 )
             }
             NovelListScreen(
-            rssNovels = novels,
-            rssStatus = statusMessage,
-            checkHours = checkHours,
-            loginState = loginState,
-            readTitles = readTitles,
-            coverCache = coverCache,
-            notifyOff = notifyOff,
-            updateOff = updateOff,
-            isRefreshing = isRefreshing,
-            onRefresh = { refreshKey += 1 },
-            onNovelClick = { novel -> selectedNovel = novel },
-            onCoverFound = { title, url -> rememberCover(title, url) },
-            onListsLoaded = { parsed -> if (parsed.isNotEmpty()) readingLists = parsed },
-            onOpenSettings = { showSettings = true },
-            onEditLists = { showEditLists = true },
-            onSaveListOptions = { newNotifyOff, newUpdateOff ->
-                notifyOff = newNotifyOff
-                updateOff = newUpdateOff
-                prefs.edit {
-                    putStringSet("list_notify_off", newNotifyOff)
-                    putStringSet("list_update_off", newUpdateOff)
-                }
-            },
-            pauseLocalCovers = coverPrefetchStatus.contains("left") ||
-                coverPrefetchStatus.startsWith("Queued")
-        )
+                rssNovels = novels,
+                rssStatus = statusMessage,
+                checkHours = checkHours,
+                loginState = loginState,
+                readTitles = readTitles,
+                lastRead = lastRead,
+                coverCache = coverCache,
+                notifyOff = notifyOff,
+                updateOff = updateOff,
+                isRefreshing = isRefreshing,
+                onRefresh = { refreshKey += 1 },
+                onNovelClick = { novel -> selectedNovel = novel },
+                onCoverFound = { title, url -> rememberCover(title, url) },
+                onListsLoaded = { parsed -> if (parsed.isNotEmpty()) readingLists = parsed },
+                onOpenSettings = { showSettings = true },
+                onEditLists = { showEditLists = true },
+                onSaveListOptions = { newNotifyOff, newUpdateOff ->
+                    notifyOff = newNotifyOff
+                    updateOff = newUpdateOff
+                    prefs.edit {
+                        putStringSet("list_notify_off", newNotifyOff)
+                        putStringSet("list_update_off", newUpdateOff)
+                    }
+                },
+                pauseLocalCovers = coverPrefetchStatus.contains("left") ||
+                    coverPrefetchStatus.startsWith("Queued") ||
+                    coverPrefetchStatus.contains("list")
+            )
         }
         else -> NovelDetailScreen(
             novel = selectedWithCover,
