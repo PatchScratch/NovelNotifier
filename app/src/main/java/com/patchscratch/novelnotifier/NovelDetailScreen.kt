@@ -124,19 +124,32 @@ fun NovelDetailScreen(
     var showChallenge by remember { mutableStateOf(false) } // true = expand WebView so user can pass CF
     val listState = rememberLazyListState()
     val changeLists = availableLists.ifEmpty { page.lists }
+    val knownListName = remember(novel.title, novel.seriesUrl) {
+        listNameForTitle(loadListSnapshot(context), novel.title, novel.seriesUrl)
+    }
 
     // Cache-first: never scrape just because the user opened the series.
-    LaunchedEffect(novel.seriesUrl, novel.latestChapter) {
+    LaunchedEffect(novel.seriesUrl, novel.latestChapter, knownListName) {
         val cached = loadSeriesCache(context, novel.seriesUrl)
         if (cached != null) {
-            page = cached.first
-            seriesSid = cached.first.sid.ifBlank { seriesSid }
-            maxPage = cached.first.maxPage.coerceAtLeast(1)
+            val loaded = if (isRealListName(cached.first.currentList)) {
+                cached.first
+            } else {
+                cached.first.copy(currentList = knownListName)
+            }
+            page = loaded
+            seriesSid = loaded.sid.ifBlank { seriesSid }
+            maxPage = loaded.maxPage.coerceAtLeast(1)
             loadedPage = cached.second
             wantPage = cached.second.coerceAtLeast(1)
             loadingMore = false
             pageLoadFailed = false
-            if (cached.first.coverUrl.startsWith("http")) onCoverFound(cached.first.coverUrl)
+            if (loaded.coverUrl.startsWith("http")) onCoverFound(loaded.coverUrl)
+            if (loaded.currentList != cached.first.currentList) {
+                saveSeriesCache(context, novel.seriesUrl, loaded, cached.second)
+            }
+        } else if (knownListName.isNotBlank()) {
+            page = page.copy(currentList = knownListName)
         }
         val stale = seriesNeedsRefresh(context, novel)
         allowNetwork = cached == null
@@ -764,7 +777,9 @@ fun NovelDetailScreen(
                                 type = parsed.type.ifBlank { page.type },
                                 status = parsed.status.ifBlank { page.status },
                                 coverUrl = parsed.coverUrl.ifBlank { page.coverUrl },
-                                currentList = parsed.currentList.ifBlank { page.currentList },
+                                currentList = listOf(parsed.currentList, page.currentList, knownListName)
+                                    .firstOrNull(::isRealListName)
+                                    .orEmpty(),
                                 lists = parsed.lists.ifEmpty { page.lists },
                                 releases = mergedReleases,
                                 maxPage = maxOf(page.maxPage, parsed.maxPage),
@@ -842,6 +857,13 @@ fun NovelDetailScreen(
                         if (raw.startsWith("picked=")) {
                             if (moveName.isNotBlank()) {
                                 page = page.copy(currentList = moveName)
+                                moveTitleToList(
+                                    context,
+                                    novel.title,
+                                    novel.seriesUrl,
+                                    moveId.substringBefore(":::"),
+                                    moveName
+                                )
                             }
                             listStatus = "Moved on Novel Updates"
                         } else {

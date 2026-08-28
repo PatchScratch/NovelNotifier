@@ -30,6 +30,63 @@ private fun seriesDir(context: Context) = context.filesDir.resolve("series_cache
 private fun seriesFile(context: Context, seriesUrl: String) =
     seriesDir(context).resolve(seriesUrl.hashCode().toUInt().toString() + ".json")
 
+/**
+ * NU allows a series on only one reading list. When we learn it is on [listId],
+ * drop it from every other cached list so a CHANGE LIST does not leave a ghost row.
+ */
+fun putExclusiveList(
+    novelsByList: Map<String, List<Novel>>,
+    listId: String,
+    rows: List<Novel>
+): Map<String, List<Novel>> {
+    val titles = rows.map { it.title.lowercase() }.toSet()
+    val urls = rows.map { it.seriesUrl }.filter { it.isNotBlank() }.toSet()
+    val next = novelsByList.mapValues { (id, existing) ->
+        if (id == listId) rows
+        else existing.filterNot { row ->
+            row.title.lowercase() in titles ||
+                (row.seriesUrl.isNotBlank() && row.seriesUrl in urls)
+        }
+    }.toMutableMap()
+    next[listId] = rows
+    return next
+}
+
+fun moveTitleToList(
+    context: Context,
+    title: String,
+    seriesUrl: String,
+    listId: String,
+    listName: String
+) {
+    if (listId.isBlank() || title.isBlank()) return
+    val snap = loadListSnapshot(context)
+    val row = snap.novelsByList.values.flatten().firstOrNull { novel ->
+        novel.title.equals(title, ignoreCase = true) ||
+            (seriesUrl.isNotBlank() && novel.seriesUrl == seriesUrl)
+    } ?: Novel(title = title, latestChapter = "", seriesUrl = seriesUrl)
+    val next = putExclusiveList(snap.novelsByList, listId, listOf(row) + snap.novelsByList[listId].orEmpty().filterNot {
+        it.title.equals(title, ignoreCase = true) ||
+            (seriesUrl.isNotBlank() && it.seriesUrl == seriesUrl)
+    })
+    val lists = if (snap.lists.any { it.id == listId }) snap.lists else snap.lists + ReadingList(listId, listName)
+    saveListSnapshot(context, snap.copy(lists = lists, novelsByList = next))
+}
+
+/** Which reading list contains this title. One list only on the site. */
+fun listNameForTitle(snapshot: ListSnapshot, title: String, seriesUrl: String = ""): String {
+    if (title.isBlank() && seriesUrl.isBlank()) return ""
+    for (list in snapshot.lists) {
+        val rows = snapshot.novelsByList[list.id].orEmpty()
+        val hit = rows.any { row ->
+            row.title.equals(title, ignoreCase = true) ||
+                (seriesUrl.isNotBlank() && row.seriesUrl == seriesUrl)
+        }
+        if (hit && isRealListName(list.name)) return list.name
+    }
+    return ""
+}
+
 /** Read list_cache.json. Missing or corrupt file → empty snapshot, never a crash. */
 fun loadListSnapshot(context: Context): ListSnapshot {
     return try {

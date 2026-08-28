@@ -594,7 +594,7 @@ fun NovelListScreen(
                                 }
                                 val stamped = stampChapterTimes(listNovels, parsedNovels)
                                 val changed = chapterChangeCount(listNovels, stamped)
-                                val nextMap = novelsByList + (selectedListId to stamped)
+                                val nextMap = putExclusiveList(novelsByList, selectedListId, stamped)
                                 listNovels = stamped
                                 novelsByList = nextMap
                                 saveListSnapshot(

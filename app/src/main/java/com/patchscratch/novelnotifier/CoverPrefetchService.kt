@@ -405,7 +405,7 @@ class CoverPrefetchService : Service() {
             if (parsed.isEmpty()) return
             saveCoverCache(prefs, covers)
             val snap = loadListSnapshot(context)
-            val nextMap = snap.novelsByList + (list.id to parsed)
+            val nextMap = putExclusiveList(snap.novelsByList, list.id, parsed)
             saveListSnapshot(
                 context,
                 snap.copy(
