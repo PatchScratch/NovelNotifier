@@ -1,0 +1,126 @@
+package com.patchscratch.novelnotifier
+
+import android.annotation.SuppressLint
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Cover helpers used by the list screen.
+ *
+ * CoverPrefetcher — hidden WebView that opens one series page at a time and
+ *                   copies `.seriesimg img` src. [gapSeconds] spaces hits out
+ *                   so Cloudflare is less likely to trip. A "Just a moment"
+ *                   page waits 20s, then skips that title to the end of the queue.
+ *
+ * CoverThumb      — Coil image, or an empty grey box if we have no URL yet.
+ *
+ * Bulk prefetch (hundreds of covers after you leave the app) lives in
+ * CoverPrefetchService.kt, not here.
+ *
+ * getValue / setValue are used by the `by` keyword. Do not delete those imports.
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun CoverPrefetcher(
+    queue: List<Novel>,
+    onCoverFound: (String, String) -> Unit,
+    onSkip: (String) -> Unit,
+    gapSeconds: Int = 8
+) {
+    val next = queue.firstOrNull() ?: return
+    var canLoad by remember(next.title) { mutableStateOf(false) }
+    var tries by remember(next.title) { mutableIntStateOf(0) }
+
+    LaunchedEffect(next.title, tries) {
+        canLoad = false
+        delay((if (tries > 0) 20 else gapSeconds).seconds)
+        canLoad = true
+    }
+
+    if (!canLoad) return
+
+    AndroidView(
+        modifier = Modifier
+            .size(1.dp)
+            .alpha(0f)
+            .offset(x = 4000.dp),
+        factory = { context ->
+            WebView(context).apply {
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                CookieManager.getInstance().setAcceptCookie(true)
+            }
+        },
+        update = { webView ->
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    val script = """
+                        (function() {
+                          if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
+                            return 'CF';
+                          }
+                          var img = document.querySelector('.seriesimg img, .serieseditimg img');
+                          return img ? (img.src || '') : '';
+                        })();
+                    """.trimIndent()
+                    view?.evaluateJavascript(script) { result ->
+                        val cover = unwrapJsResult(result)
+                        when {
+                            cover.startsWith("http") -> onCoverFound(next.title, cover)
+                            cover == "CF" || tries < 2 -> {
+                                tries += 1
+                                canLoad = false
+                            }
+                            else -> onSkip(next.title)
+                        }
+                    }
+                }
+            }
+            val current = webView.url ?: ""
+            if (current != next.seriesUrl) {
+                webView.loadUrl(next.seriesUrl)
+            }
+        }
+    )
+}
+
+/** Small cover tile. Coil downloads the image; blank url → grey placeholder. */
+@Composable
+fun CoverThumb(url: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.clip(MaterialTheme.shapes.small),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        if (url.isNotBlank()) {
+            AsyncImage(
+                model = url,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
