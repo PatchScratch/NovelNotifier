@@ -1,3 +1,5 @@
+@file:Suppress("SpellCheckingInspection")
+
 package com.patchscratch.novelnotifier
 
 import android.annotation.SuppressLint
@@ -54,8 +56,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
@@ -67,7 +70,7 @@ import kotlinx.coroutines.launch
  *   `remember { mutableStateOf(...) }` keeps a value across redraws.
  *   `by` is a Kotlin *property delegate*. That is why we import getValue and
  *   setValue even though they never appear as function calls — do not delete them.
- *   Bumping [listReloadKey] or [siteSync] is how we tell the hidden WebView
+ *   Bumping listReloadKey or siteSync is how we tell the hidden WebView
  *   "load this list again".
  *
  * Paint order:
@@ -380,7 +383,9 @@ fun NovelListScreen(
                             )
                         }
                     } else if (layoutMode == LAYOUT_GRID) {
-                        val widthDp = LocalConfiguration.current.screenWidthDp
+                        val widthDp = with(LocalDensity.current) {
+                            LocalWindowInfo.current.containerSize.width.toDp()
+                        }.value.toInt()
                         val columns = when {
                             widthDp >= 840 -> 5
                             widthDp >= 600 -> 4
