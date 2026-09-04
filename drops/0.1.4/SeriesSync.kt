@@ -73,9 +73,7 @@ fun SeriesChapterFetcher(
                 override fun onPageFinished(view: WebView?, url: String?) {
                     val script = """
                         (function() {
-                          if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                            return 'CF';
-                          }
+                          $CF_DETECT_JS
                           function text(sel) {
                             var el = document.querySelector(sel);
                             return el ? (el.innerText || el.textContent || '').trim() : '';

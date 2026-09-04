@@ -175,6 +175,18 @@ fun NovelDetailScreen(
         }
     }
 
+    LaunchedEffect(allowNetwork, loadKey, showChallenge, loadingMore) {
+        if (!allowNetwork || showChallenge || !loadingMore) return@LaunchedEffect
+        delay(8.seconds)
+        if (allowNetwork && loadingMore && !showChallenge) {
+            showChallenge = true
+            markSiteCheckNeeded(
+                context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+            )
+            listStatus = "Site check needed — complete it below"
+        }
+    }
+
     val cover = page.coverUrl.ifBlank { novel.coverUrl }
     val lastReadNum = lastRead?.first?.let(::chapterNum) ?: -1
     val expectedNextNum = if (lastReadNum > 0) lastReadNum + 1 else -1
@@ -652,6 +664,7 @@ fun NovelDetailScreen(
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 }
@@ -661,9 +674,7 @@ fun NovelDetailScreen(
                     override fun onPageFinished(view: WebView?, url: String?) {
                         val script = """
                             (function() {
-                              if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                                return 'CF';
-                              }
+                              $CF_DETECT_JS
                               function text(sel) {
                                 var el = document.querySelector(sel);
                                 return el ? (el.innerText || el.textContent || '').trim() : '';
@@ -756,10 +767,13 @@ fun NovelDetailScreen(
                         """.trimIndent()
                         view?.evaluateJavascript(script) { result ->
                             val rawJson = unwrapJsResult(result)
-                            if (rawJson == "CF") {
+                            if (rawJson == "CF" || isCloudflareUrl(url)) {
                                 pageLoadFailed = true
                                 loadingMore = false
                                 showChallenge = true
+                                markSiteCheckNeeded(
+                                    context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+                                )
                                 listStatus = "Site check needed — complete it below"
                                 return@evaluateJavascript
                             }

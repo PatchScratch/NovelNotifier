@@ -51,6 +51,18 @@ fun markListSynced(prefs: android.content.SharedPreferences) {
     prefs.edit { putLong("last_list_sync", System.currentTimeMillis()) }
 }
 
+fun markSiteCheckNeeded(prefs: android.content.SharedPreferences) {
+    prefs.edit { putBoolean("cf_needed", true) }
+}
+
+fun clearSiteCheckNeeded(prefs: android.content.SharedPreferences) {
+    prefs.edit { putBoolean("cf_needed", false) }
+}
+
+fun siteCheckNeeded(prefs: android.content.SharedPreferences): Boolean {
+    return prefs.getBoolean("cf_needed", false)
+}
+
 /** Human line for the list header, e.g. "synced 3m ago". */
 fun lastListSyncLabel(prefs: android.content.SharedPreferences): String {
     val last = prefs.getLong("last_list_sync", 0L)

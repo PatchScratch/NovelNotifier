@@ -5,6 +5,7 @@ package com.patchscratch.novelnotifier
 import android.annotation.SuppressLint
 import android.content.Context
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -41,6 +43,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberDrawerState
@@ -61,7 +64,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Home screen: hamburger drawer of reading lists, cover tiles, pull-to-refresh.
@@ -123,6 +128,7 @@ fun NovelListScreen(
     var listStatus by remember { mutableStateOf("") }
     var listReloadKey by remember { mutableIntStateOf(0) }
     var siteSync by remember { mutableIntStateOf(0) }
+    var showChallenge by remember { mutableStateOf(false) }
     var coverQueue by remember { mutableStateOf(emptyList<Novel>()) }
     var showListOptions by remember { mutableStateOf(false) }
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
@@ -177,6 +183,21 @@ fun NovelListScreen(
             siteSync += 1
             listStatus = "Loading lists..."
         }
+        if (siteCheckNeeded(prefs)) {
+            showChallenge = true
+            siteSync += 1
+            listStatus = "Site check needed — complete it below"
+        }
+    }
+
+    LaunchedEffect(siteSync, listReloadKey, showChallenge) {
+        if (siteSync == 0 || showChallenge) return@LaunchedEffect
+        delay(8.seconds)
+        if (siteSync > 0 && !showChallenge) {
+            showChallenge = true
+            markSiteCheckNeeded(prefs)
+            listStatus = "Site check needed — complete it below"
+        }
     }
 
     // List options is its own full screen. return so the drawer is not drawn under it.
@@ -224,6 +245,7 @@ fun NovelListScreen(
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -439,28 +461,77 @@ fun NovelListScreen(
         }
     }
 
-    // Hidden 1dp WebView, parked off-screen so it never flashes over the grid.
-    // siteSync > 0 is the "please scrape" flag. JavaScript returns:
-    //   "id===List Name|||id===Other:::NOVELS:::Title===c12===url===cover|||..."
-    if (siteSync > 0) AndroidView(
-        modifier = Modifier
-            .size(1.dp)
-            .alpha(0f)
-            .offset(x = 4000.dp),
-        factory = { context ->
-            WebView(context).apply {
+    // Hidden 1dp WebView unless Cloudflare needs a real window.
+    if (siteSync > 0 || showChallenge) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+        ) {
+            if (showChallenge) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Complete the site check if you see one",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    TextButton(onClick = {
+                        showChallenge = false
+                        listStatus = "Site check closed — pull to retry"
+                    }) { Text("Close") }
+                }
+            }
+            AndroidView(
+        modifier = if (showChallenge) {
+            Modifier
+                .fillMaxWidth()
+                .height(420.dp)
+                .padding(horizontal = 8.dp)
+        } else {
+            Modifier
+                .size(1.dp)
+                .alpha(0f)
+                .offset(x = 4000.dp)
+        },
+        factory = { ctx ->
+            WebView(ctx).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                webChromeClient = object : WebChromeClient() {
+                    override fun onReceivedTitle(view: WebView?, title: String?) {
+                        if (isCloudflareTitle(title)) {
+                            showChallenge = true
+                            markSiteCheckNeeded(prefs)
+                            listStatus = "Site check needed — complete it below"
+                        }
+                    }
+                }
                 webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                        if (isCloudflareUrl(url)) {
+                            showChallenge = true
+                            markSiteCheckNeeded(prefs)
+                            listStatus = "Site check needed — complete it below"
+                        }
+                    }
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        if (isCloudflareUrl(url) || isCloudflareTitle(view?.title)) {
+                            showChallenge = true
+                            markSiteCheckNeeded(prefs)
+                            listStatus = "Site check needed — complete it below"
+                        }
                         val script = """
                             (function() {
-                              if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                                return 'CF';
-                              }
+                              $CF_DETECT_JS
                               var found = {};
                               var order = [];
                               function isJunk(name) {
@@ -561,8 +632,10 @@ fun NovelListScreen(
                         """.trimIndent()
                         view?.evaluateJavascript(script) { result ->
                             val raw = unwrapJsResult(result)
-                            if (raw == "CF") {
-                                listStatus = "Site check on reading list — pull to retry after it clears"
+                            if (raw == "CF" || isCloudflareUrl(url)) {
+                                showChallenge = true
+                                markSiteCheckNeeded(prefs)
+                                listStatus = "Site check needed — complete it below"
                                 return@evaluateJavascript
                             }
                             val parts = raw.split(":::NOVELS:::")
@@ -661,6 +734,8 @@ fun NovelListScreen(
                                     markListSynced(
                                         context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
                                     )
+                                    clearSiteCheckNeeded(prefs)
+                                    showChallenge = false
                                 }
                                 listStatus = when {
                                     parsedNovels.isEmpty() -> "No series found in $selectedList"
@@ -681,15 +756,17 @@ fun NovelListScreen(
                 "https://www.novelupdates.com/reading-list/?list=$selectedListId"
             }
             val current = webView.url ?: ""
-            if (siteSync > 0 && (listReloadKey > 0 || selectedListId.isNotBlank())) {
+            if (siteSync > 0 && (listReloadKey > 0 || selectedListId.isNotBlank() || showChallenge)) {
                 if (!current.startsWith(target)) webView.loadUrl(target)
             }
         }
     )
+        }
+    }
 
     // In-list cover grabber. CoverPrefetchService (Settings) is the bulk path;
     // this one only fills gaps for the list currently on screen.
-    if (!pauseLocalCovers) CoverPrefetcher(
+    if (!pauseLocalCovers && !showChallenge) CoverPrefetcher(
         queue = coverQueue,
         onCoverFound = { title, url ->
             onCoverFound(title, url)
@@ -703,6 +780,7 @@ fun NovelListScreen(
             coverQueue = coverQueue.filterNot { it.title == title } + listOfNotNull(skipped)
         }
     )
+    }
 }
 
 @Composable

@@ -93,6 +93,7 @@ class CoverPrefetchService : Service() {
         return webView ?: WebView(applicationContext).also { created ->
             created.settings.javaScriptEnabled = true
             created.settings.domStorageEnabled = true
+            created.settings.userAgentString = chromeMobileUserAgent(created.settings.userAgentString)
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(created, true)
             webView = created
@@ -111,9 +112,7 @@ class CoverPrefetchService : Service() {
             override fun onPageFinished(page: WebView?, url: String?) {
                 val script = """
                     (function() {
-                      if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                        return 'CF';
-                      }
+                      $CF_DETECT_JS
                       var novels = [];
                       function isJunkTitle(title) {
                         return /^(series information|description|latest release|status|notes|latest series)$/i.test(title);
@@ -157,8 +156,12 @@ class CoverPrefetchService : Service() {
                             handler.postDelayed({ page.loadUrl(target) }, CF_WAIT_MS)
                         }
                         result == "CF" -> {
-                            rotateFirstList(this@CoverPrefetchService)
-                            handler.postDelayed({ processNext() }, CF_WAIT_MS)
+                            markSiteCheckNeeded(
+                                getSharedPreferences("novel_prefs", MODE_PRIVATE)
+                            )
+                            writeStatus(this@CoverPrefetchService, "Site check — open the app")
+                            updateNotification(statusText(this@CoverPrefetchService))
+                            stopSelf()
                         }
                         else -> {
                             mergeHydratedList(this@CoverPrefetchService, list, result)
@@ -182,9 +185,7 @@ class CoverPrefetchService : Service() {
             override fun onPageFinished(page: WebView?, url: String?) {
                 val script = """
                     (function() {
-                      if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                        return 'CF';
-                      }
+                      $CF_DETECT_JS
                       var img = document.querySelector('.seriesimg img, .serieseditimg img');
                       return img ? (img.src || '') : '';
                     })();
@@ -204,6 +205,12 @@ class CoverPrefetchService : Service() {
                             handler.postDelayed({
                                 page.loadUrl(next.seriesUrl)
                             }, CF_WAIT_MS)
+                        }
+                        cover == "CF" -> {
+                            markSiteCheckNeeded(getSharedPreferences("novel_prefs", MODE_PRIVATE))
+                            writeStatus(this@CoverPrefetchService, "Site check — open the app")
+                            updateNotification(statusText(this@CoverPrefetchService))
+                            stopSelf()
                         }
                         else -> {
                             rotateFirst(this@CoverPrefetchService)

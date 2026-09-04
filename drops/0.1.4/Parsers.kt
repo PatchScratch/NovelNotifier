@@ -79,6 +79,46 @@ fun unwrapJsResult(result: String?): String {
         .replace("\\\\", "\\")
 }
 
+/** True for challenge / turnstile URLs. Not a bypass — we still show the check. */
+fun isCloudflareUrl(url: String?): Boolean {
+    val u = url.orEmpty().lowercase()
+    return u.contains("challenges.cloudflare.com") ||
+        u.contains("cf-browser-verification") ||
+        (u.contains("/cdn-cgi/") && (u.contains("challenge") || u.contains("turnstile")))
+}
+
+fun isCloudflareTitle(title: String?): Boolean {
+    val t = title.orEmpty()
+    return t.contains("just a moment", ignoreCase = true) ||
+        t.contains("attention required", ignoreCase = true) ||
+        t.contains("verify you are human", ignoreCase = true)
+}
+
+/**
+ * Drop the "; wv" WebView token. Cloudflare often hangs a wv UA instead of
+ * showing the checkbox. This is still a WebView — the user must complete the check.
+ */
+fun chromeMobileUserAgent(current: String): String {
+    val trimmed = current.replace("; wv", "").replace(";wv", "")
+    return trimmed.ifBlank {
+        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+    }
+}
+
+/** JS snippet: return 'CF' if this document is a Cloudflare interstitial. */
+const val CF_DETECT_JS = """
+  function nuIsCf() {
+    var t = ((document.body && (document.body.innerText || document.body.textContent)) || '').slice(0, 4000);
+    var title = document.title || '';
+    var html = (document.documentElement && document.documentElement.innerHTML || '').slice(0, 6000);
+    var blob = (t + ' ' + title + ' ' + html).toLowerCase();
+    if (/just a moment|verify you are human|checking your browser|attention required|enable javascript and cookies|cf-turnstile|challenge-platform|cf-browser-verification|why have i been blocked/.test(blob)) return true;
+    if (document.querySelector('#challenge-form, .cf-browser-verification, .cf-turnstile, iframe[src*="challenges.cloudflare"], iframe[src*="turnstile"]')) return true;
+    return false;
+  }
+  if (nuIsCf()) return 'CF';
+"""
+
 /** Parse the JSON blob the series WebView returns. Bad JSON → empty SeriesPage. */
 fun parseSeriesPage(raw: String): SeriesPage {
     if (raw.isBlank()) return SeriesPage()
