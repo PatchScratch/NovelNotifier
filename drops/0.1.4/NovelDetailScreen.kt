@@ -283,7 +283,7 @@ fun NovelDetailScreen(
         }
     }
 
-    // Pages load only from LOAD MORE / RETRY / ⋮ Refresh. Auto-scroll used to skip pages.
+    // Extra pages: prefetch 1..max with a 2s gap, or scroll near the end.
 
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
@@ -438,7 +438,7 @@ fun NovelDetailScreen(
                                     nextUnread != null ->
                                         "${nextUnread.chapter}  by ${nextUnread.group}"
                                     expectedNextNum > 0 ->
-                                        "c$expectedNextNum is not in the loaded pages yet. Use LOAD MORE."
+                                        "c$expectedNextNum is not in the loaded pages yet. Wait for cache or scroll RELEASES."
                                     else -> "No chapter link found"
                                 },
                                 modifier = Modifier.padding(top = 8.dp)
