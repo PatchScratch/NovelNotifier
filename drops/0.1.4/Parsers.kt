@@ -54,6 +54,26 @@ fun highestReadRelease(releases: List<Release>): Release? {
         ?.takeIf { chapterNum(it.chapter) > 0 }
 }
 
+fun sortedReleases(releases: List<Release>, newestFirst: Boolean): List<Release> {
+    return if (newestFirst) {
+        releases.sortedByDescending { row ->
+            val n = chapterNum(row.chapter)
+            if (n < 0) Int.MIN_VALUE else n
+        }
+    } else {
+        releases.sortedBy { row ->
+            val n = chapterNum(row.chapter)
+            if (n < 0) Int.MAX_VALUE else n
+        }
+    }
+}
+
+fun cacheHasAllPages(maxPage: Int, loadedPage: Int, releaseCount: Int): Boolean {
+    if (releaseCount <= 0) return false
+    if (maxPage <= 1) return true
+    return loadedPage >= maxPage
+}
+
 fun isRealListName(name: String): Boolean {
     val t = name.trim()
     if (t.isBlank()) return false
