@@ -591,8 +591,7 @@ fun NovelDetailScreen(
                         ) { index ->
                             val release = shownReleases[index]
                             val thisNum = chapterNum(release.chapter)
-                            val isRead = release.read ||
-                                (lastReadNum > 0 && thisNum > 0 && thisNum <= lastReadNum)
+                            val isRead = lastReadNum > 0 && thisNum > 0 && thisNum == lastReadNum
                             key("${release.chapter}|${release.url}|$index") {
                                 Row(
                                     modifier = Modifier
