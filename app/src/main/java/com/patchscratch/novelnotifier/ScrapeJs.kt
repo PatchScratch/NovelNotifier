@@ -11,8 +11,8 @@ import org.json.JSONObject
  *   seriesPageJs() — series page → INFO + RELEASES rows + list dropdown + sid.
  *   coverJs()      — series page → cover image URL only.
  *   moveToListJs() — CHANGE LIST: pick select#taskOption + fire jQuery change.
- *   readToggleJs() — READ POSITION: tick a chapter and/or untick the rows
- *                    above it (moving the position back / clearing it).
+ *   moveReadMarkerJs() — READ POSITION: one call moves NU's single tick to a
+ *                        chapter (rid="0" clears it).
  *
  * Kotlin raw strings keep backslashes literal, so the JS regexes appear
  * exactly as they must reach the WebView. Duplicated copies of these scripts
@@ -298,45 +298,31 @@ fun moveToListJs(moveId: String): String = """
 """.trimIndent()
 
 /**
- * MARK AS READ / MOVE READ POSITION. Ticks chklist{tickRid} (if given) and
- * unticks every rid in [untickRids] — Novel Updates' position is simply the
- * highest ticked checkbox, so moving the position BACK means unticking the
- * chapters above the new one. Each row is one GET of readinglist_update.php,
- * exactly the calls the site's own checkbox UI makes. [sidFallback] is the
- * cached #mypostid when the live page has none.
- * Returns "ok <ticked>/<unticked> fail <n>" or "missing sid".
+ * MOVE READ POSITION — one call. NU keeps a single tick per series (the read
+ * position); checking any row's checkbox MOVES the marker there and the site
+ * clears the old one itself, so no unticking is ever needed. The special rid
+ * "0" is the site's clear-position call (`rid=0`, no checked param — the same
+ * endpoint the original app used). [sidFallback] is the cached #mypostid when
+ * the live page has none. Returns "ok <status>" or "missing sid".
  */
-fun readToggleJs(tickRid: String, untickRids: List<String>, sidFallback: String): String {
-    val untickJson = org.json.JSONArray(untickRids).toString()
-    return """
+fun moveReadMarkerJs(rid: String, sidFallback: String): String = """
     (function() {
+      var rid = ${JSONObject.quote(rid)};
       var sid = (document.querySelector('#mypostid') || {}).value || ${JSONObject.quote(sidFallback)};
       if (!sid) return 'missing sid';
-      var untick = $untickJson;
-      var tickRid = ${JSONObject.quote(tickRid)};
-      var ok = 0; var fail = 0;
-      function update(rid, checked) {
-        try {
-          var xhr = new XMLHttpRequest();
-          xhr.open('GET', '/readinglist_update.php?rid=' + encodeURIComponent(rid) + '&sid=' + encodeURIComponent(sid) + (checked ? '&checked=yes' : '&checked=no'), false);
-          xhr.send(null);
-          if (xhr.status == 200) { ok++; return true; }
-        } catch (e) {}
-        fail++;
-        return false;
+      var qs = '/readinglist_update.php?rid=' + encodeURIComponent(rid) + '&sid=' + encodeURIComponent(sid);
+      if (rid !== '0') qs += '&checked=yes';
+      if (rid !== '0') {
+        var box = document.getElementById('chklist' + rid);
+        if (box) { box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); }
       }
-      for (var i = 0; i < untick.length; i++) {
-        if (!untick[i]) continue;
-        var box = document.getElementById('chklist' + untick[i]);
-        if (box) { box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); }
-        update(untick[i], false);
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', qs, false);
+        xhr.send(null);
+        return 'ok ' + xhr.status;
+      } catch (e) {
+        return 'err';
       }
-      if (tickRid) {
-        var tickBox = document.getElementById('chklist' + tickRid);
-        if (tickBox) { tickBox.checked = true; tickBox.dispatchEvent(new Event('change', { bubbles: true })); }
-        update(tickRid, true);
-      }
-      return 'ok ' + ok + ' fail ' + fail;
     })();
     """.trimIndent()
-}
