@@ -11,7 +11,8 @@ import org.json.JSONObject
  *   seriesPageJs() — series page → INFO + RELEASES rows + list dropdown + sid.
  *   coverJs()      — series page → cover image URL only.
  *   moveToListJs() — CHANGE LIST: pick select#taskOption + fire jQuery change.
- *   markReadJs()   — MARK AS READ: tick chklist{rid} + GET readinglist_update.php.
+ *   readToggleJs() — READ POSITION: tick a chapter and/or untick the rows
+ *                    above it (moving the position back / clearing it).
  *
  * Kotlin raw strings keep backslashes literal, so the JS regexes appear
  * exactly as they must reach the WebView. Duplicated copies of these scripts
@@ -297,24 +298,45 @@ fun moveToListJs(moveId: String): String = """
 """.trimIndent()
 
 /**
- * MARK AS READ. Ticks chklist{rid} and GETs readinglist_update.php.
- * [sidFallback] is the cached #mypostid when the live page has none.
- * Returns "read 200 rid=…" on success.
+ * MARK AS READ / MOVE READ POSITION. Ticks chklist{tickRid} (if given) and
+ * unticks every rid in [untickRids] — Novel Updates' position is simply the
+ * highest ticked checkbox, so moving the position BACK means unticking the
+ * chapters above the new one. Each row is one GET of readinglist_update.php,
+ * exactly the calls the site's own checkbox UI makes. [sidFallback] is the
+ * cached #mypostid when the live page has none.
+ * Returns "ok <ticked>/<unticked> fail <n>" or "missing sid".
  */
-fun markReadJs(rid: String, sidFallback: String): String = """
+fun readToggleJs(tickRid: String, untickRids: List<String>, sidFallback: String): String {
+    val untickJson = org.json.JSONArray(untickRids).toString()
+    return """
     (function() {
-      var rid = ${JSONObject.quote(rid)};
       var sid = (document.querySelector('#mypostid') || {}).value || ${JSONObject.quote(sidFallback)};
-      if (!rid || !sid) return 'missing rid=' + rid + ' sid=' + sid;
-      var box = document.getElementById('chklist' + rid);
-      if (box) { box.checked = true; box.click(); }
-      try {
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', '/readinglist_update.php?rid=' + encodeURIComponent(rid) + '&sid=' + encodeURIComponent(sid) + '&checked=yes', false);
-        xhr.send(null);
-        return 'read ' + xhr.status + ' rid=' + rid;
-      } catch (e) {
-        return 'read-err';
+      if (!sid) return 'missing sid';
+      var untick = $untickJson;
+      var tickRid = ${JSONObject.quote(tickRid)};
+      var ok = 0; var fail = 0;
+      function update(rid, checked) {
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', '/readinglist_update.php?rid=' + encodeURIComponent(rid) + '&sid=' + encodeURIComponent(sid) + (checked ? '&checked=yes' : '&checked=no'), false);
+          xhr.send(null);
+          if (xhr.status == 200) { ok++; return true; }
+        } catch (e) {}
+        fail++;
+        return false;
       }
+      for (var i = 0; i < untick.length; i++) {
+        if (!untick[i]) continue;
+        var box = document.getElementById('chklist' + untick[i]);
+        if (box) { box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); }
+        update(untick[i], false);
+      }
+      if (tickRid) {
+        var tickBox = document.getElementById('chklist' + tickRid);
+        if (tickBox) { tickBox.checked = true; tickBox.dispatchEvent(new Event('change', { bubbles: true })); }
+        update(tickRid, true);
+      }
+      return 'ok ' + ok + ' fail ' + fail;
     })();
-""".trimIndent()
+    """.trimIndent()
+}

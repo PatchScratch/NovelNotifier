@@ -118,6 +118,10 @@ fun NovelDetailScreen(
     var pendingMoveId by remember { mutableStateOf<String?>(null) } // "listId:::listName" for CHANGE LIST JS
     var pendingReadRid by remember { mutableStateOf<String?>(null) } // checkbox id for mark-as-read JS
     var pendingReadChapter by remember { mutableStateOf<String?>(null) } // resolve rid after scrape if cache had none
+    // Back-track support: rids to UNTICK alongside the tick above — NU's read
+    // position is the highest ticked chapter, so moving it down means unticking
+    // everything above the new position (see readToggleJs).
+    var pendingUntickRids by remember { mutableStateOf<List<String>>(emptyList()) }
     var listStatus by remember { mutableStateOf("") }
     var loadedPage by remember { mutableIntStateOf(0) }
     var wantPage by remember { mutableIntStateOf(1) }
@@ -635,12 +639,57 @@ fun NovelDetailScreen(
                                     Checkbox(
                                         checked = isRead,
                                         onCheckedChange = { checked ->
-                                            onSetLastRead(release.chapter, release.url, checked)
+                                            val thisNum = chapterNum(release.chapter)
                                             if (checked) {
+                                                onSetLastRead(release.chapter, release.url, true)
+                                                if (thisNum > 0 && lastReadNum > 0 && thisNum < lastReadNum) {
+                                                    // Back-track: untick every read chapter above the
+                                                    // new position so the site's marker moves DOWN.
+                                                    // The floor stops the read feed from undoing it.
+                                                    recordReadFloor(
+                                                    context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
+                                                    novel.title, thisNum)
+                                                    pendingUntickRids = page.releases
+                                                        .filter {
+                                                            it.read &&
+                                                                chapterNum(it.chapter) in (thisNum + 1)..lastReadNum &&
+                                                                it.rid.isNotBlank()
+                                                        }
+                                                        .map { it.rid }
+                                                    listStatus = "Moving read position back to ${release.chapter}…"
+                                                }
                                                 if (release.rid.isNotBlank()) {
                                                     pendingReadRid = release.rid
                                                 } else {
                                                     pendingReadChapter = release.chapter
+                                                }
+                                                allowNetwork = true
+                                                loadKey += 1
+                                                onMarkRead()
+                                            } else if (isRead) {
+                                                // Cleared the current position: fall back to the
+                                                // highest read chapter below it, or clear entirely.
+                                                val below = page.releases
+                                                    .filter {
+                                                        it.read && chapterNum(it.chapter) in 1 until lastReadNum &&
+                                                            it.rid.isNotBlank()
+                                                    }
+                                                    .maxByOrNull { chapterNum(it.chapter) }
+                                                if (below != null) {
+                                                    onSetLastRead(below.chapter, below.url, true)
+                                                    recordReadFloor(
+                                                    context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
+                                                    novel.title, chapterNum(below.chapter))
+                                                    listStatus = "Read position moved to ${below.chapter}"
+                                                } else {
+                                                    onSetLastRead(release.chapter, release.url, false)
+                                                    recordReadFloor(
+                                                    context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
+                                                    novel.title, 0)
+                                                    listStatus = "Read position cleared"
+                                                }
+                                                if (release.rid.isNotBlank()) {
+                                                    pendingUntickRids = listOf(release.rid)
                                                 }
                                                 allowNetwork = true
                                                 loadKey += 1
@@ -869,17 +918,37 @@ fun NovelDetailScreen(
                             listStatus = raw.ifBlank { "Could not change list on the site" }
                         }
                     }
-                } else if (pendingReadRid != null && (webView.url ?: "").contains("/series/")) {
-                    // MARK AS READ: tick chklist{rid} and GET readinglist_update.php.
-                    val readRid = pendingReadRid
+                } else if ((pendingReadRid != null || pendingUntickRids.isNotEmpty()) &&
+                    (webView.url ?: "").contains("/series/")
+                ) {
+                    // READ POSITION: tick the new chapter and/or untick the ones
+                    // above it, through the same endpoint the site's own checkboxes use.
+                    val tickRid = pendingReadRid ?: ""
+                    val unticks = pendingUntickRids
                     pendingReadRid = null
-                    val readScript = markReadJs(readRid ?: "", seriesSid)
+                    pendingUntickRids = emptyList()
+                    val readScript = readToggleJs(tickRid, unticks, seriesSid)
                     webView.evaluateJavascript(readScript) { jsResult ->
                         val raw = unwrapJsResult(jsResult)
-                        listStatus = if (raw.startsWith("read 200")) {
-                            "Marked as read on Novel Updates"
-                        } else {
-                            raw.ifBlank { "Could not mark as read on the site" }
+                        listStatus = when {
+                            raw.startsWith("ok") -> "Read position updated on Novel Updates"
+                            raw.startsWith("missing") -> "Could not update — series id missing, try ⋮ Refresh"
+                            else -> raw.ifBlank { "Could not update read position on the site" }
+                        }
+                        DebugLog.log("SERIES", "readToggle tick?=${tickRid.isNotBlank()} untick=${unticks.size} → $raw")
+                        // Mirror the action into the cached page so the UI and the
+                        // next cache read reflect it without waiting for a re-scrape.
+                        val untickSet = unticks.toSet()
+                        val updated = page.copy(releases = page.releases.map { rel ->
+                            when {
+                                rel.rid in untickSet -> rel.copy(read = false)
+                                tickRid.isNotBlank() && rel.rid == tickRid -> rel.copy(read = true)
+                                else -> rel
+                            }
+                        })
+                        page = updated
+                        scope.launch(Dispatchers.IO) {
+                            saveSeriesCache(context, novel.seriesUrl, updated, maxOf(loadedPage, 1))
                         }
                     }
                 } else {

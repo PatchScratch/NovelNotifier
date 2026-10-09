@@ -47,7 +47,10 @@ suspend fun runUpdateCheck(context: Context): String {
     val readUrl = prefs.getString("rss_read_url", "").orEmpty()
     if (readUrl.isNotBlank()) {
         try {
-            val applied = applyReadFeed(prefs, parseRssTitles(fetchRssXml(readUrl)).map(::novelFromRssTitle))
+            val applied = applyReadFeed(
+                prefs,
+                parseRssItems(fetchRssXml(readUrl)).map { novelFromRssTitle(it.title) to it.pubDateMillis }
+            )
             if (applied > 0) DebugLog.log("READSYNC", "applied $applied read chapters")
         } catch (e: Exception) {
             DebugLog.log("READSYNC", "read feed failed", e)

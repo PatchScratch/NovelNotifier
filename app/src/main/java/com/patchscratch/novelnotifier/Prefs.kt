@@ -111,14 +111,26 @@ fun mergeLastReads(
  * Merge the read-activity feed (rss_read_url, the type=read feed NU exposes)
  * into last_read — cross-device read sync: mark a chapter read on the phone,
  * the tablet picks it up on its next check. mergeLastReads keeps the higher
- * chapter, so this can never rewind progress. Returns titles advanced.
+ * chapter, so this can never rewind progress. Items are skipped when they are
+ * older than a deliberate back-track ([loadReadFloors] explains why).
+ * Returns titles advanced.
  */
-fun applyReadFeed(prefs: android.content.SharedPreferences, readNovels: List<Novel>): Int {
-    if (readNovels.isEmpty()) return 0
+fun applyReadFeed(
+    prefs: android.content.SharedPreferences,
+    readItems: List<Pair<Novel, Long>>
+): Int {
+    if (readItems.isEmpty()) return 0
+    val floors = loadReadFloors(prefs)
     val current = loadLastRead(prefs)
-    val incoming = readNovels.mapNotNull { novel ->
-        if (novel.title.isBlank() || chapterNum(novel.latestChapter) <= 0) null
-        else novel.title to (novel.latestChapter to "")
+    val incoming = readItems.mapNotNull { (novel, date) ->
+        if (novel.title.isBlank()) return@mapNotNull null
+        val num = chapterNum(novel.latestChapter)
+        if (num <= 0) return@mapNotNull null
+        val floor = floors[novel.title]
+        if (floor != null && !readFeedItemApplies(floor.first, floor.second, num, date)) {
+            return@mapNotNull null // stale mark from before a deliberate back-track
+        }
+        novel.title to (novel.latestChapter to "")
     }.toMap()
     if (incoming.isEmpty()) return 0
     val merged = mergeLastReads(current, incoming)
@@ -129,6 +141,39 @@ fun applyReadFeed(prefs: android.content.SharedPreferences, readNovels: List<Nov
     }
     if (advanced > 0) saveLastRead(prefs, merged)
     return advanced
+}
+
+/**
+ * May a read-feed item raise the position above a manual back-track floor?
+ * Only if it was marked AFTER the correction — otherwise it is one of the
+ * stale, higher marks the user deliberately moved away from. Pure for tests.
+ */
+fun readFeedItemApplies(floorNum: Int, floorTime: Long, itemNum: Int, itemTime: Long): Boolean {
+    if (floorNum <= 0) return true
+    if (itemNum <= floorNum) return true
+    return itemTime > 0 && itemTime >= floorTime
+}
+
+/**
+ * Manual read-position floors: title → (chapterNum, epochMillis). Written
+ * whenever the user back-tracks or clears the tick in the RELEASES tab, so
+ * the read-activity feed cannot silently undo the correction.
+ */
+fun recordReadFloor(prefs: android.content.SharedPreferences, title: String, chapterNum: Int) {
+    val floors = loadReadFloors(prefs).toMutableMap()
+    floors[title] = chapterNum to System.currentTimeMillis()
+    prefs.edit {
+        putStringSet("read_floor", floors.map { "${it.key}|||${it.value.first}|||${it.value.second}" }.toSet())
+    }
+}
+
+fun loadReadFloors(prefs: android.content.SharedPreferences): Map<String, Pair<Int, Long>> {
+    return loadIdSet(prefs, "read_floor").mapNotNull { row ->
+        val parts = row.split("|||")
+        val num = parts.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
+        val time = parts.getOrNull(2)?.toLongOrNull() ?: return@mapNotNull null
+        parts[0] to (num to time)
+    }.toMap()
 }
 
 const val LAYOUT_LIST = "list"

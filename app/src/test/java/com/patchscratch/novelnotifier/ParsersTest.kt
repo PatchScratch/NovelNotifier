@@ -209,11 +209,25 @@ class ParsersTest {
             <?xml version="1.0"?>
             <rss><channel>
               <title>Feed header (must not appear)</title>
-              <item><title>Alpha c1</title></item>
+              <item><title>Alpha c1</title><pubDate>Fri, 09 Oct 2026 16:22:05 +0800</pubDate></item>
               <item><title>Beta c2</title></item>
             </channel></rss>
         """.trimIndent()
         assertEquals(listOf("Alpha c1", "Beta c2"), parseRssTitles(xml))
+        val items = parseRssItems(xml)
+        assertEquals(2, items.size)
+        assertEquals("Alpha c1", items[0].title)
+        assertTrue_(items[0].pubDateMillis > 0L)
+        // Undated items carry 0 — callers treat them conservatively.
+        assertEquals(0L, items[1].pubDateMillis)
+    }
+
+    @Test
+    fun parseRssDate_handlesRfc822() {
+        assertTrue_(parseRssDate("Fri, 09 Oct 2026 16:22:05 +0800") > 0L)
+        assertTrue_(parseRssDate("09 Oct 2026 16:22:05 +0800") > 0L)
+        assertEquals(0L, parseRssDate(""))
+        assertEquals(0L, parseRssDate("not a date"))
     }
 
     @Test

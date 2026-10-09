@@ -1,6 +1,7 @@
 package com.patchscratch.novelnotifier
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -95,6 +96,24 @@ class CacheHelpersTest {
     fun mergeLastReads_emptyIncomingKeepsCurrent() {
         val current = mapOf("A" to ("c5" to "u1"))
         assertEquals(current, mergeLastReads(current, emptyMap()))
+    }
+
+    // --- read-feed vs manual back-track floor ---
+
+    @Test
+    fun readFeedItemApplies_matrix() {
+        val floorTime = 1_000L
+        // No floor: everything applies.
+        assertTrue(readFeedItemApplies(0, 0L, 999, 0L))
+        // At or below the floor: always applies.
+        assertTrue(readFeedItemApplies(5, floorTime, 5, 500L))
+        assertTrue(readFeedItemApplies(5, floorTime, 3, 0L))
+        // Above the floor: only marks made AFTER the correction apply.
+        assertTrue(readFeedItemApplies(5, floorTime, 9, 1_500L))
+        assertTrue(readFeedItemApplies(5, floorTime, 9, floorTime))
+        assertFalse(readFeedItemApplies(5, floorTime, 9, 999L))
+        // Undated items above the floor are treated as stale.
+        assertFalse(readFeedItemApplies(5, floorTime, 9, 0L))
     }
 
     // --- stampChapterTimes / chapterChangeCount ---

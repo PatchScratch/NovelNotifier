@@ -213,7 +213,10 @@ fun NovelApp() {
                 if (readUrl.isNotBlank()) {
                     try {
                         val applied = withContext(Dispatchers.IO) {
-                            applyReadFeed(prefs, parseRssTitles(fetchRssXml(readUrl)).map(::novelFromRssTitle))
+                            applyReadFeed(
+                                prefs,
+                                parseRssItems(fetchRssXml(readUrl)).map { novelFromRssTitle(it.title) to it.pubDateMillis }
+                            )
                         }
                         if (applied > 0) {
                             lastRead = loadLastRead(prefs)

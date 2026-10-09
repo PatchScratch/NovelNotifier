@@ -281,22 +281,67 @@ fun novelFromRssTitle(rawTitle: String, coverUrl: String = ""): Novel {
 
 /** Walk RSS XML and collect every <item><title>. Uses Android's XmlPullParser. */
 fun parseRssTitles(xml: String): List<String> {
-    val titles = mutableListOf<String>()
+    return parseRssItems(xml).map { it.title }
+}
+
+/** One RSS item: its title and pubDate as epoch millis (0 when undated). */
+data class RssItem(val title: String, val pubDateMillis: Long)
+
+/**
+ * Titles + pubDates from an RSS feed. Dates matter for read sync: after a
+ * deliberate back-track, only marks made AFTER the correction may raise the
+ * position again (see readFeedItemApplies).
+ */
+fun parseRssItems(xml: String): List<RssItem> {
+    val items = mutableListOf<RssItem>()
     val parser = XmlPullParserFactory.newInstance().newPullParser()
     parser.setInput(xml.reader())
     var insideItem = false
+    var title = ""
+    var date = 0L
     var event = parser.eventType
     while (event != XmlPullParser.END_DOCUMENT) {
         when (event) {
             XmlPullParser.START_TAG -> {
-                if (parser.name == "item") insideItem = true
-                if (insideItem && parser.name == "title") titles.add(parser.nextText())
+                if (parser.name == "item") {
+                    insideItem = true
+                    title = ""
+                    date = 0L
+                }
+                if (insideItem && parser.name == "title") title = parser.nextText()
+                if (insideItem && parser.name == "pubDate") {
+                    date = parseRssDate(parser.nextText())
+                }
             }
             XmlPullParser.END_TAG -> {
-                if (parser.name == "item") insideItem = false
+                if (parser.name == "item") {
+                    if (title.isNotBlank()) items.add(RssItem(title, date))
+                    insideItem = false
+                }
             }
         }
         event = parser.next()
     }
-    return titles
+    return items
+}
+
+/** RFC-822 pubDate ("Fri, 09 Oct 2026 16:22:05 +0800") → epoch millis, or 0. */
+fun parseRssDate(raw: String): Long {
+    if (raw.isBlank()) return 0L
+    val trimmed = raw.trim()
+    // Strip the leading day name some feeds repeat ("Fri, Fri, 09 Oct …").
+    val normalized = if (trimmed.count { it == ',' } > 1) trimmed.substringAfter(",") else trimmed
+    val formats = listOf(
+        "EEE, dd MMM yyyy HH:mm:ss Z",
+        "dd MMM yyyy HH:mm:ss Z",
+        "EEE, dd MMM yyyy HH:mm zzz"
+    )
+    for (format in formats) {
+        try {
+            return java.text.SimpleDateFormat(format, java.util.Locale.US)
+                .parse(normalized.trim())?.time ?: 0L
+        } catch (_: Exception) {
+        }
+    }
+    return 0L
 }
