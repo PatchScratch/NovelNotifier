@@ -10,6 +10,7 @@ package com.patchscratch.novelnotifier
  *
  * rid = Novel Updates checkbox id used to mark a chapter read on the site.
  * sid = series post id (#mypostid) used with readinglist_update.php.
+ * read = the site checkbox was ticked, or the row is marked readcolor.
  */
 
 /** One series as it appears on a reading list. */
@@ -33,7 +34,8 @@ data class Release(
     val group: String,
     val date: String,
     val url: String,
-    val rid: String = ""
+    val rid: String = "",
+    val read: Boolean = false
 )
 
 /** Cached / scraped series detail. Empty strings mean "not loaded yet". */

@@ -73,9 +73,7 @@ fun SeriesChapterFetcher(
                 override fun onPageFinished(view: WebView?, url: String?) {
                     val script = """
                         (function() {
-                          if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                            return 'CF';
-                          }
+                          $CF_DETECT_JS
                           function text(sel) {
                             var el = document.querySelector(sel);
                             return el ? (el.innerText || el.textContent || '').trim() : '';
@@ -95,13 +93,20 @@ fun SeriesChapterFetcher(
                             if (!chapter || /^[\-\–—._\s]+$/.test(chapter)) return;
                             var cb = tr.querySelector('input[type=checkbox]');
                             var rid = '';
-                            if (cb && cb.id && cb.id.indexOf('chklist') === 0) rid = cb.id.replace('chklist', '');
+                            var read = false;
+                            if (cb) {
+                              read = !!(cb.checked || cb.getAttribute('checked') !== null);
+                              if (cb.id && cb.id.indexOf('chklist') === 0) rid = cb.id.replace('chklist', '');
+                            }
+                            var rowClass = (tr.className || '').toLowerCase();
+                            if (/readcolor|colorme/.test(rowClass)) read = true;
                             releases.push({
                               chapter: chapter,
                               group: tds[1] ? tds[1].textContent.replace(/\s+/g, ' ').trim() : '',
                               date: tds[0] ? tds[0].textContent.replace(/\s+/g, ' ').trim() : '',
                               url: link.href || '',
-                              rid: rid
+                              rid: rid,
+                              read: read
                             });
                           });
                           return JSON.stringify({

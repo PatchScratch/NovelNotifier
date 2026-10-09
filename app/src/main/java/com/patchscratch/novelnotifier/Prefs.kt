@@ -51,6 +51,18 @@ fun markListSynced(prefs: android.content.SharedPreferences) {
     prefs.edit { putLong("last_list_sync", System.currentTimeMillis()) }
 }
 
+fun markSiteCheckNeeded(prefs: android.content.SharedPreferences) {
+    prefs.edit { putBoolean("cf_needed", true) }
+}
+
+fun clearSiteCheckNeeded(prefs: android.content.SharedPreferences) {
+    prefs.edit { putBoolean("cf_needed", false) }
+}
+
+fun siteCheckNeeded(prefs: android.content.SharedPreferences): Boolean {
+    return prefs.getBoolean("cf_needed", false)
+}
+
 /** Human line for the list header, e.g. "synced 3m ago". */
 fun lastListSyncLabel(prefs: android.content.SharedPreferences): String {
     val last = prefs.getLong("last_list_sync", 0L)
@@ -66,6 +78,33 @@ fun loadLastRead(prefs: android.content.SharedPreferences): Map<String, Pair<Str
         val parts = row.split("|||", limit = 3)
         if (parts.size == 3) parts[0] to (parts[1] to parts[2]) else null
     }.toMap()
+}
+
+fun saveLastRead(prefs: android.content.SharedPreferences, lastRead: Map<String, Pair<String, String>>) {
+    prefs.edit {
+        putStringSet(
+            "last_read",
+            lastRead.map { "${it.key}|||${it.value.first}|||${it.value.second}" }.toSet()
+        )
+    }
+}
+
+/** Keep the higher chapter when the site and the app both have a last-read. */
+fun mergeLastReads(
+    current: Map<String, Pair<String, String>>,
+    incoming: Map<String, Pair<String, String>>
+): Map<String, Pair<String, String>> {
+    if (incoming.isEmpty()) return current
+    val next = current.toMutableMap()
+    incoming.forEach { (title, pair) ->
+        val existing = next[title]
+        val incomingNum = chapterNum(pair.first)
+        val existingNum = chapterNum(existing?.first.orEmpty())
+        if (existing == null || (incomingNum > 0 && incomingNum >= existingNum) || existingNum < 0) {
+            next[title] = pair
+        }
+    }
+    return next
 }
 
 const val LAYOUT_LIST = "list"

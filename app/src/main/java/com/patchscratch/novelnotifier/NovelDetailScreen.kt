@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -70,10 +71,12 @@ import kotlin.time.Duration.Companion.seconds
  *
  * Paint order:
  *   1. Load series_cache/<hash>.json if present so INFO/RELEASES appear immediately.
- *   2. Opening a series does NOT scrape. Cache is enough until the user asks.
- *   3. ⋮ Refresh / LOAD MORE / CHANGE LIST / MARK AS READ start a hidden WebView.
+ *   2. First open downloads every RELEASES table page into cache (with a gap
+ *      between pages so we do not skip or trip the site check).
+ *   3. Later opens paint cache immediately. ⋮ Refresh re-fetches from page 1.
+ *   4. RELEASES uses scroll-to-load if any pages are still missing.
  *
- * Hidden WebView is 1dp off-screen unless Cloudflare shows "Just a moment".
+ * Hidden WebView is 1dp off-screen unless Cloudflare shows a check.
  * Then it expands so the user can complete the check. There is no bypass.
  *
  * CHANGE LIST: JS finds select#taskOption and fires a jQuery change event
@@ -122,13 +125,14 @@ fun NovelDetailScreen(
     var allowNetwork by remember { mutableStateOf(false) }
     var showPageMenu by remember { mutableStateOf(false) }
     var showChallenge by remember { mutableStateOf(false) } // true = expand WebView so user can pass CF
+    var pendingAutoPage by remember { mutableIntStateOf(0) } // next table page to fetch after a short gap
     val listState = rememberLazyListState()
     val changeLists = availableLists.ifEmpty { page.lists }
     val knownListName = remember(novel.title, novel.seriesUrl) {
         listNameForTitle(loadListSnapshot(context), novel.title, novel.seriesUrl)
     }
 
-    // Cache-first: never scrape just because the user opened the series.
+    // Cache first, then fill every remaining table page.
     LaunchedEffect(novel.seriesUrl, novel.latestChapter, knownListName) {
         val cached = loadSeriesCache(context, novel.seriesUrl)
         if (cached != null) {
@@ -148,17 +152,57 @@ fun NovelDetailScreen(
             if (loaded.currentList != cached.first.currentList) {
                 saveSeriesCache(context, novel.seriesUrl, loaded, cached.second)
             }
+            val cachedRead = highestReadRelease(loaded.releases)
+            if (cachedRead != null) {
+                val siteNum = chapterNum(cachedRead.chapter)
+                val localNum = lastRead?.first?.let(::chapterNum) ?: -1
+                if (siteNum > 0 && siteNum >= localNum) {
+                    onSetLastRead(cachedRead.chapter, cachedRead.url, true)
+                }
+            }
         } else if (knownListName.isNotBlank()) {
             page = page.copy(currentList = knownListName)
         }
         val stale = seriesNeedsRefresh(context, novel)
-        allowNetwork = cached == null
+        val cacheHasTicks = cached?.first?.releases?.any { it.read } == true
+        val complete = cached != null && cacheHasAllPages(
+            cached.first.maxPage,
+            cached.second,
+            cached.first.releases.size
+        )
         if (cached == null) {
+            allowNetwork = true
             loadingMore = true
             wantPage = 1
             loadedPage = 0
+            listStatus = "Downloading chapter list..."
+        } else if (!complete) {
+            allowNetwork = true
+            val next = cached.second.coerceAtLeast(0) + 1
+            pendingAutoPage = next
+            listStatus = "Caching remaining chapters (page $next)..."
+        } else if (!cacheHasTicks && cached.first.releases.any { it.rid.isNotBlank() }) {
+            allowNetwork = true
+            loadingMore = true
+            wantPage = 1
+            listStatus = "Loading read ticks from Novel Updates..."
         } else if (stale) {
+            allowNetwork = false
             listStatus = "Newer chapter on the list — use ⋮ Refresh when you want it"
+        } else {
+            allowNetwork = false
+        }
+    }
+
+    LaunchedEffect(allowNetwork, loadKey, showChallenge, loadingMore) {
+        if (!allowNetwork || showChallenge || !loadingMore) return@LaunchedEffect
+        delay(8.seconds)
+        if (allowNetwork && loadingMore && !showChallenge) {
+            showChallenge = true
+            markSiteCheckNeeded(
+                context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+            )
+            listStatus = "Site check needed — complete it below"
         }
     }
 
@@ -174,7 +218,7 @@ fun NovelDetailScreen(
             if (n < 0) Int.MAX_VALUE else n
         }
     }
-    val shownReleases = page.releases.filter { release ->
+    val shownReleases = sortedReleases(page.releases, newestFirst).filter { release ->
         !hideRead || lastRead == null || chapterNum(release.chapter) >= lastReadNum
     }
 
@@ -194,9 +238,8 @@ fun NovelDetailScreen(
     }
 
     fun requestNextPage() {
-        if (loadingMore || pageLoadFailed || loadedPage == 0) return
-        if (newestFirst && loadedPage < maxPage) requestPage(loadedPage + 1)
-        else if (!newestFirst && loadedPage > 1) requestPage(loadedPage - 1)
+        if (loadingMore || pageLoadFailed || loadedPage == 0 || pendingAutoPage > 0) return
+        if (loadedPage < maxPage) requestPage(loadedPage + 1)
     }
 
     fun retryPage() {
@@ -205,10 +248,29 @@ fun NovelDetailScreen(
 
     fun applyOrder(newest: Boolean) {
         newestFirst = newest
-        page = page.copy(releases = emptyList())
-        loadedPage = 0
-        requestPage(if (newest) 1 else maxPage.coerceAtLeast(1))
         showOrder = false
+    }
+
+    LaunchedEffect(pendingAutoPage) {
+        val next = pendingAutoPage
+        if (next <= 0) return@LaunchedEffect
+        delay(2.seconds)
+        if (pageLoadFailed || showChallenge) return@LaunchedEffect
+        if (loadingMore && wantPage == next) return@LaunchedEffect
+        requestPage(next)
+    }
+
+    val nearEnd by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = info.totalItemsCount
+            total > 2 && last >= total - 3
+        }
+    }
+    LaunchedEffect(nearEnd, loadingMore, pageLoadFailed, loadedPage, maxPage, tab, showChallenge) {
+        if (tab != 1 || !nearEnd || loadingMore || pageLoadFailed || showChallenge) return@LaunchedEffect
+        requestNextPage()
     }
 
     LaunchedEffect(loadingMore, loadKey) {
@@ -221,7 +283,7 @@ fun NovelDetailScreen(
         }
     }
 
-    // Pages load only from LOAD MORE / RETRY / ⋮ Refresh. Auto-scroll used to skip pages.
+    // Extra pages: prefetch 1..max with a 2s gap, or scroll near the end.
 
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
@@ -376,7 +438,7 @@ fun NovelDetailScreen(
                                     nextUnread != null ->
                                         "${nextUnread.chapter}  by ${nextUnread.group}"
                                     expectedNextNum > 0 ->
-                                        "c$expectedNextNum is not in the loaded pages yet. Use LOAD MORE."
+                                        "c$expectedNextNum is not in the loaded pages yet. Wait for cache or scroll RELEASES."
                                     else -> "No chapter link found"
                                 },
                                 modifier = Modifier.padding(top = 8.dp)
@@ -529,7 +591,7 @@ fun NovelDetailScreen(
                         ) { index ->
                             val release = shownReleases[index]
                             val thisNum = chapterNum(release.chapter)
-                            val isLastRead = lastReadNum > 0 && thisNum == lastReadNum
+                            val isRead = lastReadNum > 0 && thisNum > 0 && thisNum == lastReadNum
                             key("${release.chapter}|${release.url}|$index") {
                                 Row(
                                     modifier = Modifier
@@ -550,7 +612,7 @@ fun NovelDetailScreen(
                                         Text(release.date, style = MaterialTheme.typography.bodySmall)
                                     }
                                     Checkbox(
-                                        checked = isLastRead,
+                                        checked = isRead,
                                         onCheckedChange = { checked ->
                                             onSetLastRead(release.chapter, release.url, checked)
                                             if (checked) {
@@ -568,7 +630,7 @@ fun NovelDetailScreen(
                             }
                             HorizontalDivider()
                         }
-                        val moreLeft = if (newestFirst) loadedPage < maxPage else loadedPage > 1
+                        val moreLeft = loadedPage < maxPage
                         item {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 when {
@@ -577,17 +639,29 @@ fun NovelDetailScreen(
                                             text = "Could not load page $wantPage. The site may be rate-limiting.",
                                             style = MaterialTheme.typography.bodySmall
                                         )
-                                        TextButton(onClick = { retryPage() }) { Text("RETRY") }
+                                        TextButton(onClick = {
+                                            pageLoadFailed = false
+                                            pendingAutoPage = wantPage
+                                            retryPage()
+                                        }) { Text("RETRY") }
                                     }
-                                    loadingMore -> {
+                                    loadingMore || pendingAutoPage > 0 -> {
                                         Text(
-                                            text = "Loading page $wantPage...",
+                                            text = "Caching page ${wantPage.coerceAtLeast(1)} of ${maxPage.coerceAtLeast(wantPage)}…",
                                             style = MaterialTheme.typography.bodySmall
                                         )
-                                        TextButton(onClick = { retryPage() }) { Text("RETRY") }
                                     }
                                     moreLeft -> {
-                                        TextButton(onClick = { requestNextPage() }) { Text("LOAD MORE") }
+                                        Text(
+                                            text = "Scroll for older chapters",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    page.releases.isNotEmpty() -> {
+                                        Text(
+                                            text = "${page.releases.size} chapters cached",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
                                     }
                                 }
                             }
@@ -638,6 +712,7 @@ fun NovelDetailScreen(
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
+                    settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 }
@@ -647,9 +722,7 @@ fun NovelDetailScreen(
                     override fun onPageFinished(view: WebView?, url: String?) {
                         val script = """
                             (function() {
-                              if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                                return 'CF';
-                              }
+                              $CF_DETECT_JS
                               function text(sel) {
                                 var el = document.querySelector(sel);
                                 return el ? (el.innerText || el.textContent || '').trim() : '';
@@ -680,17 +753,25 @@ fun NovelDetailScreen(
                                 if (/^[\\-–—._\\s]+$/.test(chapter)) return;
                                 var cb = tr.querySelector('input[type=checkbox]');
                                 var rid = '';
-                                if (cb && cb.id && cb.id.indexOf('chklist') === 0) {
-                                  rid = cb.id.replace('chklist', '');
-                                } else if (cb && cb.value && cb.value !== 'notset') {
-                                  rid = cb.value;
+                                var read = false;
+                                if (cb) {
+                                  read = !!(cb.checked || cb.getAttribute('checked') !== null);
+                                  if (cb.id && cb.id.indexOf('chklist') === 0) {
+                                    rid = cb.id.replace('chklist', '');
+                                  } else if (cb.value && cb.value !== 'notset') {
+                                    rid = cb.value;
+                                  }
                                 }
+                                var rowClass = (tr.className || '').toLowerCase();
+                                if (/readcolor|colorme|checked/.test(rowClass)) read = true;
+                                if (tr.querySelector('.readcolor, .nu_editnotes')) read = true;
                                 releases.push({
                                   chapter: chapter,
                                   group: tds[1] ? tds[1].textContent.replace(/\s+/g, ' ').trim() : '',
                                   date: tds[0] ? tds[0].textContent.replace(/\s+/g, ' ').trim() : '',
                                   url: link.href || '',
-                                  rid: rid
+                                  rid: rid,
+                                  read: read
                                 });
                               });
                               var max = 1;
@@ -734,10 +815,13 @@ fun NovelDetailScreen(
                         """.trimIndent()
                         view?.evaluateJavascript(script) { result ->
                             val rawJson = unwrapJsResult(result)
-                            if (rawJson == "CF") {
+                            if (rawJson == "CF" || isCloudflareUrl(url)) {
                                 pageLoadFailed = true
                                 loadingMore = false
                                 showChallenge = true
+                                markSiteCheckNeeded(
+                                    context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+                                )
                                 listStatus = "Site check needed — complete it below"
                                 return@evaluateJavascript
                             }
@@ -764,8 +848,7 @@ fun NovelDetailScreen(
                             val mergedReleases = if (page.releases.isEmpty()) {
                                 incoming
                             } else {
-                                val existing = page.releases.map { it.chapter + "|" + it.url }.toSet()
-                                page.releases + incoming.filter { it.chapter + "|" + it.url !in existing }
+                                mergeReleases(page.releases, incoming)
                             }
                             page = page.copy(
                                 title = parsed.title.ifBlank { page.title },
@@ -786,6 +869,13 @@ fun NovelDetailScreen(
                                 sid = parsed.sid.ifBlank { page.sid }
                             )
                             if (parsed.sid.isNotBlank()) seriesSid = parsed.sid
+                            val siteRead = highestReadRelease(mergedReleases)
+                            if (siteRead != null) {
+                                val siteNum = chapterNum(siteRead.chapter)
+                                if (siteNum > 0 && siteNum >= lastReadNum) {
+                                    onSetLastRead(siteRead.chapter, siteRead.url, true)
+                                }
+                            }
                             val wantChapter = pendingReadChapter
                             if (pendingReadRid.isNullOrBlank() && !wantChapter.isNullOrBlank()) {
                                 val match = mergedReleases.find { release ->
@@ -799,10 +889,16 @@ fun NovelDetailScreen(
                                 loadedPage = wantPage
                                 pageLoadFailed = false
                                 showChallenge = false
-                                if (listStatus.startsWith("Refresh") || listStatus.startsWith("Site check")) {
-                                    listStatus = "Updated from Novel Updates"
+                                val pages = maxOf(page.maxPage, parsed.maxPage, maxPage).coerceAtLeast(1)
+                                maxPage = pages
+                                if (wantPage < pages) {
+                                    pendingAutoPage = wantPage + 1
+                                    listStatus = "Caching page ${wantPage + 1} of $pages…"
+                                } else {
+                                    pendingAutoPage = 0
+                                    listStatus = "Cached ${mergedReleases.size} chapters"
                                 }
-                                saveSeriesCache(context, novel.seriesUrl, page.copy(releases = mergedReleases, maxPage = maxOf(page.maxPage, parsed.maxPage), sid = parsed.sid.ifBlank { page.sid }), wantPage)
+                                saveSeriesCache(context, novel.seriesUrl, page.copy(releases = mergedReleases, maxPage = pages, sid = parsed.sid.ifBlank { page.sid }), wantPage)
                             } else if (wantPage > 1 || page.releases.isNotEmpty()) {
                                 pageLoadFailed = true
                             }

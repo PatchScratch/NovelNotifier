@@ -205,6 +205,7 @@ fun saveSeriesCache(context: Context, seriesUrl: String, page: SeriesPage, loade
                     .put("date", release.date)
                     .put("url", release.url)
                     .put("rid", release.rid)
+                    .put("read", release.read)
             )
         }
         pageJson.put("releases", releases)
@@ -249,7 +250,16 @@ fun mergeReleases(old: List<Release>, incoming: List<Release>): List<Release> {
     val merged = mutableListOf<Release>()
     (incoming + old).forEach { release ->
         val key = release.chapter + "|" + release.url
-        if (seen.add(key)) merged.add(release)
+        val existing = merged.indexOfFirst { it.chapter + "|" + it.url == key }
+        if (existing < 0) {
+            if (seen.add(key)) merged.add(release)
+        } else {
+            val prev = merged[existing]
+            merged[existing] = prev.copy(
+                rid = release.rid.ifBlank { prev.rid },
+                read = prev.read || release.read
+            )
+        }
     }
     return merged
 }

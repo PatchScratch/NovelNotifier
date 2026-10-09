@@ -188,12 +188,7 @@ fun NovelApp() {
 
     fun setLastRead(title: String, chapter: String, url: String, read: Boolean) {
         lastRead = if (read) lastRead + (title to (chapter to url)) else lastRead - title
-        prefs.edit {
-            putStringSet(
-                "last_read",
-                lastRead.map { "${it.key}|||${it.value.first}|||${it.value.second}" }.toSet()
-            )
-        }
+        saveLastRead(prefs, lastRead)
     }
 
     fun toggleSeriesNotify(title: String) {
@@ -319,6 +314,10 @@ fun NovelApp() {
                         putStringSet("list_notify_off", newNotifyOff)
                         putStringSet("list_update_off", newUpdateOff)
                     }
+                },
+                onLastReads = { incoming ->
+                    lastRead = mergeLastReads(lastRead, incoming)
+                    saveLastRead(prefs, lastRead)
                 },
                 pauseLocalCovers = coverPrefetchStatus.contains("left") ||
                     coverPrefetchStatus.startsWith("Queued") ||

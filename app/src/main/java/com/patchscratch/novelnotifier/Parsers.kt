@@ -37,13 +37,41 @@ fun chapterNum(text: String): Int {
     return -1
 }
 
-/** Unread chapters: latest minus last-read. No last-read → treat latest as the unread count. */
+/** Unread chapters: latest minus last-read. Unknown last-read → 0, not the whole series. */
 fun unreadCount(latestChapter: String, lastReadChapter: String?): Int {
     val latest = chapterNum(latestChapter)
     if (latest < 0) return 0
     val read = chapterNum(lastReadChapter.orEmpty())
-    if (read < 0) return latest
+    if (read < 0) return 0
     return (latest - read).coerceAtLeast(0)
+}
+
+/** Highest chapter the site has ticked as read, or null. */
+fun highestReadRelease(releases: List<Release>): Release? {
+    return releases
+        .filter { it.read }
+        .maxByOrNull { chapterNum(it.chapter) }
+        ?.takeIf { chapterNum(it.chapter) > 0 }
+}
+
+fun sortedReleases(releases: List<Release>, newestFirst: Boolean): List<Release> {
+    return if (newestFirst) {
+        releases.sortedByDescending { row ->
+            val n = chapterNum(row.chapter)
+            if (n < 0) Int.MIN_VALUE else n
+        }
+    } else {
+        releases.sortedBy { row ->
+            val n = chapterNum(row.chapter)
+            if (n < 0) Int.MAX_VALUE else n
+        }
+    }
+}
+
+fun cacheHasAllPages(maxPage: Int, loadedPage: Int, releaseCount: Int): Boolean {
+    if (releaseCount <= 0) return false
+    if (maxPage <= 1) return true
+    return loadedPage >= maxPage
 }
 
 fun isRealListName(name: String): Boolean {
@@ -71,6 +99,46 @@ fun unwrapJsResult(result: String?): String {
         .replace("\\\\", "\\")
 }
 
+/** True for challenge / turnstile URLs. Not a bypass — we still show the check. */
+fun isCloudflareUrl(url: String?): Boolean {
+    val u = url.orEmpty().lowercase()
+    return u.contains("challenges.cloudflare.com") ||
+        u.contains("cf-browser-verification") ||
+        (u.contains("/cdn-cgi/") && (u.contains("challenge") || u.contains("turnstile")))
+}
+
+fun isCloudflareTitle(title: String?): Boolean {
+    val t = title.orEmpty()
+    return t.contains("just a moment", ignoreCase = true) ||
+        t.contains("attention required", ignoreCase = true) ||
+        t.contains("verify you are human", ignoreCase = true)
+}
+
+/**
+ * Drop the "; wv" WebView token. Cloudflare often hangs a wv UA instead of
+ * showing the checkbox. This is still a WebView — the user must complete the check.
+ */
+fun chromeMobileUserAgent(current: String): String {
+    val trimmed = current.replace("; wv", "").replace(";wv", "")
+    return trimmed.ifBlank {
+        "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+    }
+}
+
+/** JS snippet: return 'CF' if this document is a Cloudflare interstitial. */
+const val CF_DETECT_JS = """
+  function nuIsCf() {
+    var t = ((document.body && (document.body.innerText || document.body.textContent)) || '').slice(0, 4000);
+    var title = document.title || '';
+    var html = (document.documentElement && document.documentElement.innerHTML || '').slice(0, 6000);
+    var blob = (t + ' ' + title + ' ' + html).toLowerCase();
+    if (/just a moment|verify you are human|checking your browser|attention required|enable javascript and cookies|cf-turnstile|challenge-platform|cf-browser-verification|why have i been blocked/.test(blob)) return true;
+    if (document.querySelector('#challenge-form, .cf-browser-verification, .cf-turnstile, iframe[src*="challenges.cloudflare"], iframe[src*="turnstile"]')) return true;
+    return false;
+  }
+  if (nuIsCf()) return 'CF';
+"""
+
 /** Parse the JSON blob the series WebView returns. Bad JSON → empty SeriesPage. */
 fun parseSeriesPage(raw: String): SeriesPage {
     if (raw.isBlank()) return SeriesPage()
@@ -87,7 +155,8 @@ fun parseSeriesPage(raw: String): SeriesPage {
                         group = item.optString("group"),
                         date = item.optString("date"),
                         url = item.optString("url"),
-                        rid = item.optString("rid")
+                        rid = item.optString("rid"),
+                        read = item.optBoolean("read", false)
                     )
                 )
             }

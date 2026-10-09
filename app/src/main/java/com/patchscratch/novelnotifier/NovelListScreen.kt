@@ -1,8 +1,11 @@
+@file:Suppress("SpellCheckingInspection")
+
 package com.patchscratch.novelnotifier
 
 import android.annotation.SuppressLint
 import android.content.Context
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -15,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -39,6 +43,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberDrawerState
@@ -54,11 +59,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Home screen: hamburger drawer of reading lists, cover tiles, pull-to-refresh.
@@ -67,7 +75,7 @@ import kotlinx.coroutines.launch
  *   `remember { mutableStateOf(...) }` keeps a value across redraws.
  *   `by` is a Kotlin *property delegate*. That is why we import getValue and
  *   setValue even though they never appear as function calls — do not delete them.
- *   Bumping [listReloadKey] or [siteSync] is how we tell the hidden WebView
+ *   Bumping listReloadKey or siteSync is how we tell the hidden WebView
  *   "load this list again".
  *
  * Paint order:
@@ -104,6 +112,7 @@ fun NovelListScreen(
     onOpenSettings: () -> Unit,
     onEditLists: () -> Unit,
     onSaveListOptions: (Set<String>, Set<String>) -> Unit,
+    onLastReads: (Map<String, Pair<String, String>>) -> Unit = {},
     pauseLocalCovers: Boolean = false
 ) {
     val context = LocalContext.current
@@ -119,6 +128,7 @@ fun NovelListScreen(
     var listStatus by remember { mutableStateOf("") }
     var listReloadKey by remember { mutableIntStateOf(0) }
     var siteSync by remember { mutableIntStateOf(0) }
+    var showChallenge by remember { mutableStateOf(false) }
     var coverQueue by remember { mutableStateOf(emptyList<Novel>()) }
     var showListOptions by remember { mutableStateOf(false) }
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
@@ -173,6 +183,21 @@ fun NovelListScreen(
             siteSync += 1
             listStatus = "Loading lists..."
         }
+        if (siteCheckNeeded(prefs)) {
+            showChallenge = true
+            siteSync += 1
+            listStatus = "Site check needed — complete it below"
+        }
+    }
+
+    LaunchedEffect(siteSync, listReloadKey, showChallenge) {
+        if (siteSync == 0 || showChallenge) return@LaunchedEffect
+        delay(8.seconds)
+        if (siteSync > 0 && !showChallenge) {
+            showChallenge = true
+            markSiteCheckNeeded(prefs)
+            listStatus = "Site check needed — complete it below"
+        }
     }
 
     // List options is its own full screen. return so the drawer is not drawn under it.
@@ -220,6 +245,7 @@ fun NovelListScreen(
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -379,7 +405,9 @@ fun NovelListScreen(
                             )
                         }
                     } else if (layoutMode == LAYOUT_GRID) {
-                        val widthDp = LocalConfiguration.current.screenWidthDp
+                        val widthDp = with(LocalDensity.current) {
+                            LocalWindowInfo.current.containerSize.width.toDp()
+                        }.value.toInt()
                         val columns = when {
                             widthDp >= 840 -> 5
                             widthDp >= 600 -> 4
@@ -433,28 +461,77 @@ fun NovelListScreen(
         }
     }
 
-    // Hidden 1dp WebView, parked off-screen so it never flashes over the grid.
-    // siteSync > 0 is the "please scrape" flag. JavaScript returns:
-    //   "id===List Name|||id===Other:::NOVELS:::Title===c12===url===cover|||..."
-    if (siteSync > 0) AndroidView(
-        modifier = Modifier
-            .size(1.dp)
-            .alpha(0f)
-            .offset(x = 4000.dp),
-        factory = { context ->
-            WebView(context).apply {
+    // Hidden 1dp WebView unless Cloudflare needs a real window.
+    if (siteSync > 0 || showChallenge) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+        ) {
+            if (showChallenge) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Complete the site check if you see one",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    TextButton(onClick = {
+                        showChallenge = false
+                        listStatus = "Site check closed — pull to retry"
+                    }) { Text("Close") }
+                }
+            }
+            AndroidView(
+        modifier = if (showChallenge) {
+            Modifier
+                .fillMaxWidth()
+                .height(420.dp)
+                .padding(horizontal = 8.dp)
+        } else {
+            Modifier
+                .size(1.dp)
+                .alpha(0f)
+                .offset(x = 4000.dp)
+        },
+        factory = { ctx ->
+            WebView(ctx).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                webChromeClient = object : WebChromeClient() {
+                    override fun onReceivedTitle(view: WebView?, title: String?) {
+                        if (isCloudflareTitle(title)) {
+                            showChallenge = true
+                            markSiteCheckNeeded(prefs)
+                            listStatus = "Site check needed — complete it below"
+                        }
+                    }
+                }
                 webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                        if (isCloudflareUrl(url)) {
+                            showChallenge = true
+                            markSiteCheckNeeded(prefs)
+                            listStatus = "Site check needed — complete it below"
+                        }
+                    }
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        if (isCloudflareUrl(url) || isCloudflareTitle(view?.title)) {
+                            showChallenge = true
+                            markSiteCheckNeeded(prefs)
+                            listStatus = "Site check needed — complete it below"
+                        }
                         val script = """
                             (function() {
-                              if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                                return 'CF';
-                              }
+                              $CF_DETECT_JS
                               var found = {};
                               var order = [];
                               function isJunk(name) {
@@ -506,13 +583,37 @@ fun NovelListScreen(
                                 if (!title || isJunkTitle(title)) return;
                                 if (!/\/series\/[a-z0-9-]+/i.test(href)) return;
                                 var chapter = '';
+                                var lastReadCh = '';
+                                var lastReadUrl = '';
                                 var img = '';
                                 var hasListMark = false;
+                                var row = a.closest ? a.closest('tr') : a.parentElement;
+                                if (row) {
+                                  var statusA = row.querySelector('[id^="mystatus"], a[id*="mystatus"], #mystatus');
+                                  var latestA = row.querySelector('[id^="mylatest"], a[id*="mylatest"]');
+                                  if (latestA) chapter = (latestA.textContent || '').replace(/\s+/g, ' ').trim();
+                                  if (statusA) {
+                                    lastReadCh = (statusA.textContent || '').replace(/\s+/g, ' ').trim();
+                                    lastReadUrl = statusA.getAttribute('href') || '';
+                                  }
+                                }
                                 var node = a.parentElement;
                                 for (var k = 0; k < 8 && node; k++) {
                                   var text = node.textContent || '';
-                                  var m = text.match(/\[\s*([^\]]+)\]/);
-                                  if (!chapter && m && /c\d+|ch\s*\d+|chapter\s*\d+|ep\s*\d+|v\d+/i.test(m[1])) chapter = m[1].trim();
+                                  if (!chapter) {
+                                    var found = text.match(/\[\s*([^\]]+)\]/g) || [];
+                                    var nums = [];
+                                    for (var f = 0; f < found.length; f++) {
+                                      var inner = found[f].replace(/[\[\]]/g, '').trim();
+                                      if (/c\d+|ch\s*\d+|chapter\s*\d+|ep\s*\d+|v\d+/i.test(inner)) nums.push(inner);
+                                    }
+                                    if (nums.length >= 2) {
+                                      if (!lastReadCh) lastReadCh = nums[0];
+                                      chapter = nums[nums.length - 1];
+                                    } else if (nums.length === 1) {
+                                      chapter = nums[0];
+                                    }
+                                  }
                                   if (node.querySelector && (
                                     node.querySelector('input[id^="chklist"]') ||
                                     node.querySelector('input[type="checkbox"]')
@@ -524,15 +625,17 @@ fun NovelListScreen(
                                   node = node.parentElement;
                                 }
                                 if (!chapter && !hasListMark) return;
-                                novels.push(title + '===' + (chapter || 'No chapter info') + '===' + href + '===' + img);
+                                novels.push(title + '===' + (chapter || 'No chapter info') + '===' + href + '===' + img + '===' + lastReadCh + '===' + lastReadUrl);
                               });
                               return lists.join('|||') + ':::NOVELS:::' + novels.join('|||');
                             })();
                         """.trimIndent()
                         view?.evaluateJavascript(script) { result ->
                             val raw = unwrapJsResult(result)
-                            if (raw == "CF") {
-                                listStatus = "Site check on reading list — pull to retry after it clears"
+                            if (raw == "CF" || isCloudflareUrl(url)) {
+                                showChallenge = true
+                                markSiteCheckNeeded(prefs)
+                                listStatus = "Site check needed — complete it below"
                                 return@evaluateJavascript
                             }
                             val parts = raw.split(":::NOVELS:::")
@@ -564,14 +667,25 @@ fun NovelListScreen(
                                 return@evaluateJavascript
                             }
                             if (selectedListId.isNotBlank()) {
+                                val lastReads = mutableMapOf<String, Pair<String, String>>()
                                 val parsedNovels = novelPart.split("|||").mapNotNull { item ->
-                                    val bits = item.split("===", limit = 4)
+                                    val bits = item.split("===", limit = 6)
                                     if (bits.size >= 2) {
                                         val title = bits[0]
+                                        val seriesUrl = bits.getOrNull(2).orEmpty()
+                                        val siteLast = bits.getOrNull(4).orEmpty().trim()
+                                        val skipLast = siteLast.isBlank() ||
+                                            siteLast == "—" ||
+                                            siteLast == "-" ||
+                                            siteLast.equals("none", true) ||
+                                            siteLast.equals("n/a", true)
+                                        if (!skipLast && chapterNum(siteLast) > 0) {
+                                            lastReads[title] = siteLast to bits.getOrNull(5).orEmpty()
+                                        }
                                         Novel(
                                             title = title,
                                             latestChapter = bits[1],
-                                            seriesUrl = bits.getOrNull(2).orEmpty(),
+                                            seriesUrl = seriesUrl,
                                             coverUrl = coverCache[title].orEmpty().ifBlank {
                                                 bits.getOrNull(3).orEmpty()
                                             }
@@ -597,6 +711,7 @@ fun NovelListScreen(
                                 val nextMap = putExclusiveList(novelsByList, selectedListId, stamped)
                                 listNovels = stamped
                                 novelsByList = nextMap
+                                if (lastReads.isNotEmpty()) onLastReads(lastReads)
                                 saveListSnapshot(
                                     context,
                                     ListSnapshot(
@@ -619,6 +734,8 @@ fun NovelListScreen(
                                     markListSynced(
                                         context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
                                     )
+                                    clearSiteCheckNeeded(prefs)
+                                    showChallenge = false
                                 }
                                 listStatus = when {
                                     parsedNovels.isEmpty() -> "No series found in $selectedList"
@@ -639,15 +756,17 @@ fun NovelListScreen(
                 "https://www.novelupdates.com/reading-list/?list=$selectedListId"
             }
             val current = webView.url ?: ""
-            if (siteSync > 0 && (listReloadKey > 0 || selectedListId.isNotBlank())) {
+            if (siteSync > 0 && (listReloadKey > 0 || selectedListId.isNotBlank() || showChallenge)) {
                 if (!current.startsWith(target)) webView.loadUrl(target)
             }
         }
     )
+        }
+    }
 
     // In-list cover grabber. CoverPrefetchService (Settings) is the bulk path;
     // this one only fills gaps for the list currently on screen.
-    if (!pauseLocalCovers) CoverPrefetcher(
+    if (!pauseLocalCovers && !showChallenge) CoverPrefetcher(
         queue = coverQueue,
         onCoverFound = { title, url ->
             onCoverFound(title, url)
@@ -661,6 +780,7 @@ fun NovelListScreen(
             coverQueue = coverQueue.filterNot { it.title == title } + listOfNotNull(skipped)
         }
     )
+    }
 }
 
 @Composable
