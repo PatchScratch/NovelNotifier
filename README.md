@@ -19,7 +19,7 @@ This is a clean-room, from-scratch replacement for the abandoned *"Notifications
 
 There is no API and no Cloudflare bypass. The app embeds WebViews that share a real logged-in browser session with the Novel Updates site, runs small JavaScript snippets (`ScrapeJs.kt`) to read each page, and parses the results in Kotlin. Writes (mark-as-read, change list) use the same endpoints the website itself uses.
 
-**Pacing rules** keep the app a good citizen: at most one site hit every 8 seconds (20 s after a Cloudflare page), one series page at a time, cover *downloads* unpaced because they come from the image CDN. When a real Cloudflare challenge appears, the WebView gets 12 seconds to clear it by itself (modern managed challenges usually do); only a stuck challenge is shown to the user to complete — there is no bypass and no headless trickery.
+**Pacing rules** keep the app a good citizen: at most one site hit every 10 seconds (20 s after a Cloudflare page), cover downloads spaced 1.5 s apart, and a duty cycle that rests 10 minutes after every 120 jobs so a large library trickles in over hours instead of running flat-out. Repeated Cloudflare challenges back off escalatingly (1 → 5 → 30 minutes) — they mean the session is being rate-limited, and hammering makes it worse. When a real challenge appears, the WebView gets 12 seconds to clear it by itself (modern managed challenges usually do); only a stuck challenge is shown to the user to complete — there is no bypass and no headless trickery.
 
 **Change detection** is conservative everywhere: an incoming chapter number must be *higher* than everything stored (list row, series cache, last-read) before anything updates, notifies, or re-fetches. Site placeholders and empty scrapes can never wipe cached data.
 

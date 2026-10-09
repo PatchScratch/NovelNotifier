@@ -38,29 +38,34 @@ object CoverStore {
     fun count(context: Context): Int = dir(context).listFiles()?.size ?: 0
 
     /**
-     * Download [coverUrl] into the store for [seriesUrl]. Returns the file, or
-     * null for blank/placeholder URLs, HTTP errors, or junk responses.
+     * Download [coverUrl] into the store for [seriesUrl]. [CoverResult.file]
+     * is null for blank/placeholder URLs, HTTP errors, or junk responses;
+     * [CoverResult.httpFailed] distinguishes transport failures (the server
+     * pushed back — callers cool down) from "no cover exists".
      */
-    suspend fun download(context: Context, seriesUrl: String, coverUrl: String): File? {
-        if (seriesUrl.isBlank() || usableCoverUrl(coverUrl).isBlank()) return null
-        if (hasLocal(context, seriesUrl)) return localFile(context, seriesUrl)
+    suspend fun download(context: Context, seriesUrl: String, coverUrl: String): CoverResult {
+        if (seriesUrl.isBlank() || usableCoverUrl(coverUrl).isBlank()) return CoverResult(null, false)
+        if (hasLocal(context, seriesUrl)) return CoverResult(localFile(context, seriesUrl), false)
         return withContext(Dispatchers.IO) {
             try {
                 val connection = URL(coverUrl).openConnection() as HttpURLConnection
                 connection.connectTimeout = 15_000
                 connection.readTimeout = 20_000
                 connection.setRequestProperty("User-Agent", COVER_UA)
-                if (connection.responseCode !in 200..299) return@withContext null
+                if (connection.responseCode !in 200..299) {
+                    DebugLog.log("COVER", "HTTP ${connection.responseCode} '$coverUrl'")
+                    return@withContext CoverResult(null, true)
+                }
                 val ext = extension(connection.contentType, coverUrl)
                 val bytes = connection.inputStream.use { it.readBytes() }
-                if (bytes.isEmpty() || bytes.size > MAX_BYTES) return@withContext null
+                if (bytes.isEmpty() || bytes.size > MAX_BYTES) return@withContext CoverResult(null, false)
                 val file = dir(context).resolve("${prefix(seriesUrl)}.$ext")
                 file.writeBytes(bytes)
                 DebugLog.log("COVER", "stored ${file.name} (${bytes.size}B) '$seriesUrl'")
-                file
+                CoverResult(file, false)
             } catch (e: Exception) {
                 DebugLog.log("COVER", "download failed '$coverUrl'", e)
-                null
+                CoverResult(null, true)
             }
         }
     }
@@ -76,3 +81,6 @@ object CoverStore {
         }
     }
 }
+
+/** Outcome of a cover download; see [CoverStore.download]. */
+data class CoverResult(val file: File?, val httpFailed: Boolean)

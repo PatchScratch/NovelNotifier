@@ -43,6 +43,12 @@ class SyncEngineService : Service() {
     private var stopped = false
     private var pausedByUser = false
     private var cfRetries = 0
+    // Volume controls (the tablet incident, 2026-10-10: ~1 h of continuous
+    // traffic got the whole session challenged — politeness needs limits, not
+    // just spacing).
+    private var jobsSinceRest = 0
+    private var cfPauses = 0
+    private var coverFailStreak = 0
 
     @Volatile private var lastSiteHitAt = 0L
 
@@ -103,6 +109,16 @@ class SyncEngineService : Service() {
 
     private fun scheduleNext() {
         if (stopped || pausedByUser) return
+        // Duty cycle: after a burst of jobs, rest — a 1,400-series library
+        // must trickle over hours, not run flat-out for an hour straight.
+        if (jobsSinceRest >= BURST_JOBS) {
+            jobsSinceRest = 0
+            writeStatus(this, "Cooling down — resuming in ${BURST_REST_MS / 60000} min")
+            updateNotification("Cooling down (being polite to Novel Updates) — auto-resumes in ${BURST_REST_MS / 60000} minutes")
+            DebugLog.log("SYNC", "burst of $BURST_JOBS jobs done — resting ${BURST_REST_MS / 60000} min")
+            handler.postDelayed({ if (!stopped && !pausedByUser) scheduleNext() }, BURST_REST_MS)
+            return
+        }
         val jobs = SyncQueue.load(this)
         val job = jobs.firstOrNull { !it.done }
         if (job == null) {
@@ -111,15 +127,19 @@ class SyncEngineService : Service() {
         }
         cfRetries = 0
         if (job.type == "cover" && usableCoverUrl(job.coverUrl).isNotBlank()) {
-            // Known URL: CDN download only — no site hit, so no pacing wait.
+            // Known URL: CDN download only — no site hit, but still paced
+            // (the CDN sits behind Cloudflare too; a burst tripped it once).
             updateNotification(progressLine(job))
             executor.execute {
-                runBlocking { CoverStore.download(this@SyncEngineService, job.seriesUrl, job.coverUrl) }
+                val result = runBlocking {
+                    CoverStore.download(this@SyncEngineService, job.seriesUrl, job.coverUrl)
+                }
                 saveOneCover(this@SyncEngineService, job.title, job.coverUrl)
                 markDone(job)
-                handler.post {
-                    if (!stopped && !pausedByUser) scheduleNext()
-                }
+                handler.postDelayed(
+                    { if (!stopped && !pausedByUser) scheduleNext() },
+                    if (result.httpFailed) COVER_GAP_MS * 4 else COVER_GAP_MS
+                )
             }
             return
         }
@@ -170,9 +190,10 @@ class SyncEngineService : Service() {
      * Cloudflare policy: one quick retry after CF_WAIT_MS (managed challenges
      * often clear themselves inside a real WebView), then park the queue and
      * ask the user to open the app — a windowless service WebView cannot
-     * complete an interactive challenge. While parked we keep retrying every
-     * CF_RESUME_MS in case the cookie clears itself; any successful parse
-     * resumes normal work.
+     * complete an interactive challenge. Parked retries back off ESCALATINGLY
+     * (1 min → 5 min → 30 min) because repeated challenges mean the session
+     * is being rate-limited, and hammering makes it worse. Any successful job
+     * resets the escalation.
      */
     private fun handleCloudflare(job: SyncJob) {
         cfRetries += 1
@@ -182,14 +203,20 @@ class SyncEngineService : Service() {
             DebugLog.log("SYNC", "CF on ${job.type} '${job.title}' — 20s retry")
             handler.postDelayed({ executeSiteJob(job) }, CF_WAIT_MS)
         } else {
+            cfPauses += 1
+            val waitMs = when (cfPauses) {
+                1 -> 60_000L
+                2 -> 5 * 60_000L
+                else -> 30 * 60_000L
+            }
             markSiteCheckNeeded(getSharedPreferences("novel_prefs", MODE_PRIVATE))
-            writeStatus(this, "Site check needed — open the app")
+            writeStatus(this, "Site check needed — cooling down ${waitMs / 60000} min")
             updateNotification()
-            DebugLog.log("SYNC", "CF persisted on '${job.title}' — paused, will retry in 60s")
+            DebugLog.log("SYNC", "CF persisted on '${job.title}' (pause #$cfPauses) — retry in ${waitMs / 60000} min")
             handler.postDelayed({
                 cfRetries = 0
                 if (!stopped && !pausedByUser) scheduleNext()
-            }, CF_RESUME_MS)
+            }, waitMs)
         }
     }
 
@@ -347,13 +374,22 @@ class SyncEngineService : Service() {
         val cover = unwrapJsResult(raw)
         if (usableCoverUrl(cover).isNotBlank()) {
             saveOneCover(this, job.title, cover)
-            runBlocking { CoverStore.download(this@SyncEngineService, job.seriesUrl, cover) }
+            val result = runBlocking { CoverStore.download(this@SyncEngineService, job.seriesUrl, cover) }
+            if (result.httpFailed) coverFailStreak += 1 else coverFailStreak = 0
             DebugLog.log("SYNC", "cover ok '${job.title}'")
         } else {
             DebugLog.log("SYNC", "cover unavailable '${job.title}'")
         }
         markDone(job)
-        handler.post { if (!stopped && !pausedByUser) scheduleNext() }
+        // Three cover downloads in a row pushed back → the CDN is limiting us.
+        val restMs = if (coverFailStreak >= 3) {
+            coverFailStreak = 0
+            writeStatus(this, "Cooling down — cover server pushed back")
+            COVER_FAIL_REST_MS
+        } else {
+            GAP_MS
+        }
+        handler.postDelayed({ if (!stopped && !pausedByUser) scheduleNext() }, restMs)
     }
 
     private fun processPages(job: SyncJob, raw: String) {
@@ -418,6 +454,11 @@ class SyncEngineService : Service() {
     }
 
     private fun markDone(job: SyncJob) {
+        // A finished job is proof the session is healthy: reset the
+        // rate-limit escalation counters.
+        jobsSinceRest += 1
+        cfPauses = 0
+        coverFailStreak = 0
         val jobs = SyncQueue.load(this)
         SyncQueue.save(this, jobs.map { if (it.id == job.id) it.copy(done = true) else it })
     }
@@ -526,9 +567,12 @@ class SyncEngineService : Service() {
         const val ACTION_RESUME = "sync_resume"
         const val ACTION_STOP = "sync_stop"
         private const val NOTIF_ID = 43
-        private const val GAP_MS = 8_000L
+        private const val GAP_MS = 10_000L
         private const val CF_WAIT_MS = 20_000L
-        private const val CF_RESUME_MS = 60_000L
+        private const val COVER_GAP_MS = 1_500L
+        private const val BURST_JOBS = 120
+        private const val BURST_REST_MS = 10 * 60_000L
+        private const val COVER_FAIL_REST_MS = 5 * 60_000L
         private const val STATUS_KEY = "sync_status"
 
         /** True while the service process is alive — distinguishes a paused
