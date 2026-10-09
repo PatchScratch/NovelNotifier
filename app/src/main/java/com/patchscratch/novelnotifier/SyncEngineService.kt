@@ -95,6 +95,11 @@ class SyncEngineService : Service() {
     }
 
     // ---- pacing + scheduling -------------------------------------------------
+    //
+    // Invariant: at most ONE Novel Updates page hit per GAP_MS, tracked by
+    // lastSiteHitAt. Everything else — cover bytes from the CDN, queue
+    // bookkeeping, cache writes on the executor — is unpaced, because the
+    // image CDN is a plain file server, not the scrape-protected site.
 
     private fun scheduleNext() {
         if (stopped || pausedByUser) return
@@ -106,7 +111,7 @@ class SyncEngineService : Service() {
         }
         cfRetries = 0
         if (job.type == "cover" && usableCoverUrl(job.coverUrl).isNotBlank()) {
-            // Known URL: CDN download only, no site hit, no pacing.
+            // Known URL: CDN download only — no site hit, so no pacing wait.
             updateNotification(progressLine(job))
             executor.execute {
                 runBlocking { CoverStore.download(this@SyncEngineService, job.seriesUrl, job.coverUrl) }
@@ -127,7 +132,10 @@ class SyncEngineService : Service() {
     private fun executeSiteJob(job: SyncJob) {
         if (stopped || pausedByUser) return
         val view = webViewOrCreate()
+        // Reserve this hit's slot in the pacing window before the load starts.
         lastSiteHitAt = System.currentTimeMillis()
+        // One WebViewClient per job: onPageFinished picks the script from the
+        // job type, so a single shared WebView can serve every kind of job.
         view.webViewClient = object : WebViewClient() {
             override fun onPageFinished(page: WebView?, url: String?) {
                 val script = when (job.type) {
@@ -158,6 +166,14 @@ class SyncEngineService : Service() {
         }
     }
 
+    /**
+     * Cloudflare policy: one quick retry after CF_WAIT_MS (managed challenges
+     * often clear themselves inside a real WebView), then park the queue and
+     * ask the user to open the app — a windowless service WebView cannot
+     * complete an interactive challenge. While parked we keep retrying every
+     * CF_RESUME_MS in case the cookie clears itself; any successful parse
+     * resumes normal work.
+     */
     private fun handleCloudflare(job: SyncJob) {
         cfRetries += 1
         if (cfRetries <= 1) {
@@ -377,6 +393,9 @@ class SyncEngineService : Service() {
             clearSiteCheckNeeded(getSharedPreferences("novel_prefs", MODE_PRIVATE))
         }
         DebugLog.log("SYNC", "pages pg=${job.nextPage}/$maxPage rows=${parsed.releases.size} '${job.title}'")
+        // A "pages" job advances (nextPage+1) until the table's last page;
+        // an empty parse means the site served nothing for that page, so stop
+        // with what we have instead of looping on it forever.
         if (job.nextPage >= maxPage || parsed.releases.isEmpty()) {
             markDone(job)
         } else {

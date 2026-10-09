@@ -53,6 +53,9 @@ fun OnboardingScreen(
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
 
+    // Phase machine: "lists" (engine hydrating, live counter) → "pick"
+    // (size warning + priority-list selection) → user starts the full
+    // download and leaves this screen; "empty" is the no-lists dead end.
     var phase by remember { mutableStateOf("lists") } // lists → pick → done
     var lists by remember { mutableStateOf(emptyList<ReadingList>()) }
     var counts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
