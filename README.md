@@ -21,6 +21,9 @@ Leave `ui/theme/` alone. Theme stays in the Android Studio project.
 | File | Role |
 |---|---|
 | `Models.kt` | Data shapes: `Novel`, `ReadingList`, `Release`, `SeriesPage`. **Start here.** |
+| `ScrapeJs.kt` | Every JavaScript payload the hidden WebViews run. When NU changes its HTML, edit only this file. |
+| `DebugLog.kt` | Rotating file log (Cloudflare hits, parse outcomes, image failures). Pull via adb — see below. |
+| `NovelApplication.kt` | App entry: starts the debug log, gives Coil a logger so image errors land in it. |
 | `Prefs.kt` | SharedPreferences helpers (covers, last-read, list sync age). |
 | `Cache.kt` | On-disk JSON for lists and series pages. Merge + “does RSS look newer?” helpers. |
 | `Parsers.kt` | RSS XML + series-page JSON coming back from JavaScript. |
@@ -30,7 +33,12 @@ Leave `ui/theme/` alone. Theme stays in the Android Studio project.
 | `ListOptionsScreen.kt` | Per-list notify / update switches. |
 | `NovelDetailScreen.kt` | Series INFO / RELEASES, CHANGE LIST, mark as read, ⋮ menu. |
 | `CoverUi.kt` | Cover thumbnail + in-app cover WebView (used for a single list). |
-| `CoverPrefetchService.kt` | Foreground service that prefetches missing covers with a notification. |
+| `CoverUi.kt` | Cover thumbnail + in-app cover WebView (used for a single list). |
+| `SyncQueue.kt` | Bulk-download job queue: model, priority builder, conservative time estimate. |
+| `SyncEngineService.kt` | The bulk downloader. Paced WebView walking the queue, progress counter notification. |
+| `CoverStore.kt` | Cover image files on disk (offline grid + transferable backups). |
+| `OnboardingScreen.kt` | Fresh-login flow: read lists → size warning + estimates → priority-list picker. |
+| `BackupManager.kt` | One-zip library backup/restore via the system file picker. Never contains login. |
 | `SeriesSync.kt` | After RSS, scrape only series whose chapter number went up. |
 | `SettingsScreen.kt` | RSS URL, login, check interval, cover prefetch. |
 | `LoginWebScreen.kt` | Novel Updates login page. |
@@ -64,7 +72,7 @@ Kotlin / Compose notes you will see a lot:
 
 Unused imports do not make the app faster at runtime (the compiler already drops them). We still remove true orphans so the file is easier to read. The `getValue` / `setValue` pair is not an orphan.
 
-## Manifest extras for cover prefetch
+## Manifest extras for the sync engine
 
 In `app/src/main/AndroidManifest.xml`, inside `<manifest>` add if missing:
 
@@ -78,7 +86,7 @@ Inside `<application>` add:
 
 ```xml
 <service
-    android:name=".CoverPrefetchService"
+    android:name=".SyncEngineService"
     android:exported="false"
     android:foregroundServiceType="dataSync" />
 ```
@@ -114,7 +122,17 @@ Fixes in this zip:
 2. If the last successful list pull is older than Settings → check interval, one reading-list page is fetched.
 3. RSS is compared to cached chapter numbers. Only series with a **higher** `c` number are queued.
 4. Series pages paint from `filesDir/series_cache/`. ⋮ → Refresh scrapes now. Opening a series does not scrape if cache exists.
-5. Covers: Coil + `cover_cache` in prefs. Settings → **Prefetch missing covers** starts `CoverPrefetchService`. Uncached lists are scraped first (8s apart), then one series page every 8 seconds. Notification stays up so you can leave the app. Stop from Settings or the notification. Updates-off lists are skipped.
+5. Covers: CoverStore files first (offline + backup), then Coil by URL with `cover_cache` in prefs. Settings → **Prefetch missing covers** queues cover-only jobs on the SyncEngineService. Fresh logins go through OnboardingScreen: list hydration → size warning with conservative estimates → priority-list picker → the engine downloads ALL covers first, then chapter pages with priority lists ahead. The queue survives reboots (`sync_queue.json`); UpdateCheckWorker resumes it. Backups are one zip via the system file picker and never contain the login.
+
+## Debug log
+
+The app writes a rotating text log to `filesDir/debug.log` (max ~512 KB): which
+Cloudflare detector fired and on what URL, list-sync and series-parse outcomes,
+cover prefetch saves/skips, Coil image failures, RSS errors. Pull it with:
+
+```
+adb shell run-as com.patchscratch.novelnotifier cat files/debug.log > debug.log
+```
 
 ## Cloudflare
 

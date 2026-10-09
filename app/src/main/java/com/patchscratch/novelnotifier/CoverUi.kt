@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
@@ -37,7 +38,7 @@ import kotlin.time.Duration.Companion.seconds
  * CoverThumb      — Coil image, or an empty grey box if we have no URL yet.
  *
  * Bulk prefetch (hundreds of covers after you leave the app) lives in
- * CoverPrefetchService.kt, not here.
+ * SyncEngineService.kt, not here.
  *
  * getValue / setValue are used by the `by` keyword. Do not delete those imports.
  */
@@ -77,16 +78,7 @@ fun CoverPrefetcher(
         update = { webView ->
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    val script = """
-                        (function() {
-                          if (document.body && document.body.innerText.indexOf('Just a moment') !== -1) {
-                            return 'CF';
-                          }
-                          var img = document.querySelector('.seriesimg img, .serieseditimg img');
-                          return img ? (img.src || '') : '';
-                        })();
-                    """.trimIndent()
-                    view?.evaluateJavascript(script) { result ->
+                    view?.evaluateJavascript(coverJs()) { result ->
                         val cover = unwrapJsResult(result)
                         when {
                             cover.startsWith("http") -> onCoverFound(next.title, cover)
@@ -107,16 +99,25 @@ fun CoverPrefetcher(
     )
 }
 
-/** Small cover tile. Coil downloads the image; blank url → grey placeholder. */
+/**
+ * Small cover tile. Loads the local CoverStore file for [seriesUrl] when we
+ * have one (offline + backup-friendly), otherwise the URL via Coil; blank
+ * url → grey placeholder.
+ */
 @Composable
-fun CoverThumb(url: String, modifier: Modifier = Modifier) {
+fun CoverThumb(url: String, seriesUrl: String = "", modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val local = remember(seriesUrl) {
+        seriesUrl.takeIf { it.isNotBlank() }?.let { CoverStore.localFile(context, it) }
+    }
     Surface(
         modifier = modifier.clip(MaterialTheme.shapes.small),
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
-        if (url.isNotBlank()) {
+        val model: Any? = local ?: url.takeIf { it.isNotBlank() }
+        if (model != null) {
             AsyncImage(
-                model = url,
+                model = model,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

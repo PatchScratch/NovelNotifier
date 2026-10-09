@@ -107,6 +107,30 @@ fun mergeLastReads(
     return next
 }
 
+/**
+ * Merge the read-activity feed (rss_read_url, the type=read feed NU exposes)
+ * into last_read — cross-device read sync: mark a chapter read on the phone,
+ * the tablet picks it up on its next check. mergeLastReads keeps the higher
+ * chapter, so this can never rewind progress. Returns titles advanced.
+ */
+fun applyReadFeed(prefs: android.content.SharedPreferences, readNovels: List<Novel>): Int {
+    if (readNovels.isEmpty()) return 0
+    val current = loadLastRead(prefs)
+    val incoming = readNovels.mapNotNull { novel ->
+        if (novel.title.isBlank() || chapterNum(novel.latestChapter) <= 0) null
+        else novel.title to (novel.latestChapter to "")
+    }.toMap()
+    if (incoming.isEmpty()) return 0
+    val merged = mergeLastReads(current, incoming)
+    val advanced = incoming.count { (title, pair) ->
+        val before = chapterNum(current[title]?.first.orEmpty())
+        val after = chapterNum(pair.first)
+        after > 0 && after > before
+    }
+    if (advanced > 0) saveLastRead(prefs, merged)
+    return advanced
+}
+
 const val LAYOUT_LIST = "list"
 const val LAYOUT_GRID = "grid"
 const val SORT_ALPHA = "alpha"

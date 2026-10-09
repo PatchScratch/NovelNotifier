@@ -323,8 +323,8 @@ fun missingCoverQueue(
         .distinctBy { it.title }
         .filter { novel ->
             novel.seriesUrl.isNotBlank() &&
-                novel.coverUrl.isBlank() &&
-                coverCache[novel.title].isNullOrBlank()
+                usableCoverUrl(novel.coverUrl).isBlank() &&
+                usableCoverUrl(coverCache[novel.title]).isBlank()
         }
 }
 

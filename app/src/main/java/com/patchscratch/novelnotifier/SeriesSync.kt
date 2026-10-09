@@ -12,13 +12,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -41,6 +45,7 @@ fun SeriesChapterFetcher(
     onFinished: (String, Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val next = queue.firstOrNull() ?: return
     var canLoad by remember(next.seriesUrl) { mutableStateOf(false) }
     var tries by remember(next.seriesUrl) { mutableIntStateOf(0) }
@@ -71,56 +76,7 @@ fun SeriesChapterFetcher(
         update = { webView ->
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    val script = """
-                        (function() {
-                          $CF_DETECT_JS
-                          function text(sel) {
-                            var el = document.querySelector(sel);
-                            return el ? (el.innerText || el.textContent || '').trim() : '';
-                          }
-                          var releases = [];
-                          var rows = document.querySelectorAll('#myTable tbody tr');
-                          rows.forEach(function(tr) {
-                            var tds = tr.querySelectorAll('td');
-                            if (!tds.length) return;
-                            var links = [];
-                            tr.querySelectorAll('a[href]').forEach(function(a) { links.push(a); });
-                            var link = links.find(function(a) {
-                              return /c\d+|v\d+/i.test((a.textContent || ''));
-                            }) || links[links.length - 1];
-                            if (!link) return;
-                            var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
-                            if (!chapter || /^[\-\–—._\s]+$/.test(chapter)) return;
-                            var cb = tr.querySelector('input[type=checkbox]');
-                            var rid = '';
-                            var read = false;
-                            if (cb) {
-                              read = !!(cb.checked || cb.getAttribute('checked') !== null);
-                              if (cb.id && cb.id.indexOf('chklist') === 0) rid = cb.id.replace('chklist', '');
-                            }
-                            var rowClass = (tr.className || '').toLowerCase();
-                            if (/readcolor|colorme/.test(rowClass)) read = true;
-                            releases.push({
-                              chapter: chapter,
-                              group: tds[1] ? tds[1].textContent.replace(/\s+/g, ' ').trim() : '',
-                              date: tds[0] ? tds[0].textContent.replace(/\s+/g, ' ').trim() : '',
-                              url: link.href || '',
-                              rid: rid,
-                              read: read
-                            });
-                          });
-                          return JSON.stringify({
-                            title: text('#editsn, .seriestitle, h4.seriestitle'),
-                            description: text('#editdescription, #editdesc'),
-                            genres: text('#seriesgenre'),
-                            tags: text('#showtags'),
-                            sid: (document.querySelector('#mypostid') || {}).value || '',
-                            cover: (document.querySelector('.seriesimg img, .serieseditimg img') || {}).src || '',
-                            maxPage: 1,
-                            releases: releases
-                          });
-                        })();
-                    """.trimIndent()
+                    val script = seriesPageJs()
                     view?.evaluateJavascript(script) { result ->
                         val raw = unwrapJsResult(result)
                         if (raw == "CF" || raw.isBlank()) {
@@ -132,22 +88,39 @@ fun SeriesChapterFetcher(
                             }
                             return@evaluateJavascript
                         }
-                        val parsed = parseSeriesPage(raw)
-                        val old = loadSeriesCache(context, next.seriesUrl)?.first ?: SeriesPage()
-                        val merged = mergeReleases(old.releases, parsed.releases)
-                        val page = old.copy(
-                            title = parsed.title.ifBlank { old.title },
-                            description = parsed.description.ifBlank { old.description },
-                            genres = parsed.genres.ifBlank { old.genres },
-                            tags = parsed.tags.ifBlank { old.tags },
-                            coverUrl = parsed.coverUrl.ifBlank { old.coverUrl },
-                            sid = parsed.sid.ifBlank { old.sid },
-                            releases = merged,
-                            maxPage = maxOf(old.maxPage, parsed.maxPage)
-                        )
-                        saveSeriesCache(context, next.seriesUrl, page, maxOf(1, loadSeriesCache(context, next.seriesUrl)?.second ?: 1))
-                        applyListChapter(context, next.title, next.latestChapter)
-                        onFinished(next.title, parsed.releases.isNotEmpty())
+                        val title = next.title
+                        val seriesUrl = next.seriesUrl
+                        val latestChapter = next.latestChapter
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) {
+                                val parsed = parseSeriesPage(raw)
+                                val cachedPair = loadSeriesCache(context, seriesUrl)
+                                val old = cachedPair?.first ?: SeriesPage()
+                                val merged = mergeReleases(old.releases, parsed.releases)
+                                val page = old.copy(
+                                    title = parsed.title.ifBlank { old.title },
+                                    author = parsed.author.ifBlank { old.author },
+                                    rating = parsed.rating.ifBlank { old.rating },
+                                    description = parsed.description.ifBlank { old.description },
+                                    genres = parsed.genres.ifBlank { old.genres },
+                                    tags = parsed.tags.ifBlank { old.tags },
+                                    type = parsed.type.ifBlank { old.type },
+                                    status = parsed.status.ifBlank { old.status },
+                                    coverUrl = usableCoverUrl(parsed.coverUrl).ifBlank { old.coverUrl },
+                                    sid = parsed.sid.ifBlank { old.sid },
+                                    releases = merged,
+                                    maxPage = maxOf(old.maxPage, parsed.maxPage)
+                                )
+                                saveSeriesCache(context, seriesUrl, page, maxOf(1, cachedPair?.second ?: 1))
+                                applyListChapter(context, title, latestChapter)
+                                DebugLog.log(
+                                    "RSSSYNC",
+                                    "'$title' rows=${parsed.releases.size} total=${merged.size} ok=${parsed.releases.isNotEmpty()}"
+                                )
+                                parsed.releases.isNotEmpty()
+                            }
+                            onFinished(title, ok)
+                        }
                     }
                 }
             }

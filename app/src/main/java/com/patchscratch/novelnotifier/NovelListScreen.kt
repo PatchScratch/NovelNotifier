@@ -8,7 +8,9 @@ import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.core.content.edit
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,8 +66,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -88,7 +92,7 @@ import kotlin.time.Duration.Companion.seconds
  *   https://www.novelupdates.com/reading-list/?list=…
  * JavaScript returns list names + series rows. Kotlin parses that string.
  *
- * [pauseLocalCovers] is true while CoverPrefetchService is running so two
+ * [pauseLocalCovers] is true while SyncEngineService is running so two
  * WebViews do not hit the site at once.
  */
 @SuppressLint("SetJavaScriptEnabled")
@@ -109,6 +113,8 @@ fun NovelListScreen(
     onNovelClick: (Novel) -> Unit,
     onCoverFound: (String, String) -> Unit,
     onListsLoaded: (List<ReadingList>) -> Unit,
+    onRssUrlFound: (String) -> Unit = {},
+    onReadFeedFound: (String) -> Unit = {},
     onOpenSettings: () -> Unit,
     onEditLists: () -> Unit,
     onSaveListOptions: (Set<String>, Set<String>) -> Unit,
@@ -129,6 +135,9 @@ fun NovelListScreen(
     var listReloadKey by remember { mutableIntStateOf(0) }
     var siteSync by remember { mutableIntStateOf(0) }
     var showChallenge by remember { mutableStateOf(false) }
+    // A Cloudflare signal was seen, but the WebView may clear it alone —
+    // the grace timer below expands the pane only if it stays stuck.
+    var pendingChallenge by remember { mutableStateOf(false) }
     var coverQueue by remember { mutableStateOf(emptyList<Novel>()) }
     var showListOptions by remember { mutableStateOf(false) }
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
@@ -139,23 +148,27 @@ fun NovelListScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
 
-    /** Write the current lists + selected list to filesDir/list_cache.json. */
-    fun persistLists() {
-        saveListSnapshot(
-            context,
-            ListSnapshot(
-                lists = lists,
-                selectedId = selectedListId,
-                selectedName = selectedList,
-                novelsByList = novelsByList
-            )
+    /**
+     * Write the current lists + selected list to filesDir/list_cache.json.
+     * Snapshot the state on the caller's thread, write the JSON on Dispatchers.IO.
+     */
+    fun persistListsOffMainThread() {
+        val snapshot = ListSnapshot(
+            lists = lists,
+            selectedId = selectedListId,
+            selectedName = selectedList,
+            novelsByList = novelsByList
         )
+        scope.launch(Dispatchers.IO) { saveListSnapshot(context, snapshot) }
     }
+
+    // System back closes the List options overlay instead of leaving the app.
+    BackHandler(enabled = showListOptions) { showListOptions = false }
 
     // First composition only (Unit never changes): paint from disk, then scrape if stale.
     LaunchedEffect(Unit) {
         val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
-        val snap = loadListSnapshot(context)
+        val snap = withContext(Dispatchers.IO) { loadListSnapshot(context) }
         if (snap.lists.isNotEmpty()) {
             lists = snap.lists
             onListsLoaded(snap.lists)
@@ -184,19 +197,37 @@ fun NovelListScreen(
             listStatus = "Loading lists..."
         }
         if (siteCheckNeeded(prefs)) {
-            showChallenge = true
+            pendingChallenge = true
             siteSync += 1
+            listStatus = "Checking Novel Updates..."
+        }
+    }
+
+    // Cloudflare grace: modern managed challenges usually clear themselves in
+    // a real WebView. Expanding the pane for every CF signal made the page
+    // flash on screen during ordinary refreshes. Surface the pane only when a
+    // challenge is STILL unresolved after 12 seconds; a successful parse or a
+    // page that finishes healthy cancels it silently.
+    LaunchedEffect(pendingChallenge) {
+        if (!pendingChallenge) return@LaunchedEffect
+        delay(12.seconds)
+        if (pendingChallenge && !showChallenge) {
+            DebugLog.log("CF", "challenge unresolved after 12s — expanding pane")
+            showChallenge = true
+            markSiteCheckNeeded(prefs)
             listStatus = "Site check needed — complete it below"
         }
     }
 
-    LaunchedEffect(siteSync, listReloadKey, showChallenge) {
-        if (siteSync == 0 || showChallenge) return@LaunchedEffect
-        delay(8.seconds)
+    // A slow page is NOT proof of a Cloudflare check. Expanding the challenge
+    // pane on a timeout made the real Novel Updates page flash on-screen during
+    // ordinary refreshes — only genuine CF signals (URL / title / content probe
+    // in the WebViewClient below) may expand it. The timer is a status hint only.
+    LaunchedEffect(siteSync, listReloadKey) {
+        if (siteSync == 0 || listReloadKey == 0) return@LaunchedEffect
+        delay(20.seconds)
         if (siteSync > 0 && !showChallenge) {
-            showChallenge = true
-            markSiteCheckNeeded(prefs)
-            listStatus = "Site check needed — complete it below"
+            listStatus = "Still waiting on Novel Updates — the site is slow right now"
         }
     }
 
@@ -216,9 +247,14 @@ fun NovelListScreen(
     }
 
     // Overlay saved cover URLs onto rows that only have a title + chapter.
+    // Placeholder URLs count as "no cover" so they can be repaired.
     val shownNovels = (if (selectedListId.isBlank()) rssNovels else listNovels).map { novel ->
-        val cached = coverCache[novel.title].orEmpty()
-        if (cached.isNotBlank() && novel.coverUrl.isBlank()) novel.copy(coverUrl = cached) else novel
+        val cached = usableCoverUrl(coverCache[novel.title])
+        if (cached.isNotBlank() && usableCoverUrl(novel.coverUrl).isBlank()) {
+            novel.copy(coverUrl = cached)
+        } else {
+            novel
+        }
     }.filter { novel ->
         searchQuery.isBlank() || novel.title.contains(searchQuery, ignoreCase = true)
     }.let { rows ->
@@ -294,7 +330,7 @@ fun NovelListScreen(
                                     siteSync += 1
                                     listReloadKey += 1
                                 }
-                                persistLists()
+                                persistListsOffMainThread()
                                 scope.launch { drawerState.close() }
                             }
                         )
@@ -423,6 +459,7 @@ fun NovelListScreen(
                             items(shownNovels.size) { index ->
                                 NovelGridTile(
                                     novel = shownNovels[index],
+                                    seriesUrl = shownNovels[index].seriesUrl,
                                     unread = unreadCount(shownNovels[index].latestChapter, lastRead[shownNovels[index].title]?.first),
                                     onClick = { onNovelClick(shownNovels[index]) }
                                 )
@@ -482,6 +519,7 @@ fun NovelListScreen(
                     )
                     TextButton(onClick = {
                         showChallenge = false
+                        pendingChallenge = false
                         listStatus = "Site check closed — pull to retry"
                     }) { Text("Close") }
                 }
@@ -509,138 +547,33 @@ fun NovelListScreen(
                 webChromeClient = object : WebChromeClient() {
                     override fun onReceivedTitle(view: WebView?, title: String?) {
                         if (isCloudflareTitle(title)) {
-                            showChallenge = true
-                            markSiteCheckNeeded(prefs)
-                            listStatus = "Site check needed — complete it below"
+                            DebugLog.log("CF", "detector=title '$title'")
+                            pendingChallenge = true
                         }
                     }
                 }
                 webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                         if (isCloudflareUrl(url)) {
-                            showChallenge = true
-                            markSiteCheckNeeded(prefs)
-                            listStatus = "Site check needed — complete it below"
+                            DebugLog.log("CF", "detector=start-url $url")
+                            pendingChallenge = true
                         }
                     }
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (isCloudflareUrl(url) || isCloudflareTitle(view?.title)) {
-                            showChallenge = true
-                            markSiteCheckNeeded(prefs)
-                            listStatus = "Site check needed — complete it below"
+                            DebugLog.log("CF", "detector=finish url=$url title='${view?.title}'")
+                            pendingChallenge = true
                         }
-                        val script = """
-                            (function() {
-                              $CF_DETECT_JS
-                              var found = {};
-                              var order = [];
-                              function isJunk(name) {
-                                name = (name || '').replace(/\s+/g, ' ').trim();
-                                if (!name || name.length > 50) return true;
-                                if (/^\d+$/.test(name)) return true;
-                                if (/^(OR|AND|YES|NO|---|--|–|Default|Dark|Dark Crisp|Alphabetical|Unread|Latest|Reading Lists|Reading List|Edit Lists)$/i.test(name)) return true;
-                                return false;
-                              }
-                              function addList(id, name) {
-                                name = (name || '').replace(/\s+/g, ' ').trim();
-                                id = (id || '').trim();
-                                if (isJunk(name)) return;
-                                if (found[name]) return;
-                                found[name] = id || name;
-                                order.push(name);
-                              }
-                              var moveSelect = null;
-                              document.querySelectorAll('select').forEach(function(sel) {
-                                var texts = [];
-                                for (var i = 0; i < sel.options.length; i++) {
-                                  texts.push((sel.options[i].textContent || '').trim());
-                                }
-                                if (texts.indexOf('---') !== -1 || texts.indexOf('--') !== -1) {
-                                  moveSelect = sel;
-                                }
-                              });
-                              if (moveSelect) {
-                                for (var j = 0; j < moveSelect.options.length; j++) {
-                                  addList(moveSelect.options[j].value, moveSelect.options[j].textContent);
-                                }
-                              }
-                              document.querySelectorAll('a[href*="/reading-list"]').forEach(function(a) {
-                                var href = a.href || '';
-                                var m = href.match(/[?&]list=([^&]+)/);
-                                addList(m ? decodeURIComponent(m[1]) : '', a.textContent);
-                              });
-                              var lists = [];
-                              for (var n = 0; n < order.length; n++) {
-                                lists.push(found[order[n]] + '===' + order[n]);
-                              }
-                              var novels = [];
-                              function isJunkTitle(title) {
-                                return /^(series information|description|latest release|status|notes|latest series)$/i.test(title);
-                              }
-                              document.querySelectorAll('a[href*="/series/"]').forEach(function(a) {
-                                var title = (a.textContent || '').replace(/\s+/g, ' ').trim();
-                                var href = a.href || '';
-                                if (!title || isJunkTitle(title)) return;
-                                if (!/\/series\/[a-z0-9-]+/i.test(href)) return;
-                                var chapter = '';
-                                var lastReadCh = '';
-                                var lastReadUrl = '';
-                                var img = '';
-                                var hasListMark = false;
-                                var row = a.closest ? a.closest('tr') : a.parentElement;
-                                if (row) {
-                                  var statusA = row.querySelector('[id^="mystatus"], a[id*="mystatus"], #mystatus');
-                                  var latestA = row.querySelector('[id^="mylatest"], a[id*="mylatest"]');
-                                  if (latestA) chapter = (latestA.textContent || '').replace(/\s+/g, ' ').trim();
-                                  if (statusA) {
-                                    lastReadCh = (statusA.textContent || '').replace(/\s+/g, ' ').trim();
-                                    lastReadUrl = statusA.getAttribute('href') || '';
-                                  }
-                                }
-                                var node = a.parentElement;
-                                for (var k = 0; k < 8 && node; k++) {
-                                  var text = node.textContent || '';
-                                  if (!chapter) {
-                                    var found = text.match(/\[\s*([^\]]+)\]/g) || [];
-                                    var nums = [];
-                                    for (var f = 0; f < found.length; f++) {
-                                      var inner = found[f].replace(/[\[\]]/g, '').trim();
-                                      if (/c\d+|ch\s*\d+|chapter\s*\d+|ep\s*\d+|v\d+/i.test(inner)) nums.push(inner);
-                                    }
-                                    if (nums.length >= 2) {
-                                      if (!lastReadCh) lastReadCh = nums[0];
-                                      chapter = nums[nums.length - 1];
-                                    } else if (nums.length === 1) {
-                                      chapter = nums[0];
-                                    }
-                                  }
-                                  if (node.querySelector && (
-                                    node.querySelector('input[id^="chklist"]') ||
-                                    node.querySelector('input[type="checkbox"]')
-                                  )) hasListMark = true;
-                                  var image = node.querySelector ? node.querySelector('img') : null;
-                                  if (image && image.src && image.src.indexOf('data:') !== 0 && image.src.indexOf('icon') === -1) {
-                                    if (!img) img = image.src;
-                                  }
-                                  node = node.parentElement;
-                                }
-                                if (!chapter && !hasListMark) return;
-                                novels.push(title + '===' + (chapter || 'No chapter info') + '===' + href + '===' + img + '===' + lastReadCh + '===' + lastReadUrl);
-                              });
-                              return lists.join('|||') + ':::NOVELS:::' + novels.join('|||');
-                            })();
-                        """.trimIndent()
+                        val script = listPageJs()
                         view?.evaluateJavascript(script) { result ->
                             val raw = unwrapJsResult(result)
                             if (raw == "CF" || isCloudflareUrl(url)) {
-                                showChallenge = true
-                                markSiteCheckNeeded(prefs)
-                                listStatus = "Site check needed — complete it below"
+                                DebugLog.log("CF", "detector=script-probe url=$url")
+                                pendingChallenge = true
                                 return@evaluateJavascript
                             }
                             val parts = raw.split(":::NOVELS:::")
                             val listPart = parts.getOrNull(0).orEmpty()
-                            val novelPart = parts.getOrNull(1).orEmpty()
                             if (listPart.isNotBlank()) {
                                 val parsedLists = listPart.split("|||").mapNotNull { item ->
                                     val bits = item.split("===", limit = 2)
@@ -667,37 +600,27 @@ fun NovelListScreen(
                                 return@evaluateJavascript
                             }
                             if (selectedListId.isNotBlank()) {
-                                val lastReads = mutableMapOf<String, Pair<String, String>>()
-                                val parsedNovels = novelPart.split("|||").mapNotNull { item ->
-                                    val bits = item.split("===", limit = 6)
-                                    if (bits.size >= 2) {
-                                        val title = bits[0]
-                                        val seriesUrl = bits.getOrNull(2).orEmpty()
-                                        val siteLast = bits.getOrNull(4).orEmpty().trim()
-                                        val skipLast = siteLast.isBlank() ||
-                                            siteLast == "—" ||
-                                            siteLast == "-" ||
-                                            siteLast.equals("none", true) ||
-                                            siteLast.equals("n/a", true)
-                                        if (!skipLast && chapterNum(siteLast) > 0) {
-                                            lastReads[title] = siteLast to bits.getOrNull(5).orEmpty()
-                                        }
-                                        Novel(
-                                            title = title,
-                                            latestChapter = bits[1],
-                                            seriesUrl = seriesUrl,
-                                            coverUrl = coverCache[title].orEmpty().ifBlank {
-                                                bits.getOrNull(3).orEmpty()
-                                            }
-                                        )
-                                    } else null
-                                }.distinctBy { it.title }
-                                    .filter { novel ->
-                                        val title = novel.title.trim()
-                                        title.isNotBlank() &&
-                                            !title.equals("Series Information", ignoreCase = true) &&
-                                            novel.seriesUrl.contains("/series/")
+                                // Never let a blank/placeholder site cover wipe one we had.
+                                val oldCoverByUrl = novelsByList[selectedListId].orEmpty()
+                                    .mapNotNull { n ->
+                                        n.seriesUrl.takeIf { it.isNotBlank() }
+                                            ?.let { it to usableCoverUrl(n.coverUrl) }
                                     }
+                                    .toMap()
+                                val result = parseListPageResult(raw, coverCache, oldCoverByUrl)
+                                // NU shows the personal feed links on this page — capture them once.
+                                if (result.rssUrl.isNotBlank() && prefs.getString("rss_url", "").isNullOrBlank()) {
+                                    prefs.edit { putString("rss_url", result.rssUrl) }
+                                    onRssUrlFound(result.rssUrl)
+                                    DebugLog.log("SYNC", "captured releases link: ${result.rssUrl}")
+                                }
+                                if (result.readRssUrl.isNotBlank() && prefs.getString("rss_read_url", "").isNullOrBlank()) {
+                                    prefs.edit { putString("rss_read_url", result.readRssUrl) }
+                                    onReadFeedFound(result.readRssUrl)
+                                    DebugLog.log("SYNC", "captured read-activity link: ${result.readRssUrl}")
+                                }
+                                val lastReads = result.lastReads
+                                val parsedNovels = result.novels
                                 val cachedRows = novelsByList[selectedListId].orEmpty().ifEmpty { listNovels }
                                 val cachedLooksReal = cachedRows.any { chapterNum(it.latestChapter) > 0 }
                                 // Cloudflare / empty HTML must never wipe a real library.
@@ -712,22 +635,22 @@ fun NovelListScreen(
                                 listNovels = stamped
                                 novelsByList = nextMap
                                 if (lastReads.isNotEmpty()) onLastReads(lastReads)
-                                saveListSnapshot(
-                                    context,
-                                    ListSnapshot(
-                                        lists = lists,
-                                        selectedId = selectedListId,
-                                        selectedName = selectedList,
-                                        novelsByList = nextMap
-                                    )
+                                val snapshotToWrite = ListSnapshot(
+                                    lists = lists,
+                                    selectedId = selectedListId,
+                                    selectedName = selectedList,
+                                    novelsByList = nextMap
                                 )
+                                scope.launch(Dispatchers.IO) {
+                                    saveListSnapshot(context, snapshotToWrite)
+                                }
                                 coverQueue = if (selectedListId in updateOff) {
                                     emptyList()
                                 } else {
                                     parsedNovels.filter {
-                                        it.coverUrl.isBlank() &&
+                                        usableCoverUrl(it.coverUrl).isBlank() &&
                                             it.seriesUrl.isNotBlank() &&
-                                            coverCache[it.title].isNullOrBlank()
+                                            usableCoverUrl(coverCache[it.title]).isBlank()
                                     }
                                 }
                                 if (parsedNovels.isNotEmpty()) {
@@ -736,6 +659,12 @@ fun NovelListScreen(
                                     )
                                     clearSiteCheckNeeded(prefs)
                                     showChallenge = false
+                                    pendingChallenge = false
+                                    DebugLog.log(
+                                        "SYNC",
+                                        "list '$selectedList' rows=${parsedNovels.size} " +
+                                            "coversMissing=${parsedNovels.count { usableCoverUrl(it.coverUrl).isBlank() }}"
+                                    )
                                 }
                                 listStatus = when {
                                     parsedNovels.isEmpty() -> "No series found in $selectedList"
@@ -764,7 +693,7 @@ fun NovelListScreen(
         }
     }
 
-    // In-list cover grabber. CoverPrefetchService (Settings) is the bulk path;
+    // In-list cover grabber. SyncEngineService (Settings) is the bulk path;
     // this one only fills gaps for the list currently on screen.
     if (!pauseLocalCovers && !showChallenge) CoverPrefetcher(
         queue = coverQueue,
@@ -800,11 +729,12 @@ private fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun NovelGridTile(novel: Novel, unread: Int, onClick: () -> Unit) {
+private fun NovelGridTile(novel: Novel, seriesUrl: String, unread: Int, onClick: () -> Unit) {
     Column(modifier = Modifier.clickable(onClick = onClick)) {
         Box {
             CoverThumb(
                 url = novel.coverUrl,
+                seriesUrl = seriesUrl,
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(3f / 4f)
@@ -844,7 +774,7 @@ private fun NovelListRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box {
-                CoverThumb(url = novel.coverUrl, modifier = Modifier.size(56.dp))
+                CoverThumb(url = novel.coverUrl, seriesUrl = novel.seriesUrl, modifier = Modifier.size(56.dp))
                 UnreadBadge(unread, modifier = Modifier.align(Alignment.TopEnd))
             }
             Column(modifier = Modifier.padding(start = 12.dp)) {

@@ -1,0 +1,320 @@
+package com.patchscratch.novelnotifier
+
+import org.json.JSONObject
+
+/**
+ * Every JavaScript payload the hidden WebViews run, in ONE file.
+ *
+ * When Novel Updates changes its HTML, this is the only place to edit:
+ *   CF_DETECT_JS   — shared "is this a Cloudflare interstitial?" probe.
+ *   listPageJs()   — reading-list page → lists + series rows (with last-read).
+ *   seriesPageJs() — series page → INFO + RELEASES rows + list dropdown + sid.
+ *   coverJs()      — series page → cover image URL only.
+ *   moveToListJs() — CHANGE LIST: pick select#taskOption + fire jQuery change.
+ *   markReadJs()   — MARK AS READ: tick chklist{rid} + GET readinglist_update.php.
+ *
+ * Kotlin raw strings keep backslashes literal, so the JS regexes appear
+ * exactly as they must reach the WebView. Duplicated copies of these scripts
+ * used to live inside NovelListScreen / NovelDetailScreen / SeriesSync /
+ * CoverUi / CoverPrefetchService — do not reintroduce them.
+ */
+
+/** JS snippet: return 'CF' if this document is a Cloudflare interstitial. */
+const val CF_DETECT_JS = """
+  function nuIsCf() {
+    var t = ((document.body && (document.body.innerText || document.body.textContent)) || '').slice(0, 4000);
+    var title = document.title || '';
+    var html = (document.documentElement && document.documentElement.innerHTML || '').slice(0, 6000);
+    var blob = (t + ' ' + title + ' ' + html).toLowerCase();
+    if (/just a moment|verify you are human|checking your browser|attention required|enable javascript and cookies|cf-turnstile|challenge-platform|cf-browser-verification|why have i been blocked/.test(blob)) return true;
+    if (document.querySelector('#challenge-form, .cf-browser-verification, .cf-turnstile, iframe[src*="challenges.cloudflare"], iframe[src*="turnstile"]')) return true;
+    return false;
+  }
+  if (nuIsCf()) return 'CF';
+"""
+
+/**
+ * Reading-list page. Returns
+ *   "listId===listName|||...:::NOVELS:::title===chapter===href===img===lastReadCh===lastReadUrl|||..."
+ * Novel Updates sometimes hides decoy chapter links with CSS; the [hasListMark]
+ * / bracket-number heuristics keep junk rows out (see original app v1.11).
+ */
+fun listPageJs(): String = """
+    (function() {
+      $CF_DETECT_JS
+      var found = {};
+      var order = [];
+      function isJunk(name) {
+        name = (name || '').replace(/\s+/g, ' ').trim();
+        if (!name || name.length > 50) return true;
+        if (/^\d+$/.test(name)) return true;
+        if (/^(OR|AND|YES|NO|---|--|–|Default|Dark|Dark Crisp|Alphabetical|Unread|Latest|Reading Lists|Reading List|Edit Lists)$/i.test(name)) return true;
+        return false;
+      }
+      function addList(id, name) {
+        name = (name || '').replace(/\s+/g, ' ').trim();
+        id = (id || '').trim();
+        if (isJunk(name)) return;
+        if (found[name]) return;
+        found[name] = id || name;
+        order.push(name);
+      }
+      var moveSelect = null;
+      document.querySelectorAll('select').forEach(function(sel) {
+        var texts = [];
+        for (var i = 0; i < sel.options.length; i++) {
+          texts.push((sel.options[i].textContent || '').trim());
+        }
+        if (texts.indexOf('---') !== -1 || texts.indexOf('--') !== -1) {
+          moveSelect = sel;
+        }
+      });
+      if (moveSelect) {
+        for (var j = 0; j < moveSelect.options.length; j++) {
+          addList(moveSelect.options[j].value, moveSelect.options[j].textContent);
+        }
+      }
+      document.querySelectorAll('a[href*="/reading-list"]').forEach(function(a) {
+        var href = a.href || '';
+        var m = href.match(/[?&]list=([^&]+)/);
+        addList(m ? decodeURIComponent(m[1]) : '', a.textContent);
+      });
+      var lists = [];
+      for (var n = 0; n < order.length; n++) {
+        lists.push(found[order[n]] + '===' + order[n]);
+      }
+      var novels = [];
+      function isJunkTitle(title) {
+        return /^(series information|description|latest release|status|notes|latest series)$/i.test(title);
+      }
+      document.querySelectorAll('a[href*="/series/"]').forEach(function(a) {
+        var title = (a.textContent || '').replace(/\s+/g, ' ').trim();
+        var href = a.href || '';
+        if (!title || isJunkTitle(title)) return;
+        if (!/\/series\/[a-z0-9-]+/i.test(href)) return;
+        var chapter = '';
+        var lastReadCh = '';
+        var lastReadUrl = '';
+        var img = '';
+        var hasListMark = false;
+        var row = a.closest ? a.closest('tr') : a.parentElement;
+        if (row) {
+          var statusA = row.querySelector('[id^="mystatus"], a[id*="mystatus"], #mystatus');
+          var latestA = row.querySelector('[id^="mylatest"], a[id*="mylatest"]');
+          if (latestA) chapter = (latestA.textContent || '').replace(/\s+/g, ' ').trim();
+          if (statusA) {
+            lastReadCh = (statusA.textContent || '').replace(/\s+/g, ' ').trim();
+            lastReadUrl = statusA.getAttribute('href') || '';
+          }
+        }
+        var node = a.parentElement;
+        for (var k = 0; k < 8 && node; k++) {
+          var text = node.textContent || '';
+          if (!chapter) {
+            var found = text.match(/\[\s*([^\]]+)\]/g) || [];
+            var nums = [];
+            for (var f = 0; f < found.length; f++) {
+              var inner = found[f].replace(/[\[\]]/g, '').trim();
+              if (/c\d+|ch\s*\d+|chapter\s*\d+|ep\s*\d+|v\d+/i.test(inner)) nums.push(inner);
+            }
+            if (nums.length >= 2) {
+              if (!lastReadCh) lastReadCh = nums[0];
+              chapter = nums[nums.length - 1];
+            } else if (nums.length === 1) {
+              chapter = nums[0];
+            }
+          }
+          if (node.querySelector && (
+            node.querySelector('input[id^="chklist"]') ||
+            node.querySelector('input[type="checkbox"]')
+          )) hasListMark = true;
+          var image = node.querySelector ? node.querySelector('img') : null;
+          if (image && image.src && image.src.indexOf('data:') !== 0 && image.src.indexOf('icon') === -1) {
+            if (!img) img = image.src;
+          }
+          node = node.parentElement;
+        }
+        if (!chapter && !hasListMark) return;
+        novels.push(title + '===' + (chapter || 'No chapter info') + '===' + href + '===' + img + '===' + lastReadCh + '===' + lastReadUrl);
+      });
+      // NU shows the personal RSS feed links on this page — the releases feed
+      // and the read-activity feed (type=read). Grab every feed-ish anchor so
+      // the app can configure chapter checks AND cross-device read sync.
+      var feeds = [];
+      document.querySelectorAll('a[href*="rss"], a[href*="RSS"], a[href*="/feed"]').forEach(function(a) {
+        if (a.href && /^https?:/i.test(a.href) && feeds.indexOf(a.href) === -1) feeds.push(a.href);
+      });
+      return lists.join('|||') + ':::NOVELS:::' + novels.join('|||') + ':::RSS:::' + feeds.join('|||');
+    })();
+""".trimIndent()
+
+/**
+ * Series page (any ?pg=N). Returns the JSON consumed by parseSeriesPage().
+ * rid comes from the chklist checkbox id; sid from #mypostid.
+ */
+fun seriesPageJs(): String = """
+    (function() {
+      $CF_DETECT_JS
+      function text(sel) {
+        var el = document.querySelector(sel);
+        return el ? (el.innerText || el.textContent || '').trim() : '';
+      }
+      function texts(sel) {
+        var out = [];
+        document.querySelectorAll(sel).forEach(function(a) {
+          var t = (a.textContent || '').trim();
+          if (t) out.push(t);
+        });
+        return out.join(', ');
+      }
+      var img = document.querySelector('.seriesimg img, .serieseditimg img');
+      var releases = [];
+      document.querySelectorAll('#myTable tbody tr').forEach(function(tr) {
+        var tds = tr.querySelectorAll('td');
+        if (!tds.length) return;
+        var link = tr.querySelector('a.chp-release');
+        if (!link) {
+          var links = Array.from(tr.querySelectorAll('a[href]'));
+          link = links.find(function(a) {
+            return /c\d+|v\d+/i.test((a.textContent || ''));
+          }) || links[links.length - 1];
+        }
+        if (!link) return;
+        var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!chapter) return;
+        if (/^[\\-–—._\\s]+$/.test(chapter)) return;
+        var cb = tr.querySelector('input[type=checkbox]');
+        var rid = '';
+        var read = false;
+        if (cb) {
+          read = !!(cb.checked || cb.getAttribute('checked') !== null);
+          if (cb.id && cb.id.indexOf('chklist') === 0) {
+            rid = cb.id.replace('chklist', '');
+          } else if (cb.value && cb.value !== 'notset') {
+            rid = cb.value;
+          }
+        }
+        var rowClass = (tr.className || '').toLowerCase();
+        if (/readcolor|colorme|checked/.test(rowClass)) read = true;
+        if (tr.querySelector('.readcolor, .nu_editnotes')) read = true;
+        releases.push({
+          chapter: chapter,
+          group: tds[1] ? tds[1].textContent.replace(/\s+/g, ' ').trim() : '',
+          date: tds[0] ? tds[0].textContent.replace(/\s+/g, ' ').trim() : '',
+          url: link.href || '',
+          rid: rid,
+          read: read
+        });
+      });
+      var max = 1;
+      document.querySelectorAll('.digg_pagination a').forEach(function(a) {
+        var m = ((a.getAttribute('href') || '') + (a.search || '')).match(/[?&]pg=(\d+)/);
+        if (m) {
+          var n = parseInt(m[1], 10);
+          if (n > max) max = n;
+        }
+      });
+      var task = document.querySelector('select#taskOption, select[name="taskOption"], select.taskOption');
+      var currentList = '';
+      var lists = [];
+      if (task) {
+        for (var i = 0; i < task.options.length; i++) {
+          var t = (task.options[i].textContent || '').replace(/\s+/g, ' ').trim();
+          var v = (task.options[i].value || '').trim();
+          if (!t || t === '---' || t === '--') continue;
+          if (/^select/i.test(t) || /choose list|move to/i.test(t)) continue;
+          lists.push({ id: v, name: t });
+          if (task.options[i].selected) currentList = t;
+        }
+      }
+      return JSON.stringify({
+        title: text('#editsn, .seriestitle, h4.seriestitle') || document.title.replace(' - Novel Updates', ''),
+        author: texts('#showauthors a, #editaid a'),
+        rating: text('.uvotes, #rateit, span.uvotes'),
+        description: text('#editdescription, #editdesc'),
+        genres: texts('#seriesgenre a, .seriesgenre a'),
+        tags: texts('#showtags a, #edittags a'),
+        type: text('#showtype, #edittype'),
+        status: text('#editstatus, #showstatus'),
+        cover: img ? (img.src || '') : '',
+        maxPage: max,
+        currentList: currentList,
+        sid: (document.querySelector('#mypostid') || {}).value || '',
+        lists: lists,
+        releases: releases
+      });
+    })();
+""".trimIndent()
+
+/** Series page → cover URL only. Same CF contract as the others ('CF' = challenge). */
+fun coverJs(): String = """
+    (function() {
+      $CF_DETECT_JS
+      var img = document.querySelector('.seriesimg img, .serieseditimg img');
+      return img ? (img.src || '') : '';
+    })();
+""".trimIndent()
+
+/**
+ * CHANGE LIST. [moveId] is "listId:::listName". A plain selectedIndex change
+ * is not enough for the site to save — we must also fire jQuery('change').
+ * Returns "picked=id/name", "no-taskOption", or "no-match".
+ */
+fun moveToListJs(moveId: String): String = """
+    (function() {
+      var raw = ${JSONObject.quote(moveId)};
+      var parts = raw.split(':::');
+      var wantId = parts[0] || '';
+      var wantName = (parts[1] || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      var sel = document.querySelector('select#taskOption, select[name="taskOption"], select.taskOption');
+      if (!sel) {
+        document.querySelectorAll('select').forEach(function(s) {
+          var blob = '';
+          for (var i = 0; i < s.options.length; i++) blob += (s.options[i].textContent || '');
+          if (/ongoing|ecchi|completed/i.test(blob)) sel = s;
+        });
+      }
+      if (!sel) return 'no-taskOption';
+      var picked = '';
+      for (var i = 0; i < sel.options.length; i++) {
+        var t = (sel.options[i].textContent || '').replace(/\s+/g, ' ').trim();
+        var v = (sel.options[i].value || '').trim();
+        if (v === wantId || t.toLowerCase() === wantName) {
+          sel.selectedIndex = i;
+          sel.value = v;
+          picked = v + '/' + t;
+          break;
+        }
+      }
+      if (!picked) return 'no-match';
+      var jq = (typeof jQuery === 'function');
+      if (jq) jQuery(sel).val(sel.value).trigger('change').trigger('input');
+      if (sel.onchange) sel.onchange();
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      sel.dispatchEvent(new Event('input', { bubbles: true }));
+      return 'picked=' + picked;
+    })();
+""".trimIndent()
+
+/**
+ * MARK AS READ. Ticks chklist{rid} and GETs readinglist_update.php.
+ * [sidFallback] is the cached #mypostid when the live page has none.
+ * Returns "read 200 rid=…" on success.
+ */
+fun markReadJs(rid: String, sidFallback: String): String = """
+    (function() {
+      var rid = ${JSONObject.quote(rid)};
+      var sid = (document.querySelector('#mypostid') || {}).value || ${JSONObject.quote(sidFallback)};
+      if (!rid || !sid) return 'missing rid=' + rid + ' sid=' + sid;
+      var box = document.getElementById('chklist' + rid);
+      if (box) { box.checked = true; box.click(); }
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/readinglist_update.php?rid=' + encodeURIComponent(rid) + '&sid=' + encodeURIComponent(sid) + '&checked=yes', false);
+        xhr.send(null);
+        return 'read ' + xhr.status + ' rid=' + rid;
+      } catch (e) {
+        return 'read-err';
+      }
+    })();
+""".trimIndent()

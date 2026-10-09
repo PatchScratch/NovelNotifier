@@ -1,6 +1,8 @@
 package com.patchscratch.novelnotifier
 
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,14 +23,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 /**
- * RSS URL, login, cover prefetch, check interval, Check now, display mode.
+ * RSS URL, login, library sync, backup/restore, check interval, display mode.
  * Uses screenInsets() so Cancel sits above the Android nav bar.
  *
  * getValue / setValue are used by the `by` keyword. Do not delete those imports.
@@ -38,20 +42,34 @@ fun SettingsScreen(
     currentUrl: String,
     currentHours: Int,
     loginState: String,
-    coverPrefetchStatus: String,
-    onStartCoverPrefetch: () -> Unit,
-    onStopCoverPrefetch: () -> Unit,
+    syncStatus: String,
+    onStartCoverSync: () -> Unit,
+    onStopCoverSync: () -> Unit,
     onCheckNow: () -> Unit,
     onSave: (String, Int) -> Unit,
     onStartLogin: () -> Unit,
     onLoggedOut: () -> Unit,
     onCancel: () -> Unit
 ) {
-    val prefs = LocalContext.current.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
     var url by remember { mutableStateOf(currentUrl) }
     var hours by remember { mutableIntStateOf(currentHours) }
     var layoutMode by remember { mutableStateOf(loadLayoutMode(prefs)) }
+    var backupMessage by remember { mutableStateOf("") }
     val options = listOf(1, 6, 12, 24)
+
+    val backupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) scope.launch { backupMessage = BackupManager.export(context, uri) }
+    }
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch { backupMessage = BackupManager.restore(context, uri) }
+    }
 
     Column(
         modifier = Modifier
@@ -82,10 +100,15 @@ fun SettingsScreen(
         OutlinedTextField(
             value = url,
             onValueChange = { url = it },
-            label = { Text("Novel Updates RSS URL") },
+            label = { Text("RSS feed URL (optional)") },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp, bottom = 8.dp)
+                .padding(top = 8.dp, bottom = 4.dp)
+        )
+        Text(
+            text = "Optional. With a feed URL chapter checks are one cheap request. Without one, the app checks your reading lists directly in the background — nothing to configure. Existing feed URLs travel with backups.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 8.dp)
         )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
@@ -123,22 +146,47 @@ fun SettingsScreen(
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = "Covers", style = MaterialTheme.typography.titleMedium)
+        Text(text = "Library sync", style = MaterialTheme.typography.titleMedium)
         Text(
-            text = coverPrefetchStatus,
+            text = syncStatus,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Text(
-            text = "Reads every list that is not Update-off, then downloads missing covers. Use sparingly.",
+            text = "Downloads missing covers for every list, paced against the site. Progress shows in a notification.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
-        Button(onClick = onStartCoverPrefetch, modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = onStartCoverSync, modifier = Modifier.fillMaxWidth()) {
             Text("Prefetch missing covers")
         }
-        TextButton(onClick = onStopCoverPrefetch, modifier = Modifier.fillMaxWidth()) {
-            Text("Stop cover prefetch")
+        TextButton(onClick = onStopCoverSync, modifier = Modifier.fillMaxWidth()) {
+            Text("Stop sync")
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(text = "Backup & restore", style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = "One zip with your lists, chapter caches and cover images. Save it anywhere your file picker reaches — Google Drive, OneDrive, USB. Backups never contain your password, login, or feed links — a restored device asks for a fresh login and picks the rest up automatically.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        Button(
+            onClick = { backupLauncher.launch("novelnotifier-library.zip") },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Back up library") }
+        TextButton(
+            onClick = {
+                restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Restore from backup") }
+        if (backupMessage.isNotBlank()) {
+            Text(
+                text = backupMessage,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))

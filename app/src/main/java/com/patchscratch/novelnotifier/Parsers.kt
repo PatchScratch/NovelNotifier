@@ -89,6 +89,98 @@ fun prettyRating(raw: String): String {
     return score ?: raw.trim()
 }
 
+/**
+ * NU serves this grey placeholder whenever a cover has not (yet) loaded.
+ * It must never be treated as a real cover: caching it marks the series
+ * "done" forever and the grid shows a grey tile that nothing repairs.
+ */
+fun isPlaceholderCover(url: String?): Boolean {
+    return url != null && url.contains("noimagefound", ignoreCase = true)
+}
+
+/** A cover URL we can actually show: non-blank and not the site placeholder. */
+fun usableCoverUrl(url: String?): String {
+    return if (url.isNullOrBlank() || isPlaceholderCover(url)) "" else url
+}
+
+/** What parseListPageResult() extracted from one reading-list page. */
+data class ListPageResult(
+    val lists: List<ReadingList>,
+    val novels: List<Novel>,
+    val lastReads: Map<String, Pair<String, String>>,
+    /** The releases feed NU shows on the reading-list page, if any. */
+    val rssUrl: String = "",
+    /** The read-activity feed (type=read) — powers cross-device read sync. */
+    val readRssUrl: String = ""
+)
+
+/** From the feed links on a reading-list page: the chapter-releases one. */
+fun pickReleasesFeedUrl(urls: List<String>): String {
+    return urls.firstOrNull {
+        it.contains("rss", ignoreCase = true) && !it.contains("type=read", ignoreCase = true)
+    }.orEmpty()
+}
+
+/** From the feed links on a reading-list page: the read-activity one. */
+fun pickReadFeedUrl(urls: List<String>): String {
+    return urls.firstOrNull { it.contains("type=read", ignoreCase = true) }.orEmpty()
+}
+
+/**
+ * Parse the raw result of listPageJs() (already unwrapped from evaluateJavascript):
+ * "listId===listName|||…:::NOVELS:::rows…:::RSS:::feedUrl|||feedUrl".
+ * Cover resolution order: real cached URL → site img (placeholder rejected) →
+ * previous row cover ([oldCoverByUrl], so a re-sync can never wipe a cover).
+ */
+fun parseListPageResult(
+    raw: String,
+    coverCache: Map<String, String> = emptyMap(),
+    oldCoverByUrl: Map<String, String> = emptyMap()
+): ListPageResult {
+    val parts = raw.split(":::NOVELS:::")
+    val listPart = parts.getOrNull(0).orEmpty()
+    val novelAndRss = parts.getOrNull(1).orEmpty()
+    val novelPart = novelAndRss.substringBefore(":::RSS:::")
+    val feedUrls = novelAndRss.substringAfter(":::RSS:::", "")
+        .split("|||").map { it.trim() }.filter { it.startsWith("http") }
+    val lists = listPart.split("|||").mapNotNull { item ->
+        val bits = item.split("===", limit = 2)
+        if (bits.size == 2 && isRealListName(bits[1])) ReadingList(bits[0], bits[1]) else null
+    }.distinctBy { it.name }
+    val lastReads = mutableMapOf<String, Pair<String, String>>()
+    val novels = novelPart.split("|||").mapNotNull { item ->
+        val bits = item.split("===", limit = 6)
+        if (bits.size >= 2) {
+            val title = bits[0]
+            val seriesUrl = bits.getOrNull(2).orEmpty()
+            val siteLast = bits.getOrNull(4).orEmpty().trim()
+            val skipLast = siteLast.isBlank() ||
+                siteLast == "—" ||
+                siteLast == "-" ||
+                siteLast.equals("none", true) ||
+                siteLast.equals("n/a", true)
+            if (!skipLast && chapterNum(siteLast) > 0) {
+                lastReads[title] = siteLast to bits.getOrNull(5).orEmpty()
+            }
+            Novel(
+                title = title,
+                latestChapter = bits[1],
+                seriesUrl = seriesUrl,
+                coverUrl = usableCoverUrl(coverCache[title])
+                    .ifBlank { usableCoverUrl(bits.getOrNull(3)) }
+                    .ifBlank { oldCoverByUrl[seriesUrl].orEmpty() }
+            )
+        } else null
+    }.distinctBy { it.title }
+        .filter { novel ->
+            val title = novel.title.trim()
+            title.isNotBlank() &&
+                !title.equals("Series Information", ignoreCase = true) &&
+                novel.seriesUrl.contains("/series/")
+        }
+    return ListPageResult(lists, novels, lastReads, pickReleasesFeedUrl(feedUrls), pickReadFeedUrl(feedUrls))
+}
+
 /** Strip the extra quoting evaluateJavascript adds around a JS string. */
 fun unwrapJsResult(result: String?): String {
     if (result.isNullOrBlank() || result == "null") return ""
@@ -125,19 +217,7 @@ fun chromeMobileUserAgent(current: String): String {
     }
 }
 
-/** JS snippet: return 'CF' if this document is a Cloudflare interstitial. */
-const val CF_DETECT_JS = """
-  function nuIsCf() {
-    var t = ((document.body && (document.body.innerText || document.body.textContent)) || '').slice(0, 4000);
-    var title = document.title || '';
-    var html = (document.documentElement && document.documentElement.innerHTML || '').slice(0, 6000);
-    var blob = (t + ' ' + title + ' ' + html).toLowerCase();
-    if (/just a moment|verify you are human|checking your browser|attention required|enable javascript and cookies|cf-turnstile|challenge-platform|cf-browser-verification|why have i been blocked/.test(blob)) return true;
-    if (document.querySelector('#challenge-form, .cf-browser-verification, .cf-turnstile, iframe[src*="challenges.cloudflare"], iframe[src*="turnstile"]')) return true;
-    return false;
-  }
-  if (nuIsCf()) return 'CF';
-"""
+/** JS snippet: return 'CF' if this document is a Cloudflare interstitial. → ScrapeJs.kt */
 
 /** Parse the JSON blob the series WebView returns. Bad JSON → empty SeriesPage. */
 fun parseSeriesPage(raw: String): SeriesPage {

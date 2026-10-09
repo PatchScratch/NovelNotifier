@@ -49,6 +49,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,8 +58,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import org.json.JSONObject
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -125,21 +128,28 @@ fun NovelDetailScreen(
     var allowNetwork by remember { mutableStateOf(false) }
     var showPageMenu by remember { mutableStateOf(false) }
     var showChallenge by remember { mutableStateOf(false) } // true = expand WebView so user can pass CF
+    // CF signal seen; the WebView may clear it alone. The grace timer below
+    // expands the pane only if the challenge is still stuck after 12 seconds.
+    var pendingChallenge by remember { mutableStateOf(false) }
     var pendingAutoPage by remember { mutableIntStateOf(0) } // next table page to fetch after a short gap
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     val changeLists = availableLists.ifEmpty { page.lists }
-    val knownListName = remember(novel.title, novel.seriesUrl) {
-        listNameForTitle(loadListSnapshot(context), novel.title, novel.seriesUrl)
-    }
+    // Resolved once per open, off the composition thread (it reads list_cache.json).
+    var knownListName by remember { mutableStateOf("") }
 
     // Cache first, then fill every remaining table page.
-    LaunchedEffect(novel.seriesUrl, novel.latestChapter, knownListName) {
-        val cached = loadSeriesCache(context, novel.seriesUrl)
+    LaunchedEffect(novel.seriesUrl, novel.latestChapter) {
+        val known = withContext(Dispatchers.IO) {
+            listNameForTitle(loadListSnapshot(context), novel.title, novel.seriesUrl)
+        }
+        knownListName = known
+        val cached = withContext(Dispatchers.IO) { loadSeriesCache(context, novel.seriesUrl) }
         if (cached != null) {
             val loaded = if (isRealListName(cached.first.currentList)) {
                 cached.first
             } else {
-                cached.first.copy(currentList = knownListName)
+                cached.first.copy(currentList = known)
             }
             page = loaded
             seriesSid = loaded.sid.ifBlank { seriesSid }
@@ -150,7 +160,9 @@ fun NovelDetailScreen(
             pageLoadFailed = false
             if (loaded.coverUrl.startsWith("http")) onCoverFound(loaded.coverUrl)
             if (loaded.currentList != cached.first.currentList) {
-                saveSeriesCache(context, novel.seriesUrl, loaded, cached.second)
+                withContext(Dispatchers.IO) {
+                    saveSeriesCache(context, novel.seriesUrl, loaded, cached.second)
+                }
             }
             val cachedRead = highestReadRelease(loaded.releases)
             if (cachedRead != null) {
@@ -160,10 +172,10 @@ fun NovelDetailScreen(
                     onSetLastRead(cachedRead.chapter, cachedRead.url, true)
                 }
             }
-        } else if (knownListName.isNotBlank()) {
-            page = page.copy(currentList = knownListName)
+        } else if (known.isNotBlank()) {
+            page = page.copy(currentList = known)
         }
-        val stale = seriesNeedsRefresh(context, novel)
+        val stale = withContext(Dispatchers.IO) { seriesNeedsRefresh(context, novel) }
         val cacheHasTicks = cached?.first?.releases?.any { it.read } == true
         val complete = cached != null && cacheHasAllPages(
             cached.first.maxPage,
@@ -194,10 +206,17 @@ fun NovelDetailScreen(
         }
     }
 
-    LaunchedEffect(allowNetwork, loadKey, showChallenge, loadingMore) {
-        if (!allowNetwork || showChallenge || !loadingMore) return@LaunchedEffect
-        delay(8.seconds)
-        if (allowNetwork && loadingMore && !showChallenge) {
+    // No timeout-to-challenge: a slow page is not a Cloudflare check, and
+    // auto-expanding the pane made the real page flash. Real CF signals set
+    // [pendingChallenge]; this grace timer surfaces the pane only when the
+    // WebView is still stuck on the challenge after 12 seconds (managed
+    // challenges usually clear themselves). The hard-timeout effect further
+    // down ("Refresh timed out") is the safety net for hung loads.
+    LaunchedEffect(pendingChallenge) {
+        if (!pendingChallenge) return@LaunchedEffect
+        delay(12.seconds)
+        if (pendingChallenge && !showChallenge) {
+            DebugLog.log("CF", "challenge unresolved after 12s — expanding pane (series ${novel.title})")
             showChallenge = true
             markSiteCheckNeeded(
                 context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
@@ -206,7 +225,7 @@ fun NovelDetailScreen(
         }
     }
 
-    val cover = page.coverUrl.ifBlank { novel.coverUrl }
+    val cover = usableCoverUrl(page.coverUrl).ifBlank { usableCoverUrl(novel.coverUrl) }
     val lastReadNum = lastRead?.first?.let(::chapterNum) ?: -1
     val expectedNextNum = if (lastReadNum > 0) lastReadNum + 1 else -1
     // Next unread = last-read c-number + 1 if that row is loaded, else the lowest c we have.
@@ -277,6 +296,7 @@ fun NovelDetailScreen(
         if (!loadingMore) return@LaunchedEffect
         delay(8.seconds)
         if (loadingMore) {
+            DebugLog.log("SERIES", "load timed out pg=$wantPage (series ${novel.title})")
             pageLoadFailed = true
             loadingMore = false
             listStatus = "Refresh timed out — tap RETRY or ⋮ Refresh later"
@@ -347,6 +367,7 @@ fun NovelDetailScreen(
             ) {
                 CoverThumb(
                     url = cover,
+                    seriesUrl = novel.seriesUrl,
                     modifier = Modifier
                         .width(84.dp)
                         .height(112.dp)
@@ -692,7 +713,7 @@ fun NovelDetailScreen(
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall
                     )
-                    TextButton(onClick = { showChallenge = false }) { Text("Close") }
+                    TextButton(onClick = { showChallenge = false; pendingChallenge = false }) { Text("Close") }
                 }
             }
             AndroidView(
@@ -720,109 +741,12 @@ fun NovelDetailScreen(
             update = { webView ->
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        val script = """
-                            (function() {
-                              $CF_DETECT_JS
-                              function text(sel) {
-                                var el = document.querySelector(sel);
-                                return el ? (el.innerText || el.textContent || '').trim() : '';
-                              }
-                              function texts(sel) {
-                                var out = [];
-                                document.querySelectorAll(sel).forEach(function(a) {
-                                  var t = (a.textContent || '').trim();
-                                  if (t) out.push(t);
-                                });
-                                return out.join(', ');
-                              }
-                              var img = document.querySelector('.seriesimg img, .serieseditimg img');
-                              var releases = [];
-                              document.querySelectorAll('#myTable tbody tr').forEach(function(tr) {
-                                var tds = tr.querySelectorAll('td');
-                                if (!tds.length) return;
-                                var link = tr.querySelector('a.chp-release');
-                                if (!link) {
-                                  var links = Array.from(tr.querySelectorAll('a[href]'));
-                                  link = links.find(function(a) {
-                                    return /c\d+|v\d+/i.test((a.textContent || ''));
-                                  }) || links[links.length - 1];
-                                }
-                                if (!link) return;
-                                var chapter = (link.textContent || '').replace(/\s+/g, ' ').trim();
-                                if (!chapter) return;
-                                if (/^[\\-–—._\\s]+$/.test(chapter)) return;
-                                var cb = tr.querySelector('input[type=checkbox]');
-                                var rid = '';
-                                var read = false;
-                                if (cb) {
-                                  read = !!(cb.checked || cb.getAttribute('checked') !== null);
-                                  if (cb.id && cb.id.indexOf('chklist') === 0) {
-                                    rid = cb.id.replace('chklist', '');
-                                  } else if (cb.value && cb.value !== 'notset') {
-                                    rid = cb.value;
-                                  }
-                                }
-                                var rowClass = (tr.className || '').toLowerCase();
-                                if (/readcolor|colorme|checked/.test(rowClass)) read = true;
-                                if (tr.querySelector('.readcolor, .nu_editnotes')) read = true;
-                                releases.push({
-                                  chapter: chapter,
-                                  group: tds[1] ? tds[1].textContent.replace(/\s+/g, ' ').trim() : '',
-                                  date: tds[0] ? tds[0].textContent.replace(/\s+/g, ' ').trim() : '',
-                                  url: link.href || '',
-                                  rid: rid,
-                                  read: read
-                                });
-                              });
-                              var max = 1;
-                              document.querySelectorAll('.digg_pagination a').forEach(function(a) {
-                                var m = ((a.getAttribute('href') || '') + (a.search || '')).match(/[?&]pg=(\d+)/);
-                                if (m) {
-                                  var n = parseInt(m[1], 10);
-                                  if (n > max) max = n;
-                                }
-                              });
-                              var task = document.querySelector('select#taskOption, select[name="taskOption"], select.taskOption');
-                              var currentList = '';
-                              var lists = [];
-                              if (task) {
-                                for (var i = 0; i < task.options.length; i++) {
-                                  var t = (task.options[i].textContent || '').replace(/\s+/g, ' ').trim();
-                                  var v = (task.options[i].value || '').trim();
-                                  if (!t || t === '---' || t === '--') continue;
-                                  if (/^select/i.test(t) || /choose list|move to/i.test(t)) continue;
-                                  lists.push({ id: v, name: t });
-                                  if (task.options[i].selected) currentList = t;
-                                }
-                              }
-                              return JSON.stringify({
-                                title: text('#editsn, .seriestitle, h4.seriestitle') || document.title.replace(' - Novel Updates', ''),
-                                author: texts('#showauthors a, #editaid a'),
-                                rating: text('.uvotes, #rateit, span.uvotes'),
-                                description: text('#editdescription, #editdesc'),
-                                genres: texts('#seriesgenre a, .seriesgenre a'),
-                                tags: texts('#showtags a, #edittags a'),
-                                type: text('#showtype, #edittype'),
-                                status: text('#editstatus, #showstatus'),
-                                cover: img ? (img.src || '') : '',
-                                maxPage: max,
-                                currentList: currentList,
-                                sid: (document.querySelector('#mypostid') || {}).value || '',
-                                lists: lists,
-                                releases: releases
-                              });
-                            })();
-                        """.trimIndent()
+                        val script = seriesPageJs()
                         view?.evaluateJavascript(script) { result ->
                             val rawJson = unwrapJsResult(result)
                             if (rawJson == "CF" || isCloudflareUrl(url)) {
-                                pageLoadFailed = true
-                                loadingMore = false
-                                showChallenge = true
-                                markSiteCheckNeeded(
-                                    context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
-                                )
-                                listStatus = "Site check needed — complete it below"
+                                DebugLog.log("CF", "detector=script-probe url=$url (series ${novel.title})")
+                                pendingChallenge = true
                                 return@evaluateJavascript
                             }
                             val parsed = parseSeriesPage(rawJson)
@@ -889,6 +813,7 @@ fun NovelDetailScreen(
                                 loadedPage = wantPage
                                 pageLoadFailed = false
                                 showChallenge = false
+                                pendingChallenge = false
                                 val pages = maxOf(page.maxPage, parsed.maxPage, maxPage).coerceAtLeast(1)
                                 maxPage = pages
                                 if (wantPage < pages) {
@@ -898,7 +823,19 @@ fun NovelDetailScreen(
                                     pendingAutoPage = 0
                                     listStatus = "Cached ${mergedReleases.size} chapters"
                                 }
-                                saveSeriesCache(context, novel.seriesUrl, page.copy(releases = mergedReleases, maxPage = pages, sid = parsed.sid.ifBlank { page.sid }), wantPage)
+                                val savedPageNum = wantPage
+                                DebugLog.log(
+                                    "SERIES",
+                                    "parsed pg=$wantPage rows=${incoming.size} total=${mergedReleases.size} maxPage=$maxPage"
+                                )
+                                val pageToSave = page.copy(
+                                    releases = mergedReleases,
+                                    maxPage = maxOf(page.maxPage, parsed.maxPage, maxPage).coerceAtLeast(1),
+                                    sid = parsed.sid.ifBlank { page.sid }
+                                )
+                                scope.launch(Dispatchers.IO) {
+                                    saveSeriesCache(context, novel.seriesUrl, pageToSave, savedPageNum)
+                                }
                             } else if (wantPage > 1 || page.releases.isNotEmpty()) {
                                 pageLoadFailed = true
                             }
@@ -912,41 +849,7 @@ fun NovelDetailScreen(
                 // CHANGE LIST: pick the matching <select> option and fire jQuery('change').
                 if (moveId != null && (webView.url ?: "").contains("/series/")) {
                     pendingMoveId = null
-                    val moveScript = """
-                        (function() {
-                          var raw = ${JSONObject.quote(moveId)};
-                          var parts = raw.split(':::');
-                          var wantId = parts[0] || '';
-                          var wantName = (parts[1] || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                          var sel = document.querySelector('select#taskOption, select[name="taskOption"], select.taskOption');
-                          if (!sel) {
-                            document.querySelectorAll('select').forEach(function(s) {
-                              var blob = '';
-                              for (var i = 0; i < s.options.length; i++) blob += (s.options[i].textContent || '');
-                              if (/ongoing|ecchi|completed/i.test(blob)) sel = s;
-                            });
-                          }
-                          if (!sel) return 'no-taskOption';
-                          var picked = '';
-                          for (var i = 0; i < sel.options.length; i++) {
-                            var t = (sel.options[i].textContent || '').replace(/\s+/g, ' ').trim();
-                            var v = (sel.options[i].value || '').trim();
-                            if (v === wantId || t.toLowerCase() === wantName) {
-                              sel.selectedIndex = i;
-                              sel.value = v;
-                              picked = v + '/' + t;
-                              break;
-                            }
-                          }
-                          if (!picked) return 'no-match';
-                          var jq = (typeof jQuery === 'function');
-                          if (jq) jQuery(sel).val(sel.value).trigger('change').trigger('input');
-                          if (sel.onchange) sel.onchange();
-                          sel.dispatchEvent(new Event('change', { bubbles: true }));
-                          sel.dispatchEvent(new Event('input', { bubbles: true }));
-                          return 'picked=' + picked;
-                        })();
-                    """.trimIndent()
+                    val moveScript = moveToListJs(moveId)
                     val moveName = moveId.substringAfter(":::", "")
                     webView.evaluateJavascript(moveScript) { jsResult ->
                         val raw = unwrapJsResult(jsResult)
@@ -970,23 +873,7 @@ fun NovelDetailScreen(
                     // MARK AS READ: tick chklist{rid} and GET readinglist_update.php.
                     val readRid = pendingReadRid
                     pendingReadRid = null
-                    val readScript = """
-                        (function() {
-                          var rid = ${JSONObject.quote(readRid ?: "")};
-                          var sid = (document.querySelector('#mypostid') || {}).value || ${JSONObject.quote(seriesSid)};
-                          if (!rid || !sid) return 'missing rid=' + rid + ' sid=' + sid;
-                          var box = document.getElementById('chklist' + rid);
-                          if (box) { box.checked = true; box.click(); }
-                          try {
-                            var xhr = new XMLHttpRequest();
-                            xhr.open('GET', '/readinglist_update.php?rid=' + encodeURIComponent(rid) + '&sid=' + encodeURIComponent(sid) + '&checked=yes', false);
-                            xhr.send(null);
-                            return 'read ' + xhr.status + ' rid=' + rid;
-                          } catch (e) {
-                            return 'read-err';
-                          }
-                        })();
-                    """.trimIndent()
+                    val readScript = markReadJs(readRid ?: "", seriesSid)
                     webView.evaluateJavascript(readScript) { jsResult ->
                         val raw = unwrapJsResult(jsResult)
                         listStatus = if (raw.startsWith("read 200")) {

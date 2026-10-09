@@ -1,0 +1,155 @@
+package com.patchscratch.novelnotifier
+
+import android.content.Context
+import androidx.core.content.edit
+import org.json.JSONObject
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
+
+/**
+ * Library backup as ONE zip, moved between devices with Android's file picker
+ * (which reaches Google Drive, OneDrive, USB storage…). Stage C will add a
+ * native Google Drive app-folder target writing the exact same zip.
+ *
+ * SECURITY CONTRACT (user decision 2026-10-09): a backup never contains the
+ * Novel Updates login — no cookies, no credentials. A restored device must do
+ * a fresh login; login stays persistent per-device afterwards as usual.
+ */
+object BackupManager {
+
+    private const val MANIFEST = "manifest.json"
+    private const val BACKUP_PREFS = "backup_prefs.json"
+
+    /**
+     * Prefs worth carrying to a new device. Deliberately absent: nu_cookies
+     * (login) and rss_url (the feed link carries a private access token — it
+     * is re-captured automatically from the reading-list page on first sync).
+     */
+    private val PORTED_KEYS = listOf(
+        "check_hours",
+        "list_notify_off", "list_update_off", "series_notify_off",
+        "last_read", "read_titles",
+        "layout_mode", "sort_mode"
+    )
+
+    /** Pure so tests can verify the credentials-exclusion rule. */
+    fun backupPrefsJson(values: Map<String, Any?>): JSONObject {
+        val json = JSONObject()
+        PORTED_KEYS.forEach { key ->
+            val value = values[key]
+            when (value) {
+                null -> {}
+                is Int -> json.put(key, value)
+                is String -> json.put(key, value)
+                is Set<*> -> json.put(key, org.json.JSONArray(value))
+            }
+        }
+        return json
+    }
+
+    private fun snapshotCounts(context: Context): JSONObject {
+        val snap = loadListSnapshot(context)
+        return JSONObject()
+            .put("series", snap.novelsByList.values.flatten().distinctBy { it.seriesUrl.ifBlank { it.title } }.size)
+            .put("lists", snap.lists.size)
+            .put("seriesCacheFiles", context.filesDir.resolve("series_cache").listFiles()?.size ?: 0)
+            .put("coverFiles", CoverStore.count(context))
+    }
+
+    suspend fun export(context: Context, uri: android.net.Uri): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val output = context.contentResolver.openOutputStream(uri)
+            ?: return@withContext "Could not open the destination"
+        val manifest = JSONObject()
+            .put("version", 1)
+            .put("createdAt", System.currentTimeMillis())
+            .put("app", context.packageName)
+            .put("containsLogin", false)
+            .put("counts", snapshotCounts(context))
+        val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
+        val prefValues = buildMap<String, Any?> {
+            put("check_hours", prefs.getInt("check_hours", 12))
+            PORTED_KEYS.filter { it != "check_hours" }.forEach { put(it, prefs.getStringSet(it, null)) }
+            put("layout_mode", prefs.getString("layout_mode", null))
+            put("sort_mode", prefs.getString("sort_mode", null))
+        }
+        ZipOutputStream(output.buffered()).use { zip ->
+            fun put(name: String, bytes: ByteArray) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+            put(MANIFEST, manifest.toString().toByteArray())
+            put(BACKUP_PREFS, backupPrefsJson(prefValues).toString().toByteArray())
+            listOfNotNull(context.filesDir.resolve("list_cache.json").takeIf { it.exists() }).forEach {
+                put("data/list_cache.json", it.readBytes())
+            }
+            context.filesDir.resolve("series_cache").listFiles().orEmpty().forEach {
+                put("data/series_cache/${it.name}", it.readBytes())
+            }
+            CoverStore.dir(context).listFiles().orEmpty().forEach {
+                put("data/covers/${it.name}", it.readBytes())
+            }
+        }
+        DebugLog.log("BACKUP", "exported ${manifest.optJSONObject("counts")}")
+        "Backup saved — ${CoverStore.count(context)} covers, ${manifest.optJSONObject("counts")?.optInt("seriesCacheFiles") ?: 0} series caches"
+    }
+
+    suspend fun restore(context: Context, uri: android.net.Uri): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val input = context.contentResolver.openInputStream(uri)
+            ?: return@withContext "Could not open the backup"
+        var restoredFiles = 0
+        var restoredCovers = 0
+        var sawManifest = false
+        ZipInputStream(input.buffered()).use { zip ->
+            var entry: ZipEntry? = zip.nextEntry
+            while (entry != null) {
+                val name = entry.name
+                when {
+                    name == MANIFEST -> sawManifest = true
+                    name == BACKUP_PREFS -> applyPrefs(context, zip.readBytes())
+                    name == "data/list_cache.json" -> {
+                        context.filesDir.resolve("list_cache.json").writeBytes(zip.readBytes())
+                        restoredFiles++
+                    }
+                    name.startsWith("data/series_cache/") -> {
+                        val target = context.filesDir.resolve("series_cache").apply { mkdirs() }
+                            .resolve(name.substringAfterLast('/'))
+                        target.writeBytes(zip.readBytes())
+                        restoredFiles++
+                    }
+                    name.startsWith("data/covers/") -> {
+                        val target = CoverStore.dir(context).resolve(name.substringAfterLast('/'))
+                        target.writeBytes(zip.readBytes())
+                        restoredCovers++
+                    }
+                }
+                zip.closeEntry()
+                entry = zip.nextEntry
+            }
+        }
+        if (!sawManifest) return@withContext "That file is not a NovelNotifier backup"
+        DebugLog.log("BACKUP", "restored files=$restoredFiles covers=$restoredCovers")
+        "Restored $restoredFiles caches and $restoredCovers covers — log in to finish"
+    }
+
+    private fun applyPrefs(context: Context, bytes: ByteArray) {
+        val json = JSONObject(String(bytes))
+        val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
+        prefs.edit {
+            json.keys().forEach { key ->
+                when (key) {
+                    "check_hours" -> putInt(key, json.optInt(key, 12))
+                    "layout_mode", "sort_mode" -> putString(key, json.optString(key))
+                    else -> {
+                        val arr = json.optJSONArray(key)
+                        if (arr != null) {
+                            putStringSet(key, (0 until arr.length()).map { arr.optString(it) }.toSet())
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
