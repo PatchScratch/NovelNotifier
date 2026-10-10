@@ -73,7 +73,7 @@ Settings → **Back up library** writes one zip via the file picker — save it 
 
 ## Roadmap
 
-Ideas in rough order: site search, Discover/rankings, notification tap → in-app detail page, themes, an in-app chapter reader (browser mode first, then a reader view — the original app's most-loved feature), and — only after the reader exists — **offline reading**, since storing chapters for offline use has nothing to attach to until the app can display them. Parsing hazard to remember: NU hides decoy chapter links with CSS.
+Ideas in rough order: site search, Discover/rankings, notification tap → in-app detail page, themes, an in-app chapter reader (browser mode first, then a reader view — the original app's most-loved feature), and — only after the reader exists — **offline reading**, since storing chapters for offline use has nothing to attach to until the app can display them. Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction must filter by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
 
 ## Acknowledgements
 
