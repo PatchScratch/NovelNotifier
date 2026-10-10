@@ -336,6 +336,45 @@ fun parseRssItems(xml: String): List<RssItem> {
     return items
 }
 
+/** One row of the site's live search (nd_ajaxsearchmain) response. */
+data class SearchResult(
+    val title: String,
+    val seriesUrl: String,
+    val coverUrl: String
+)
+
+/**
+ * Parse the HTML returned by NU's live search: an unordered list of
+ * li.search_li_results rows, each with an a.a_search (series link) containing
+ * an img.search_profile_image and a title span whose `search_hl` mark
+ * highlights the match (see fixture-search-response.html). Tolerant of the
+ * trailing character the endpoint appends.
+ */
+fun parseSearchResults(html: String): List<SearchResult> {
+    if (html.isBlank() || !html.contains("search_li_results")) return emptyList()
+    val rowPattern = Regex(
+        """<li[^>]*>\s*<a[^>]*class="a_search"[^>]*href="([^"]+)"[^>]*>(.*?)</a>""",
+        RegexOption.DOT_MATCHES_ALL
+    )
+    return rowPattern.findAll(html).mapNotNull { match ->
+        val seriesUrl = match.groupValues[1].trim()
+        val inner = match.groupValues[2]
+        val cover = Regex("""src="([^"]+)"""").find(inner)?.groupValues?.get(1).orEmpty()
+        val title = inner
+            .replace(Regex("<[^>]+>"), " ")
+            .replace("&amp;", "&")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (seriesUrl.contains("/series/") && title.isNotBlank()) {
+            SearchResult(
+                title = title,
+                seriesUrl = seriesUrl,
+                coverUrl = cover.let { if (it.startsWith("//")) "https:$it" else it }
+            )
+        } else null
+    }.take(12).toList()
+}
+
 /** RFC-822 pubDate ("Fri, 09 Oct 2026 16:22:05 +0800") → epoch millis, or 0. */
 fun parseRssDate(raw: String): Long {
     if (raw.isBlank()) return 0L

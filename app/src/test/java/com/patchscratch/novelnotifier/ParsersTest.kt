@@ -175,6 +175,21 @@ class ParsersTest {
     }
 
     @Test
+    fun parseSearchResults_fromLiveFixture() {
+        val fixture = javaClass.getResourceAsStream("/fixture-search-response.html")!!
+            .bufferedReader().readText()
+        val results = parseSearchResults(fixture)
+        assertEquals(4, results.size)
+        assertEquals("alchemy Master", results[0].title)
+        assertEquals("https://www.novelupdates.com/series/alchemy-master/", results[0].seriesUrl)
+        assertEquals("https://cdn.novelupdates.com/img/series_85144.jpg", results[0].coverUrl)
+        // Match highlighting is stripped; protocol-relative covers are fixed;
+        // non-search HTML yields nothing.
+        assertEquals("Suddenly Learned alchemy", results[2].title)
+        assertEquals(emptyList<SearchResult>(), parseSearchResults("<html><body>nothing</body></html>"))
+    }
+
+    @Test
     fun placeholderCovers_areNeverUsable() {
         assertEquals(true, isPlaceholderCover("https://www.novelupdates.com/img/noimagefound.jpg"))
         assertEquals(false, isPlaceholderCover("https://cdn.novelupdates.com/images/a.jpg"))

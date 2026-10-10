@@ -115,6 +115,7 @@ fun NovelListScreen(
     onListsLoaded: (List<ReadingList>) -> Unit,
     onRssUrlFound: (String) -> Unit = {},
     onReadFeedFound: (String) -> Unit = {},
+    onOpenSearch: () -> Unit = {},
     onOpenSettings: () -> Unit,
     onEditLists: () -> Unit,
     onSaveListOptions: (Set<String>, Set<String>) -> Unit,
@@ -296,6 +297,14 @@ fun NovelListScreen(
                     modifier = Modifier.padding(16.dp)
                 )
                 HorizontalDivider()
+                NavigationDrawerItem(
+                    label = { Text("Search Novel Updates  ⌕") },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenSearch()
+                    }
+                )
                 NavigationDrawerItem(
                     label = { Text("Edit Lists  ⚙") },
                     selected = false,

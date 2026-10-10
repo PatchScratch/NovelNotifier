@@ -909,27 +909,31 @@ fun NovelDetailScreen(
                 val base = novel.seriesUrl.trimEnd('/')
                 val target = if (wantPage <= 1) "$base/" else "$base/?pg=$wantPage"
                 val moveId = pendingMoveId
-                // CHANGE LIST: pick the matching <select> option and fire jQuery('change').
+                // CHANGE LIST: the site's own move call — GET updatelist.php
+                // (params verified from NU's ajax_search_post.js, 2026-10-10).
                 if (moveId != null && (webView.url ?: "").contains("/series/")) {
                     pendingMoveId = null
-                    val moveScript = moveToListJs(moveId)
+                    val moveListId = moveId.substringBefore(":::")
+                    val moveScript = moveListJs(moveListId, seriesSid)
                     val moveName = moveId.substringAfter(":::", "")
                     webView.evaluateJavascript(moveScript) { jsResult ->
                         val raw = unwrapJsResult(jsResult)
-                        if (raw.startsWith("picked=")) {
+                        if (raw.startsWith("move 20")) {
                             if (moveName.isNotBlank()) {
                                 page = page.copy(currentList = moveName)
                                 moveTitleToList(
                                     context,
                                     novel.title,
                                     novel.seriesUrl,
-                                    moveId.substringBefore(":::"),
+                                    moveListId,
                                     moveName
                                 )
                             }
                             listStatus = "Moved on Novel Updates"
+                            DebugLog.log("SERIES", "moveList $moveListId → $raw")
                         } else {
                             listStatus = raw.ifBlank { "Could not change list on the site" }
+                            DebugLog.log("SERIES", "moveList failed: $raw")
                         }
                     }
                 } else if (pendingReadRid != null && (webView.url ?: "").contains("/series/")) {

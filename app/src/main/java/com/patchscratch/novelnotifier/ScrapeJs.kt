@@ -10,7 +10,8 @@ import org.json.JSONObject
  *   listPageJs()   — reading-list page → lists + series rows (with last-read).
  *   seriesPageJs() — series page → INFO + RELEASES rows + list dropdown + sid.
  *   coverJs()      — series page → cover image URL only.
- *   moveToListJs() — CHANGE LIST: pick select#taskOption + fire jQuery change.
+ *   moveListJs()    — CHANGE LIST: one GET of updatelist.php (verified).
+ *   searchFireJs()  — SEARCH: the site's own live search via admin-ajax.
  *   moveReadMarkerJs() — READ POSITION: one call moves NU's single tick to a
  *                        chapter (rid="0" clears it).
  *
@@ -257,45 +258,55 @@ fun coverJs(): String = """
 """.trimIndent()
 
 /**
- * CHANGE LIST. [moveId] is "listId:::listName". A plain selectedIndex change
- * is not enough for the site to save — we must also fire jQuery('change').
- * Returns "picked=id/name", "no-taskOption", or "no-match".
+ * CHANGE LIST — the site's own move call, verified 2026-10-10 from NU's
+ * ajax_search_post.js (moveSeries_genre): GET /updatelist.php?sid=<sid>&lid=<lid>&act=move.
+ * [sidFallback] is the cached #mypostid when the live page has none.
+ * Returns "move <status>" or "missing sid".
  */
-fun moveToListJs(moveId: String): String = """
+fun moveListJs(listId: String, sidFallback: String): String = """
     (function() {
-      var raw = ${JSONObject.quote(moveId)};
-      var parts = raw.split(':::');
-      var wantId = parts[0] || '';
-      var wantName = (parts[1] || '').replace(/\s+/g, ' ').trim().toLowerCase();
-      var sel = document.querySelector('select#taskOption, select[name="taskOption"], select.taskOption');
-      if (!sel) {
-        document.querySelectorAll('select').forEach(function(s) {
-          var blob = '';
-          for (var i = 0; i < s.options.length; i++) blob += (s.options[i].textContent || '');
-          if (/ongoing|ecchi|completed/i.test(blob)) sel = s;
-        });
+      var sid = (document.querySelector('#mypostid') || {}).value || ${JSONObject.quote(sidFallback)};
+      if (!sid) return 'missing sid';
+      var lid = ${JSONObject.quote(listId)};
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/updatelist.php?sid=' + encodeURIComponent(sid) + '&lid=' + encodeURIComponent(lid) + '&act=move', false);
+        xhr.send(null);
+        return 'move ' + xhr.status;
+      } catch (e) {
+        return 'move err';
       }
-      if (!sel) return 'no-taskOption';
-      var picked = '';
-      for (var i = 0; i < sel.options.length; i++) {
-        var t = (sel.options[i].textContent || '').replace(/\s+/g, ' ').trim();
-        var v = (sel.options[i].value || '').trim();
-        if (v === wantId || t.toLowerCase() === wantName) {
-          sel.selectedIndex = i;
-          sel.value = v;
-          picked = v + '/' + t;
-          break;
-        }
-      }
-      if (!picked) return 'no-match';
-      var jq = (typeof jQuery === 'function');
-      if (jq) jQuery(sel).val(sel.value).trigger('change').trigger('input');
-      if (sel.onchange) sel.onchange();
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-      sel.dispatchEvent(new Event('input', { bubbles: true }));
-      return 'picked=' + picked;
     })();
 """.trimIndent()
+
+/**
+ * SEARCH — fires the site's own live search (verified 2026-10-10: NU's
+ * ajax_search_post.js calls admin-ajax.php with action=nd_ajaxsearchmain)
+ * same-origin and stores the response HTML on window.__nuSearchResult for the
+ * caller to poll. Two-phase because evaluateJavascript cannot await fetch().
+ * Returns 'fired' immediately.
+ */
+fun searchFireJs(query: String): String = """
+    (function() {
+      window.__nuSearchResult = '';
+      window.__nuSearchErr = '';
+      try {
+        var fd = new FormData();
+        fd.append('action', 'nd_ajaxsearchmain');
+        fd.append('strType', 'mobile');
+        fd.append('strOne', ${JSONObject.quote(query)});
+        fd.append('strSearchType', 'series');
+        fetch('/wp-admin/admin-ajax.php', { method: 'POST', body: fd, credentials: 'include' })
+          .then(function(r) { return r.text() })
+          .then(function(t) { window.__nuSearchResult = t.slice(0, -1) })
+          .catch(function(e) { window.__nuSearchErr = '' + e });
+      } catch (e) { window.__nuSearchErr = '' + e }
+      return 'fired';
+    })();
+""".trimIndent()
+
+/** Reads the stored search response: the HTML, or 'pending', or the error. */
+const val SEARCH_READ_JS = """(window.__nuSearchErr || window.__nuSearchResult || 'pending')"""
 
 /**
  * MOVE READ POSITION — one call. NU keeps a single tick per series (the read
