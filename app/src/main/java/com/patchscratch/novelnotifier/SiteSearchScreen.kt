@@ -185,7 +185,11 @@ fun SiteSearchScreen(
         val parsed = parseSearchResults(raw)
         results = parsed
         status = if (parsed.isEmpty()) "No matches for \"$term\"" else "${parsed.size} matches — tap one to open"
-        DebugLog.log("SEARCH", "'$term' → ${parsed.size} results")
+        DebugLog.log(
+            "SEARCH",
+            if (parsed.isEmpty()) "'$term' → 0 results; raw ${raw.length}B head: ${raw.take(300)}"
+            else "'$term' → ${parsed.size} results"
+        )
     }
 }
 

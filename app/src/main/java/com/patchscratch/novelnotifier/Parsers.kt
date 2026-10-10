@@ -181,13 +181,19 @@ fun parseListPageResult(
     return ListPageResult(lists, novels, lastReads, pickReleasesFeedUrl(feedUrls), pickReadFeedUrl(feedUrls))
 }
 
-/** Strip the extra quoting evaluateJavascript adds around a JS string. */
+/** Strip the extra quoting evaluateJavascript adds around a JS string.
+ *  Chromium JSON-encodes the result, escaping < > as \u003C \u003E and
+ *  newlines/quotes/backslashes — all four must be decoded or HTML payloads
+ *  arrive as literal "\u003Cul\u003E…" and never parse. */
 fun unwrapJsResult(result: String?): String {
     if (result.isNullOrBlank() || result == "null") return ""
     return result
         .removeSurrounding("\"")
+        .replace(Regex("\\\\u([0-9a-fA-F]{4})")) { it.groupValues[1].toInt(16).toChar().toString() }
         .replace("\\\"", "\"")
         .replace("\\n", "\n")
+        .replace("\\r", "\r")
+        .replace("\\t", "\t")
         .replace("\\\\", "\\")
 }
 

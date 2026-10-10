@@ -211,6 +211,20 @@ class ParsersTest {
         assertEquals("a\"b", unwrapJsResult("\"a\\\"b\""))
     }
 
+    @Test
+    fun unwrapJsResult_decodesUnicodeEscapes() {
+        // Chromium escapes < and > in evaluateJavascript results — an HTML
+        // payload arrives as \u003Cul\u003E… and must come back as real tags
+        // (this exact case broke live search while the fixture test passed).
+        assertEquals("<ul>", unwrapJsResult("\"\\u003Cul\\u003E\""))
+        assertEquals("harem「1」", unwrapJsResult("\"harem\\u300C1\\u300D\""))
+        // …and a whole search response round-trips into the parser.
+        val fixture = javaClass.getResourceAsStream("/fixture-search-response.html")!!
+            .bufferedReader().readText()
+        val jsQuoted = "\"" + fixture.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
+        assertEquals(4, parseSearchResults(unwrapJsResult(jsQuoted)).size)
+    }
+
     // --- RSS ---
 
     @Test

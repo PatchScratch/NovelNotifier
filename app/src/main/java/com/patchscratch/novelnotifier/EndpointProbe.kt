@@ -102,8 +102,8 @@ fun EndpointProbeScreen(onFinished: () -> Unit) {
                 when (step) {
                     1 -> webView.loadUrl("https://www.novelupdates.com/series-ranking/?rank=popmonth")
                     2 -> if ((webView.url ?: "").contains("series-ranking")) {
-                        // A stable, well-known series page keeps runs reproducible.
-                        webView.loadUrl("https://www.novelupdates.com/series/someday-will-i-be-the-greatest-alchemist/")
+                        // Replicate the search screen's base page exactly.
+                        webView.loadUrl("https://www.novelupdates.com/")
                     }
                 }
             }
@@ -159,7 +159,7 @@ private val SEARCH_FIRE_JS = """
         var fd = new FormData();
         fd.append('action','nd_ajaxsearchmain');
         fd.append('strType','mobile');
-        fd.append('strOne','alchemy');
+        fd.append('strOne','harem');
         fd.append('strSearchType','series');
         fetch('/wp-admin/admin-ajax.php', {method:'POST', body:fd, credentials:'include'})
           .then(function(r){return r.text()})
