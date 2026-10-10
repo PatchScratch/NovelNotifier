@@ -21,17 +21,22 @@ parser in `Parsers.kt` and unit tests on fixture payloads — the original app's
 history says search/ranking parsers rot fastest, so they stay isolated and
 fixture-tested.
 
-### 2.0 Endpoint verification spike (half a day, before anything else)
+### 2.0 Endpoint verification spike — ✅ DONE (2026-10-10)
 
-The original app's endpoints are mapped but their **current parameters** are
-unverified against the live site. One hidden-WebView session each, logged in:
+All Phase 2 endpoints verified against the live site, logged in through the
+app's own WebView (probe tooling in `EndpointProbe.kt`, triggered only via
+`am start --ez probe_endpoints true`; findings under `[PROBE]` in the debug
+log). Remove the probe file with 2.2's cleanup.
 
-- `/wp-admin/admin-ajax.php` — search action name + params + response shape.
-- `/series-ranking/?rank=…&pg=N` — which rank values still work
-  (`popmonth` confirmed historically; check `popweek`, `popyear`, `favourites`).
-- `/updatelist.php?sid=…` — exact params for a list move (success response).
+| Capability | Verified endpoint | Notes |
+|---|---|---|
+| Search / autocomplete | POST `/wp-admin/admin-ajax.php` — `action=nd_ajaxsearchmain`, `strType=mobile`, `strOne=<query>`, `strSearchType=series` | Source: the site's own `cdn.novelupdates.com/js/ajax_search_post.js` (CDN serves it without a challenge). Response is HTML rows (`li.search_li_results > a.a_search` with href + `img.search_profile_image` + title, `<span class="search_hl">` marks the match). Their own code strips one trailing character (`slice(0,-1)`). Fixture: `app/src/test/resources/fixture-search-response.html`. |
+| Targeted search | Same URL — `action=nd_ajaxsearch`, `str`, `strID`, `strType` | Untested variant used by inline pickers. |
+| Lists by series | Same URL — `action=nu_genre_getlists`, `strPostID=<sid>`, `strType` | Returns the user's lists as HTML. |
+| Change list | GET `/updatelist.php?sid=<sid>&lid=<listId>&act=move` | Exact params from the site's `moveSeries_genre()` — replaces our jQuery-trigger approach (2.1). |
+| Discover / rankings | `/series-ranking/?rank=<value>&pg=<n>` | Live rank tabs: `popmonth`, `popular`, `week`, `month`, `sixmonths`. Grid renders server-side (41 series links on page 1). |
 
-Deliverable: verified fixtures checked into the test resources.
+Dead end noted: `/series-search/?src=` renders nothing — do not use.
 
 ### 2.1 Change list via `updatelist.php` (small)
 

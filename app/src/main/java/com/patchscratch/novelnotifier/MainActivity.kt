@@ -58,12 +58,16 @@ class MainActivity : ComponentActivity() {
     /** Set when a notification asks us to open the login screen (session expired). */
     companion object {
         @Volatile var openLoginRequested = false
+
+        /** Set by `am start --ez probe_endpoints true` — the temporary Phase-2 spike. */
+        @Volatile var probeRequested = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (intent?.getBooleanExtra("open_login", false) == true) openLoginRequested = true
+        if (intent?.getBooleanExtra("probe_endpoints", false) == true) probeRequested = true
         setContent {
             NovelNotifierTheme {
                 Surface(
@@ -79,6 +83,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         if (intent.getBooleanExtra("open_login", false)) openLoginRequested = true
+        if (intent.getBooleanExtra("probe_endpoints", false)) probeRequested = true
     }
 }
 
@@ -113,6 +118,7 @@ fun NovelApp() {
     var chapterFetchQueue by remember { mutableStateOf(emptyList<Novel>()) }
     var syncStatus by remember { mutableStateOf(SyncEngineService.statusText(context)) }
     var showOnboarding by remember { mutableStateOf(false) }
+    var probeMode by remember { mutableStateOf(false) } // adb-only Phase-2 spike (EndpointProbe.kt)
     var loginState by remember {
         mutableStateOf(
             if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
@@ -188,6 +194,10 @@ fun NovelApp() {
             if (MainActivity.openLoginRequested) {
                 MainActivity.openLoginRequested = false
                 showLoginWeb = true
+            }
+            if (MainActivity.probeRequested) {
+                MainActivity.probeRequested = false
+                probeMode = true
             }
             coverCache = loadCoverCache(prefs)
         }
@@ -353,7 +363,9 @@ fun NovelApp() {
     }
 
     // Only one screen is composed at a time. Order matters: login overlays settings.
+    // The probe screen (adb-only) overlays everything while it runs.
     when {
+        probeMode -> EndpointProbeScreen(onFinished = { probeMode = false })
         showLoginWeb -> LoginWebScreen(
             onLoggedIn = { cookies -> onLoggedIn(cookies) },
             onCancel = {
