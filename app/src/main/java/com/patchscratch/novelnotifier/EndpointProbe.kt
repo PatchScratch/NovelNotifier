@@ -74,7 +74,7 @@ fun EndpointProbeScreen(onFinished: () -> Unit) {
         }
     }
 
-    if (step in 1..5) {
+    if (step in 1..6) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
@@ -88,10 +88,11 @@ fun EndpointProbeScreen(onFinished: () -> Unit) {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             val script = when (step) {
                                 1 -> RANKING_CAPTURE_JS
+                                6 -> FINDER_CAPTURE_JS
                                 else -> SERIES_PAGE_CAPTURE_JS
                             }
                             view?.evaluateJavascript(script) { result ->
-                                record("step$step ${url.orEmpty().take(60)}", unwrapJsResult(result).take(1200))
+                                record("step$step ${url.orEmpty().take(70)}", unwrapJsResult(result).take(2200))
                                 step += 1
                             }
                         }
@@ -104,6 +105,10 @@ fun EndpointProbeScreen(onFinished: () -> Unit) {
                     2 -> if ((webView.url ?: "").contains("series-ranking")) {
                         // Replicate the search screen's base page exactly.
                         webView.loadUrl("https://www.novelupdates.com/")
+                    }
+                    6 -> if ((webView.url ?: "").contains("novelupdates.com")) {
+                        // The desktop full-search page (user-supplied URL, 2026-10-10).
+                        webView.loadUrl("https://www.novelupdates.com/series-finder/?sf=1&sh=harem&sort=sdate&order=desc")
                     }
                 }
             }
@@ -149,6 +154,24 @@ private val SERIES_PAGE_CAPTURE_JS = """
         scripts.push((s.getAttribute('src')||'').split('?')[0]);
       });
       return JSON.stringify({scripts: scripts.slice(0,14)});
+    })();
+""".trimIndent()
+
+/** The desktop full-search page (series-finder): row structure + pager. */
+private val FINDER_CAPTURE_JS = """
+    (function(){
+      var links = document.querySelectorAll('a[href*="/series/"]');
+      var first = links[0];
+      var row = first ? (first.closest('tr') || first.closest('[class]') || first.parentElement) : null;
+      var pager = [];
+      document.querySelectorAll('a[href*="pg="], .digg_pagination a').forEach(function(a){
+        pager.push(a.getAttribute('href')||'');
+      });
+      return JSON.stringify({
+        total: links.length,
+        firstRow: row ? row.outerHTML.slice(0, 1400) : '',
+        pager: pager.slice(0, 6)
+      });
     })();
 """.trimIndent()
 

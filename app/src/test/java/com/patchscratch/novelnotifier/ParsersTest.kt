@@ -190,6 +190,25 @@ class ParsersTest {
     }
 
     @Test
+    fun parseFinderResults_fromFinderJson() {
+        val json = """
+            {"rows":[
+              {"t":"Harem Master","u":"https://www.novelupdates.com/series/harem-master/","i":""},
+              {"t":"  Spaced  Title  ","u":"https://www.novelupdates.com/series/spaced/","i":"//cdn.novelupdates.com/img/series_1.jpg"},
+              {"t":"junk","u":"https://example.com/not-series/","i":""}
+            ],"maxPage":42}
+        """.trimIndent()
+        val page = parseFinderResults(json)
+        assertEquals(2, page.results.size)
+        assertEquals(42, page.maxPage)
+        assertEquals("Spaced Title", page.results[1].title)
+        assertEquals("https://cdn.novelupdates.com/img/series_1.jpg", page.results[1].coverUrl)
+        // Broken input never crashes and never lies about pages.
+        assertEquals(1, parseFinderResults("CF").maxPage)
+        assertEquals(0, parseFinderResults("not json").results.size)
+    }
+
+    @Test
     fun placeholderCovers_areNeverUsable() {
         assertEquals(true, isPlaceholderCover("https://www.novelupdates.com/img/noimagefound.jpg"))
         assertEquals(false, isPlaceholderCover("https://cdn.novelupdates.com/images/a.jpg"))

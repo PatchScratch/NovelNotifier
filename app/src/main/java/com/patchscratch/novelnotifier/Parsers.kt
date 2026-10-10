@@ -381,6 +381,40 @@ fun parseSearchResults(html: String): List<SearchResult> {
     }.take(12).toList()
 }
 
+/** One page of series-finder results (the desktop full search). */
+data class FinderPage(
+    val results: List<SearchResult>,
+    val maxPage: Int
+)
+
+/**
+ * Parse the JSON from finderPageJs() (series-finder grid rows). Bad or empty
+ * input → an empty page with maxPage 1; callers show a retry, never an
+ * empty-handed "no results".
+ */
+fun parseFinderResults(json: String): FinderPage {
+    if (json.isBlank() || json == "CF") return FinderPage(emptyList(), 1)
+    return try {
+        val obj = org.json.JSONObject(json)
+        val arr = obj.optJSONArray("rows") ?: return FinderPage(emptyList(), 1)
+        val rows = (0 until arr.length()).mapNotNull { i ->
+            val row = arr.optJSONObject(i) ?: return@mapNotNull null
+            val url = row.optString("u")
+            val title = row.optString("t").trim().replace(Regex("\\s+"), " ")
+            if (url.contains("/series/") && title.isNotBlank()) {
+                SearchResult(
+                    title = title,
+                    seriesUrl = url,
+                    coverUrl = row.optString("i").let { if (it.startsWith("//")) "https:$it" else it }
+                )
+            } else null
+        }
+        FinderPage(rows, obj.optInt("maxPage", 1).coerceAtLeast(1))
+    } catch (_: Exception) {
+        FinderPage(emptyList(), 1)
+    }
+}
+
 /** RFC-822 pubDate ("Fri, 09 Oct 2026 16:22:05 +0800") → epoch millis, or 0. */
 fun parseRssDate(raw: String): Long {
     if (raw.isBlank()) return 0L

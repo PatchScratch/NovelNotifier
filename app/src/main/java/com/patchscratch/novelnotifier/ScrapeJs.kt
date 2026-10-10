@@ -309,6 +309,37 @@ fun searchFireJs(query: String): String = """
 const val SEARCH_READ_JS = """(window.__nuSearchErr || window.__nuSearchResult || 'pending')"""
 
 /**
+ * FULL SEARCH — the desktop results page (user-supplied 2026-10-10):
+ * /series-finder/?sf=1&sh=<term>&sort=sdate&order=desc[&pg=N]. Server-rendered
+ * grid, ~41 rows/page, pager max gives the total. Rows are div.search_title
+ * anchors; covers (when present) sit in a surrounding container. Returns JSON
+ * {rows:[{t,u,i}], maxPage} — parse with parseFinderResults.
+ */
+fun finderPageJs(): String = """
+    (function() {
+      $CF_DETECT_JS
+      var rows = [];
+      document.querySelectorAll('div.search_title a[href*="/series/"]').forEach(function(a) {
+        var title = (a.textContent || '').replace(/\s+/g, ' ').trim();
+        var img = '';
+        var node = a.parentElement;
+        for (var k = 0; k < 4 && node; k++) {
+          var im = node.querySelector ? node.querySelector('img') : null;
+          if (im && im.src && im.src.indexOf('data:') !== 0) { img = im.src; break; }
+          node = node.parentElement;
+        }
+        rows.push({ t: title, u: a.href, i: img });
+      });
+      var max = 1;
+      document.querySelectorAll('a[href*="pg="]').forEach(function(a) {
+        var m = ((a.getAttribute('href') || '')).match(/pg=(\d+)/);
+        if (m) { var n = parseInt(m[1], 10); if (n > max) max = n; }
+      });
+      return JSON.stringify({ rows: rows, maxPage: max });
+    })();
+""".trimIndent()
+
+/**
  * MOVE READ POSITION — one call. NU keeps a single tick per series (the read
  * position); checking any row's checkbox MOVES the marker there and the site
  * clears the old one itself, so no unticking is ever needed. The special rid
