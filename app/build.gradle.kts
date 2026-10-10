@@ -13,14 +13,27 @@ android {
         applicationId = "com.patchscratch.novelnotifier"
         minSdk = 26
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.2.0-alpha"
+        versionCode = 4
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // The APK is distributed directly (GitHub Releases), not via a store.
+    // Signing with the standard debug keystore keeps the signature stable so
+    // devices running earlier builds update in place instead of reinstalling.
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             optimization {
                 enable = false
             }

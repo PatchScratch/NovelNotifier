@@ -78,3 +78,7 @@ Ideas in rough order: site search, Discover/rankings, notification tap → in-ap
 ## Acknowledgements
 
 Design informed by reverse-engineering the original *Notifications for Novel Updates* v1.9.3–v1.13 (Apache-licensed era, abandoned) — thank you to its author. This codebase shares no code with it.
+
+## License
+
+[MIT](LICENSE) — © 2026 Wayne Yow (PatchScratch)
