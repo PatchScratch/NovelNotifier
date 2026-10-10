@@ -131,6 +131,10 @@ fun NovelDetailScreen(
     // CF signal seen; the WebView may clear it alone. The grace timer below
     // expands the pane only if the challenge is still stuck after 12 seconds.
     var pendingChallenge by remember { mutableStateOf(false) }
+    // The pane's WebView lays its first page out at 1dp (hidden); when the
+    // pane expands we reload ONCE at real size, or the challenge renders
+    // zoomed-in and half transparent.
+    var challengeRescaled by remember { mutableStateOf(false) }
     var pendingAutoPage by remember { mutableIntStateOf(0) } // next table page to fetch after a short gap
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -773,6 +777,8 @@ fun NovelDetailScreen(
             factory = { context ->
                 WebView(context).apply {
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = true
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
@@ -781,6 +787,16 @@ fun NovelDetailScreen(
                 }
             },
             update = { webView ->
+                if (showChallenge) {
+                    webView.setBackgroundColor(android.graphics.Color.WHITE)
+                    if (!challengeRescaled && webView.width > 100) {
+                        challengeRescaled = true
+                        webView.reload()
+                    }
+                } else {
+                    challengeRescaled = false
+                    webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                }
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         val script = seriesPageJs()

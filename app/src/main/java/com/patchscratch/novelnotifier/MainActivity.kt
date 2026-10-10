@@ -152,13 +152,23 @@ fun NovelApp() {
 
     // The engine writes status to prefs. Poll so Settings can show the counter,
     // and auto-resume a queue whose service died mid-run (reboot / task killer /
-    // CF pause) — but never override a deliberate Pause or Stop.
+    // CF pause) — but only while the app is in the FOREGROUND: Android 12+
+    // crashes background apps that start foreground services.
+    var appForeground by remember { mutableStateOf(true) }
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            appForeground = event != androidx.lifecycle.Lifecycle.Event.ON_STOP
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     LaunchedEffect(Unit) {
         while (true) {
             delay(2.seconds)
             val latest = SyncEngineService.statusText(context)
             if (latest != syncStatus) syncStatus = latest
-            if (latest.startsWith("Running") && !SyncEngineService.engineAlive) {
+            if (appForeground && latest.startsWith("Running") && !SyncEngineService.engineAlive) {
                 val pending = withContext(Dispatchers.IO) { SyncQueue.pending(context) }
                 if (pending.isNotEmpty()) SyncEngineService.resume(context)
             }

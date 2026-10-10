@@ -90,8 +90,13 @@ class UpdateCheckWorker(
     params: WorkerParameters
 ) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        // Foreground so Android 12+ lets us run the WebView-based engine.
-        withContext(Dispatchers.Main) { setForeground(foregroundInfo()) }
+        // Foreground so Android 12+ lets us run the WebView-based engine; if
+        // the promotion itself is refused, fall back to the cheap paths only.
+        try {
+            withContext(Dispatchers.Main) { setForeground(foregroundInfo()) }
+        } catch (e: Exception) {
+            DebugLog.log("RSS", "worker could not go foreground", e)
+        }
         runUpdateCheck(applicationContext)
         // A WebView-based check runs in the SyncEngineService; give it time to
         // drain (paced: one list page every 8 s), then resume any leftover

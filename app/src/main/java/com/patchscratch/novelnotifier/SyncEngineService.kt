@@ -601,7 +601,7 @@ class SyncEngineService : Service() {
             }
             SyncQueue.save(context, jobs)
             writeStatus(context, "Running — queued ${jobs.size} jobs")
-            ContextCompat.startForegroundService(context, Intent(context, SyncEngineService::class.java))
+            safeStartForegroundService(context)
         }
 
         /** Resume an existing persisted queue (after reboot, CF pause, or stop). */
@@ -612,7 +612,21 @@ class SyncEngineService : Service() {
                 return
             }
             writeStatus(context, "Running — resuming ${pending.size} jobs")
-            ContextCompat.startForegroundService(context, Intent(context, SyncEngineService::class.java))
+            safeStartForegroundService(context)
+        }
+
+        /**
+         * Android 12+ throws ForegroundServiceStartNotAllowedException when a
+         * background app starts a foreground service — that crash dialog the
+         * user saw. Never let it propagate: fail soft and pick up on next open.
+         */
+        private fun safeStartForegroundService(context: Context) {
+            try {
+                ContextCompat.startForegroundService(context, Intent(context, SyncEngineService::class.java))
+            } catch (e: Exception) {
+                writeStatus(context, "Waiting — open the app to resume")
+                DebugLog.log("SYNC", "foreground start blocked (background restriction)", e)
+            }
         }
 
         fun stop(context: Context) {

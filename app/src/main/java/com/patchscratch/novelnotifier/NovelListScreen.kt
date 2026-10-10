@@ -138,6 +138,10 @@ fun NovelListScreen(
     // A Cloudflare signal was seen, but the WebView may clear it alone —
     // the grace timer below expands the pane only if it stays stuck.
     var pendingChallenge by remember { mutableStateOf(false) }
+    // The pane's WebView lays its first page out at 1dp (hidden); when the
+    // pane expands we reload ONCE at real size, or the challenge renders
+    // zoomed-in and half transparent.
+    var challengeRescaled by remember { mutableStateOf(false) }
     var coverQueue by remember { mutableStateOf(emptyList<Novel>()) }
     var showListOptions by remember { mutableStateOf(false) }
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
@@ -539,6 +543,8 @@ fun NovelListScreen(
         factory = { ctx ->
             WebView(ctx).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
@@ -679,6 +685,16 @@ fun NovelListScreen(
             }
         },
         update = { webView ->
+            if (showChallenge) {
+                webView.setBackgroundColor(android.graphics.Color.WHITE)
+                if (!challengeRescaled && webView.width > 100) {
+                    challengeRescaled = true
+                    webView.reload()
+                }
+            } else {
+                challengeRescaled = false
+                webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            }
             val target = if (selectedListId.isBlank()) {
                 "https://www.novelupdates.com/reading-list/"
             } else {
