@@ -799,6 +799,11 @@ fun NovelDetailScreen(
                 }
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        if (isLoginRedirect(url)) {
+                            listStatus = "Session expired — log in from Settings"
+                            DebugLog.log("SYNC", "series scrape hit login redirect (${novel.title})")
+                            return@onPageFinished
+                        }
                         val script = seriesPageJs()
                         view?.evaluateJavascript(script) { result ->
                             val rawJson = unwrapJsResult(result)

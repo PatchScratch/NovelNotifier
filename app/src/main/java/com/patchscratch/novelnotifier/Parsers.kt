@@ -199,6 +199,17 @@ fun isCloudflareUrl(url: String?): Boolean {
         (u.contains("/cdn-cgi/") && (u.contains("challenge") || u.contains("turnstile")))
 }
 
+/**
+ * True when a scrape landed on NU's login page — the session cookie expired.
+ * Callers must stop scraping (logged-out pages burn the request budget and
+ * risk tripping Cloudflare) and send the user to log in.
+ */
+fun isLoginRedirect(url: String?): Boolean {
+    val u = url.orEmpty()
+    return u.contains("wp-login.php", ignoreCase = true) ||
+        (u.contains("novelupdates.com", ignoreCase = true) && u.contains("/login", ignoreCase = true))
+}
+
 fun isCloudflareTitle(title: String?): Boolean {
     val t = title.orEmpty()
     return t.contains("just a moment", ignoreCase = true) ||

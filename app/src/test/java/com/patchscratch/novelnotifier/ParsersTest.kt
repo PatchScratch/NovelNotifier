@@ -166,6 +166,15 @@ class ParsersTest {
     }
 
     @Test
+    fun isLoginRedirect_detectsNuLoginPage() {
+        assertEquals(true, isLoginRedirect("https://www.novelupdates.com/login/?redirect_to=x"))
+        assertEquals(true, isLoginRedirect("https://www.novelupdates.com/wp-login.php?action=login"))
+        assertEquals(false, isLoginRedirect("https://www.novelupdates.com/reading-list/?list=0"))
+        assertEquals(false, isLoginRedirect(null))
+        assertEquals(false, isLoginRedirect(""))
+    }
+
+    @Test
     fun placeholderCovers_areNeverUsable() {
         assertEquals(true, isPlaceholderCover("https://www.novelupdates.com/img/noimagefound.jpg"))
         assertEquals(false, isPlaceholderCover("https://cdn.novelupdates.com/images/a.jpg"))

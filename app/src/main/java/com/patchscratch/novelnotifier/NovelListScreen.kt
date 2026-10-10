@@ -566,6 +566,11 @@ fun NovelListScreen(
                         }
                     }
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        if (isLoginRedirect(url)) {
+                            listStatus = "Session expired — log in from Settings"
+                            DebugLog.log("SYNC", "list scrape hit login redirect")
+                            return@onPageFinished
+                        }
                         if (isCloudflareUrl(url) || isCloudflareTitle(view?.title)) {
                             DebugLog.log("CF", "detector=finish url=$url title='${view?.title}'")
                             pendingChallenge = true

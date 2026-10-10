@@ -54,9 +54,16 @@ import kotlin.time.Duration.Companion.seconds
  */
 
 class MainActivity : ComponentActivity() {
+
+    /** Set when a notification asks us to open the login screen (session expired). */
+    companion object {
+        @Volatile var openLoginRequested = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (intent?.getBooleanExtra("open_login", false) == true) openLoginRequested = true
         setContent {
             NovelNotifierTheme {
                 Surface(
@@ -67,6 +74,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        if (intent.getBooleanExtra("open_login", false)) openLoginRequested = true
     }
 }
 
@@ -171,6 +183,11 @@ fun NovelApp() {
             if (appForeground && latest.startsWith("Running") && !SyncEngineService.engineAlive) {
                 val pending = withContext(Dispatchers.IO) { SyncQueue.pending(context) }
                 if (pending.isNotEmpty()) SyncEngineService.resume(context)
+            }
+            // The session-expired notification asks for the login screen.
+            if (MainActivity.openLoginRequested) {
+                MainActivity.openLoginRequested = false
+                showLoginWeb = true
             }
             coverCache = loadCoverCache(prefs)
         }
@@ -293,6 +310,12 @@ fun NovelApp() {
         loginState = "Logged in to Novel Updates"
         prefs.edit { putString("nu_cookies", cookieHeader) }
         showLoginWeb = false
+        // A parked sync queue (session expiry) resumes with the fresh session.
+        scope.launch {
+            if (withContext(Dispatchers.IO) { SyncQueue.pending(context) }.isNotEmpty()) {
+                SyncEngineService.resume(context)
+            }
+        }
         if (!prefs.getBoolean("onboarding_done", false)) {
             showOnboarding = true
         } else {

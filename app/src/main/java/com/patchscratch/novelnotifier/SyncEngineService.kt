@@ -158,6 +158,10 @@ class SyncEngineService : Service() {
         // job type, so a single shared WebView can serve every kind of job.
         view.webViewClient = object : WebViewClient() {
             override fun onPageFinished(page: WebView?, url: String?) {
+                if (isLoginRedirect(url)) {
+                    handleSessionExpired(job)
+                    return@onPageFinished
+                }
                 val script = when (job.type) {
                     "list", "check" -> listPageJs()
                     "cover" -> coverJs()
@@ -221,6 +225,22 @@ class SyncEngineService : Service() {
     }
 
     // ---- job processing (background executor) --------------------------------
+
+    /**
+     * Session expiry: NU redirected a scrape to its login page. Park the
+     * queue without marking the job done — retrying logged-out only burns
+     * the request budget — and point the user at the login screen. A
+     * successful login (MainActivity.onLoggedIn) resumes the queue.
+     */
+    private fun handleSessionExpired(job: SyncJob) {
+        DebugLog.log("SYNC", "session expired on '${job.title}' — queue parked at ${job.id}")
+        writeStatus(this, "Session expired — open the app to log in")
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(
+            NOTIF_ID,
+            buildNotification("Session expired — tap to log in", openLogin = true).build()
+        )
+    }
 
     private fun processResult(job: SyncJob, raw: String) {
         when (job.type) {
@@ -515,9 +535,18 @@ class SyncEngineService : Service() {
         )
     }
 
-    private fun buildNotification(text: String): NotificationCompat.Builder {
+    private fun buildNotification(text: String, openLogin: Boolean = false): NotificationCompat.Builder {
         val pauseAction = if (pausedByUser) "Resume" else "Pause"
         val pauseIntent = if (pausedByUser) ACTION_RESUME else ACTION_PAUSE
+        val contentIntent = PendingIntent.getActivity(
+            this,
+            if (openLogin) 2 else 0,
+            Intent(this, MainActivity::class.java).apply {
+                if (openLogin) putExtra("open_login", true)
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
  return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("NovelNotifier library sync")
             .setContentText(text)
@@ -527,13 +556,7 @@ class SyncEngineService : Service() {
             .setSilent(true)
             .addAction(0, pauseAction, serviceIntent(pauseIntent))
             .addAction(0, "Stop", serviceIntent(ACTION_STOP))
-            .setContentIntent(
-                PendingIntent.getActivity(
-                    this, 0,
-                    Intent(this, MainActivity::class.java),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-            )
+            .setContentIntent(contentIntent)
     }
 
     private fun serviceIntent(action: String): PendingIntent {
