@@ -22,18 +22,25 @@ android {
     // The APK is distributed directly (GitHub Releases), not via a store.
     // Signing with the standard debug keystore keeps the signature stable so
     // devices running earlier builds update in place instead of reinstalling.
-    signingConfigs {
-        create("release") {
-            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+    // Conditional so source-only builds (e.g. F-Droid's servers, where the
+    // keystore does not exist) still compile — they re-sign with their own key.
+    val releaseKeystore = File(System.getProperty("user.home") + "/.android/debug.keystore")
+    if (releaseKeystore.exists()) {
+        signingConfigs {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            if (releaseKeystore.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                 enable = false
             }
