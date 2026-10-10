@@ -1,0 +1,127 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="160dp"
+    android:viewportWidth="120"
+    android:viewportHeight="160">
+    <!-- "No cover available": a puzzled little shiba with a blank book and a
+         floating question mark (kawaii style, matches the app icon shiba).
+         The caption text itself is drawn by CoverThumb so it stays crisp. -->
+    <!-- backdrop -->
+    <path
+        android:fillColor="#F6E3C5"
+        android:pathData="M0,0h120v160h-120z" />
+    <group
+        android:pivotX="60"
+        android:pivotY="92"
+        android:scaleX="1.15"
+        android:scaleY="1.15"
+        android:translateX="-2"
+        android:translateY="4">
+        <!-- tail curl -->
+        <path
+            android:fillColor="#E8A25E"
+            android:pathData="M68,86 C77,85 82,78 78,72 C76,75 72,78 67,80 Z" />
+        <!-- body -->
+        <path
+            android:fillColor="#EFAF6B"
+            android:pathData="M41,73 C36,83 38,92 54,92 C70,92 72,83 67,73 C62,77.5 46,77.5 41,73 Z" />
+        <path
+            android:fillColor="#FBEFD9"
+            android:pathData="M47,77 C50,83 58,83 61,77 C57,75 51,75 47,77 Z" />
+        <!-- ears -->
+        <path
+            android:fillColor="#EFAF6B"
+            android:pathData="M34,38 C31,29 33,19 38,13 C43,17 48,23 50,29 C45,34 39,37 34,38 Z" />
+        <path
+            android:fillColor="#EFAF6B"
+            android:pathData="M74,38 C77,29 75,19 70,13 C65,17 60,23 58,29 C63,34 69,37 74,38 Z" />
+        <path
+            android:fillColor="#8A5A33"
+            android:pathData="M38,32 C37,27 38,21 41,17 C44,20 47,24 48,27 C45,29 41,31 38,32 Z" />
+        <path
+            android:fillColor="#8A5A33"
+            android:pathData="M70,32 C71,27 70,21 67,17 C64,20 61,24 60,27 C63,29 67,31 70,32 Z" />
+        <!-- head, tilted a touch -->
+        <group
+            android:pivotX="54"
+            android:pivotY="52"
+            android:rotation="-6">
+            <path
+                android:fillColor="#EFAF6B"
+                android:pathData="M54,31 C67,31 75,40 75,51 C75,64 66,73 54,73 C42,73 33,64 33,51 C33,40 41,31 54,31 Z" />
+            <path
+                android:fillColor="#FBEFD9"
+                android:pathData="M39,58 C44,72 64,72 69,58 C64,53 44,53 39,58 Z" />
+            <path
+                android:fillColor="#FBEFD9"
+                android:pathData="M41.5,40 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 Z" />
+            <path
+                android:fillColor="#FBEFD9"
+                android:pathData="M61.5,40 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 Z" />
+            <!-- puzzled round eyes with highlights -->
+            <path
+                android:fillColor="#5C3A1E"
+                android:pathData="M40,50 a4.2,4.6 0 1 0 8.4,0 a4.2,4.6 0 1 0 -8.4,0 Z" />
+            <path
+                android:fillColor="#5C3A1E"
+                android:pathData="M59.6,50 a4.2,4.6 0 1 0 8.4,0 a4.2,4.6 0 1 0 -8.4,0 Z" />
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M43,48 a1.4,1.5 0 1 0 2.8,0 a1.4,1.5 0 1 0 -2.8,0 Z" />
+            <path
+                android:fillColor="#FFFFFF"
+                android:pathData="M62.6,48 a1.4,1.5 0 1 0 2.8,0 a1.4,1.5 0 1 0 -2.8,0 Z" />
+            <path
+                android:fillColor="#F2A29B"
+                android:fillAlpha="0.55"
+                android:pathData="M35,59 a4,2.6 0 1 0 8,0 a4,2.6 0 1 0 -8,0 Z" />
+            <path
+                android:fillColor="#F2A29B"
+                android:fillAlpha="0.55"
+                android:pathData="M65,59 a4,2.6 0 1 0 8,0 a4,2.6 0 1 0 -8,0 Z" />
+            <path
+                android:fillColor="#5C3A1E"
+                android:pathData="M51.5,56.5 C51.5,54.8 56.5,54.8 56.5,56.5 C56.5,58.3 54,59.5 54,59.5 C54,59.5 51.5,58.3 51.5,56.5 Z" />
+            <!-- small "hmm" mouth -->
+            <path
+                android:strokeColor="#5C3A1E"
+                android:strokeWidth="2"
+                android:strokeLineCap="round"
+                android:pathData="M51,63 C53,62 55,64 57,63" />
+        </group>
+        <!-- the book: blank and closed — nothing in it -->
+        <path
+            android:fillColor="#D96C4F"
+            android:pathData="M36,84 C43,81 53,81 54,83.5 C55,81 65,81 72,84 L72,90.5 C65,87.5 55,87.5 54,89.5 C53,87.5 43,87.5 36,90.5 Z" />
+        <path
+            android:fillColor="#FFF8EF"
+            android:pathData="M37.5,84.6 C43,82.4 52,82.4 53.4,84.4 L53.4,88.4 C52,86.6 43,86.6 37.5,88.6 Z" />
+        <path
+            android:fillColor="#FFF8EF"
+            android:pathData="M70.5,84.6 C65,82.4 56,82.4 54.6,84.4 L54.6,88.4 C56,86.6 65,86.6 70.5,88.6 Z" />
+        <path
+            android:strokeColor="#D9C8B4"
+            android:strokeWidth="1"
+            android:pathData="M40,84.6 C44.5,83.2 50,83.2 52.5,84.8" />
+        <path
+            android:strokeColor="#D9C8B4"
+            android:strokeWidth="1"
+            android:pathData="M55.5,84.8 C58,83.2 63.5,83.2 68,84.6" />
+        <!-- paws up in puzzlement -->
+        <path
+            android:fillColor="#EFAF6B"
+            android:pathData="M40,82 a3.5,3.2 0 1 0 7,0 a3.5,3.2 0 1 0 -7,0 Z" />
+        <path
+            android:fillColor="#EFAF6B"
+            android:pathData="M61,82 a3.5,3.2 0 1 0 7,0 a3.5,3.2 0 1 0 -7,0 Z" />
+    </group>
+    <!-- floating question mark -->
+    <path
+        android:strokeColor="#B34F37"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M88,34 C88,24 102,24 102,34 C102,41 94,42 94,48" />
+    <path
+        android:fillColor="#B34F37"
+        android:pathData="M91.8,55.5 a2.6,2.6 0 1 0 5.2,0 a2.6,2.6 0 1 0 -5.2,0 Z" />
+</vector>

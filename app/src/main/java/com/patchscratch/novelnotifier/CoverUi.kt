@@ -23,6 +23,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
+import com.patchscratch.novelnotifier.R
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.seconds
@@ -101,8 +112,8 @@ fun CoverPrefetcher(
 
 /**
  * Small cover tile. Loads the local CoverStore file for [seriesUrl] when we
- * have one (offline + backup-friendly), otherwise the URL via Coil; blank
- * url → grey placeholder.
+ * have one (offline + backup-friendly), otherwise the URL via Coil; no cover
+ * at all → the puzzled shiba placeholder with its "No cover available" caption.
  */
 @Composable
 fun CoverThumb(url: String, seriesUrl: String = "", modifier: Modifier = Modifier) {
@@ -122,6 +133,27 @@ fun CoverThumb(url: String, seriesUrl: String = "", modifier: Modifier = Modifie
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
+        } else {
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    painter = androidx.compose.ui.res.painterResource(R.drawable.ic_shiba_no_cover),
+                    contentDescription = "No cover available",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Text(
+                    text = "No cover\navailable",
+                    color = Color(0xFF7A5A3B),
+                    fontSize = 7.sp,
+                    lineHeight = 8.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(Color(0xB3F6E3C5))
+                        .padding(vertical = 1.dp)
+                )
+            }
         }
     }
 }
