@@ -141,9 +141,14 @@ private val RANKING_CAPTURE_JS = """
         var m = (a.getAttribute('href')||'').match(/rank=([a-z]+)/i);
         if (m) ranks.push(m[1].toLowerCase());
       });
-      var series = document.querySelectorAll('a[href*="/series/"]').length;
-      var first = document.querySelector('a[href*="/series/"]');
-      return JSON.stringify({uniqueRanks: ranks.filter(function(v,i,s){return s.indexOf(v)===i}), seriesLinks: series, sample: first?first.href:''});
+      var links = document.querySelectorAll('a[href*="/series/"]');
+      var first = links[0];
+      var row = first ? (first.closest('tr') || first.closest('[class]') || first.parentElement) : null;
+      var pager = [];
+      document.querySelectorAll('a[href*="pg="]').forEach(function(a){
+        pager.push(a.getAttribute('href')||'');
+      });
+      return JSON.stringify({uniqueRanks: ranks.filter(function(v,i,s){return s.indexOf(v)===i}), seriesLinks: links.length, sample: first?first.href:'', firstRow: row?row.outerHTML.slice(0,1200):'', pager: pager.slice(0,4)});
     })();
 """.trimIndent()
 

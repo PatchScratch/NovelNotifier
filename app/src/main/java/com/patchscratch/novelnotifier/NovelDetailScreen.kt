@@ -135,7 +135,6 @@ fun NovelDetailScreen(
     // pane expands we reload ONCE at real size, or the challenge renders
     // zoomed-in and half transparent.
     var challengeRescaled by remember { mutableStateOf(false) }
-    var pendingAutoPage by remember { mutableIntStateOf(0) } // next table page to fetch after a short gap
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val changeLists = availableLists.ifEmpty { page.lists }
@@ -193,10 +192,11 @@ fun NovelDetailScreen(
             loadedPage = 0
             listStatus = "Downloading chapter list..."
         } else if (!complete) {
+            // Scroll-driven from here (the nearEnd effect below): opening a
+            // series never machine-guns the site for every remaining page.
             allowNetwork = true
-            val next = cached.second.coerceAtLeast(0) + 1
-            pendingAutoPage = next
-            listStatus = "Caching remaining chapters (page $next)..."
+            loadingMore = false
+            listStatus = "Cached ${cached.first.releases.size} chapters — scroll RELEASES for older ones"
         } else if (!cacheHasTicks && cached.first.releases.any { it.rid.isNotBlank() }) {
             allowNetwork = true
             loadingMore = true
@@ -261,7 +261,7 @@ fun NovelDetailScreen(
     }
 
     fun requestNextPage() {
-        if (loadingMore || pageLoadFailed || loadedPage == 0 || pendingAutoPage > 0) return
+        if (loadingMore || pageLoadFailed || loadedPage == 0) return
         if (loadedPage < maxPage) requestPage(loadedPage + 1)
     }
 
@@ -272,15 +272,6 @@ fun NovelDetailScreen(
     fun applyOrder(newest: Boolean) {
         newestFirst = newest
         showOrder = false
-    }
-
-    LaunchedEffect(pendingAutoPage) {
-        val next = pendingAutoPage
-        if (next <= 0) return@LaunchedEffect
-        delay(2.seconds)
-        if (pageLoadFailed || showChallenge) return@LaunchedEffect
-        if (loadingMore && wantPage == next) return@LaunchedEffect
-        requestPage(next)
     }
 
     val nearEnd by remember {
@@ -708,11 +699,10 @@ fun NovelDetailScreen(
                                         )
                                         TextButton(onClick = {
                                             pageLoadFailed = false
-                                            pendingAutoPage = wantPage
                                             retryPage()
                                         }) { Text("RETRY") }
                                     }
-                                    loadingMore || pendingAutoPage > 0 -> {
+                                    loadingMore -> {
                                         Text(
                                             text = "Caching page ${wantPage.coerceAtLeast(1)} of ${maxPage.coerceAtLeast(wantPage)}…",
                                             style = MaterialTheme.typography.bodySmall
@@ -888,10 +878,8 @@ fun NovelDetailScreen(
                                 val pages = maxOf(page.maxPage, parsed.maxPage, maxPage).coerceAtLeast(1)
                                 maxPage = pages
                                 if (wantPage < pages) {
-                                    pendingAutoPage = wantPage + 1
-                                    listStatus = "Caching page ${wantPage + 1} of $pages…"
+                                    listStatus = "Loaded page $wantPage of $pages — scroll for older chapters"
                                 } else {
-                                    pendingAutoPage = 0
                                     listStatus = "Cached ${mergedReleases.size} chapters"
                                 }
                                 val savedPageNum = wantPage

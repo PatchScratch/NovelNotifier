@@ -14,15 +14,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,6 +72,9 @@ fun SiteSearchScreen(
     var finderMax by remember { mutableIntStateOf(1) }
     var finderLoading by remember { mutableStateOf(false) }
     var finderSeq by remember { mutableIntStateOf(0) }
+    // Infinite scroll for full results (see DiscoverScreen for the pattern).
+    val listState = rememberLazyListState()
+    var lastAutoLoadAt by remember { mutableLongStateOf(0L) }
 
     /** Load one series-finder page through the hidden WebView. */
     fun loadFinderPage(page: Int) {
@@ -138,7 +143,20 @@ fun SiteSearchScreen(
                 modifier = Modifier.padding(horizontal = 16.dp)
             ) { Text("Search all results →") }
         }
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        val nearEnd by remember {
+            derivedStateOf {
+                val info = listState.layoutInfo
+                val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+                info.totalItemsCount > 4 && last >= info.totalItemsCount - 4
+            }
+        }
+        LaunchedEffect(nearEnd, fullMode, finderLoading, finderPage, finderMax) {
+            if (!fullMode || !nearEnd || finderLoading || finderPage >= finderMax) return@LaunchedEffect
+            if (System.currentTimeMillis() - lastAutoLoadAt < 1_500L) return@LaunchedEffect
+            lastAutoLoadAt = System.currentTimeMillis()
+            loadFinderPage(finderPage + 1)
+        }
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             items(shown) { result ->
                 Row(
                     modifier = Modifier
@@ -159,13 +177,17 @@ fun SiteSearchScreen(
                     )
                 }
             }
-            if (fullMode && !finderLoading && fullResults.isNotEmpty() && finderPage < finderMax) {
-                item {
-                    Button(
-                        onClick = { loadFinderPage(finderPage + 1) },
-                        modifier = Modifier.padding(16.dp)
-                    ) { Text("Load more (page ${finderPage + 1} of $finderMax)") }
-                }
+            item {
+                Text(
+                    when {
+                        !fullMode -> " "
+                        finderLoading -> "Loading more…"
+                        fullResults.isNotEmpty() && finderPage >= finderMax -> "End of results (page $finderPage of $finderMax)"
+                        else -> "Scroll for more…"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(16.dp)
+                )
             }
         }
     }

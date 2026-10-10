@@ -116,6 +116,7 @@ fun NovelListScreen(
     onRssUrlFound: (String) -> Unit = {},
     onReadFeedFound: (String) -> Unit = {},
     onOpenSearch: () -> Unit = {},
+    onOpenDiscover: () -> Unit = {},
     onOpenSettings: () -> Unit,
     onEditLists: () -> Unit,
     onSaveListOptions: (Set<String>, Set<String>) -> Unit,
@@ -303,6 +304,14 @@ fun NovelListScreen(
                     onClick = {
                         scope.launch { drawerState.close() }
                         onOpenSearch()
+                    }
+                )
+                NavigationDrawerItem(
+                    label = { Text("Discover  ★") },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenDiscover()
                     }
                 )
                 NavigationDrawerItem(

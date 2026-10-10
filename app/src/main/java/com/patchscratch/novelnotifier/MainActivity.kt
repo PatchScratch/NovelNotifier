@@ -119,6 +119,7 @@ fun NovelApp() {
     var syncStatus by remember { mutableStateOf(SyncEngineService.statusText(context)) }
     var showOnboarding by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
+    var showDiscover by remember { mutableStateOf(false) }
     var probeMode by remember { mutableStateOf(false) } // adb-only Phase-2 spike (EndpointProbe.kt)
     var loginState by remember {
         mutableStateOf(
@@ -359,6 +360,7 @@ fun NovelApp() {
             showSettings -> showSettings = false
             showEditLists -> showEditLists = false
             showSearch -> showSearch = false
+            showDiscover -> showDiscover = false
             showOnboarding -> showOnboarding = false
             selectedNovel != null -> selectedNovel = null
         }
@@ -425,6 +427,13 @@ fun NovelApp() {
             },
             onBack = { showSearch = false }
         )
+        showDiscover -> DiscoverScreen(
+            onOpenSeries = { found ->
+                selectedNovel = found
+                showDiscover = false
+            },
+            onBack = { showDiscover = false }
+        )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {
                 SeriesChapterFetcher(
@@ -460,6 +469,7 @@ fun NovelApp() {
                     statusMessage = "Read sync enabled — marks carry between devices"
                 },
                 onOpenSearch = { showSearch = true },
+                onOpenDiscover = { showDiscover = true },
                 onOpenSettings = { showSettings = true },
                 onEditLists = { showEditLists = true },
                 onSaveListOptions = { newNotifyOff, newUpdateOff ->
