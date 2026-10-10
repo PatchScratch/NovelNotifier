@@ -789,9 +789,17 @@ fun NovelDetailScreen(
             update = { webView ->
                 if (showChallenge) {
                     webView.setBackgroundColor(android.graphics.Color.WHITE)
-                    if (!challengeRescaled && webView.width > 100) {
+                    if (!challengeRescaled) {
                         challengeRescaled = true
-                        webView.reload()
+                        // The page was laid out at 1dp while hidden, which
+                        // wrecks the WebView's computed zoom. Force a sane
+                        // scale and reload AFTER this frame's layout pass
+                        // (post), when the pane has its real size.
+                        webView.post {
+                            webView.setInitialScale(100)
+                            webView.settings.textZoom = 100
+                            webView.reload()
+                        }
                     }
                 } else {
                     challengeRescaled = false
