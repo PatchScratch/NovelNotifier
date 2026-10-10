@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="480" viewBox="0 0 120 160">
+  <!-- NovelNotifier "no cover available" placeholder: puzzled shiba with a blank
+       book and a floating question mark. Master copy lives in the repo as an
+       Android VectorDrawable:
+         app/src/main/res/drawable/ic_shiba_no_cover.xml
+       The path data and group transform here mirror that file exactly (pivot
+       60,92 · scale 1.15 · translate 4,20); if you edit one, edit both.
+       Note: in the app the caption is drawn by Compose (CoverThumb), not by the
+       vector — it is included here so this file stands alone. -->
+  <rect width="120" height="160" fill="#F6E3C5"/>
+  <g transform="translate(4,20) translate(60,92) scale(1.15) translate(-60,-92)">
+    <!-- tail curl -->
+    <path fill="#E8A25E" d="M68,86 C77,85 82,78 78,72 C76,75 72,78 67,80 Z"/>
+    <!-- body + chest floof -->
+    <path fill="#EFAF6B" d="M41,73 C36,83 38,92 54,92 C70,92 72,83 67,73 C62,77.5 46,77.5 41,73 Z"/>
+    <path fill="#FBEFD9" d="M47,77 C50,83 58,83 61,77 C57,75 51,75 47,77 Z"/>
+    <!-- ears (outer tan, inner dark) -->
+    <path fill="#EFAF6B" d="M34,38 C31,29 33,19 38,13 C43,17 48,23 50,29 C45,34 39,37 34,38 Z"/>
+    <path fill="#EFAF6B" d="M74,38 C77,29 75,19 70,13 C65,17 60,23 58,29 C63,34 69,37 74,38 Z"/>
+    <path fill="#8A5A33" d="M38,32 C37,27 38,21 41,17 C44,20 47,24 48,27 C45,29 41,31 38,32 Z"/>
+    <path fill="#8A5A33" d="M70,32 C71,27 70,21 67,17 C64,20 61,24 60,27 C63,29 67,31 70,32 Z"/>
+    <!-- head + muzzle + brow dots -->
+    <path fill="#EFAF6B" d="M54,31 C67,31 75,40 75,51 C75,64 66,73 54,73 C42,73 33,64 33,51 C33,40 41,31 54,31 Z"/>
+    <path fill="#FBEFD9" d="M39,58 C44,72 64,72 69,58 C64,53 44,53 39,58 Z"/>
+    <path fill="#FBEFD9" d="M41.5,40 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 Z"/>
+    <path fill="#FBEFD9" d="M61.5,40 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 Z"/>
+    <!-- blush -->
+    <path fill="#F2A29B" opacity="0.55" d="M35,59 a4,2.6 0 1 0 8,0 a4,2.6 0 1 0 -8,0 Z"/>
+    <path fill="#F2A29B" opacity="0.55" d="M65,59 a4,2.6 0 1 0 8,0 a4,2.6 0 1 0 -8,0 Z"/>
+    <!-- head group, tilted a touch: puzzled round eyes with highlights + "hmm" mouth -->
+    <g transform="rotate(-6 54 52)">
+      <path fill="#5C3A1E" d="M40,50 a4.2,4.6 0 1 0 8.4,0 a4.2,4.6 0 1 0 -8.4,0 Z"/>
+      <path fill="#5C3A1E" d="M59.6,50 a4.2,4.6 0 1 0 8.4,0 a4.2,4.6 0 1 0 -8.4,0 Z"/>
+      <path fill="#FFFFFF" d="M43,48 a1.4,1.5 0 1 0 2.8,0 a1.4,1.5 0 1 0 -2.8,0 Z"/>
+      <path fill="#FFFFFF" d="M62.6,48 a1.4,1.5 0 1 0 2.8,0 a1.4,1.5 0 1 0 -2.8,0 Z"/>
+      <path fill="none" stroke="#5C3A1E" stroke-width="2" stroke-linecap="round" d="M51,63 C53,62 55,64 57,63"/>
+    </g>
+    <path fill="#5C3A1E" d="M51.5,56.5 C51.5,54.8 56.5,54.8 56.5,56.5 C56.5,58.3 54,59.5 54,59.5 C54,59.5 51.5,58.3 51.5,56.5 Z"/>
+    <!-- the book: blank and closed — nothing in it -->
+    <path fill="#D96C4F" d="M36,84 C43,81 53,81 54,83.5 C55,81 65,81 72,84 L72,90.5 C65,87.5 55,87.5 54,89.5 C53,87.5 43,87.5 36,90.5 Z"/>
+    <path fill="#FFF8EF" d="M37.5,84.6 C43,82.4 52,82.4 53.4,84.4 L53.4,88.4 C52,86.6 43,86.6 37.5,88.6 Z"/>
+    <path fill="#FFF8EF" d="M70.5,84.6 C65,82.4 56,82.4 54.6,84.4 L54.6,88.4 C56,86.6 65,86.6 70.5,88.6 Z"/>
+    <path fill="none" stroke="#D9C8B4" stroke-width="1" d="M40,84.6 C44.5,83.2 50,83.2 52.5,84.8"/>
+    <path fill="none" stroke="#D9C8B4" stroke-width="1" d="M55.5,84.8 C58,83.2 63.5,83.2 68,84.6"/>
+    <!-- paws up in puzzlement -->
+    <path fill="#EFAF6B" d="M40,82 a3.5,3.2 0 1 0 7,0 a3.5,3.2 0 1 0 -7,0 Z"/>
+    <path fill="#EFAF6B" d="M61,82 a3.5,3.2 0 1 0 7,0 a3.5,3.2 0 1 0 -7,0 Z"/>
+  </g>
+  <!-- floating question mark -->
+  <path fill="none" stroke="#B34F37" stroke-width="4.5" stroke-linecap="round" d="M88,34 C88,24 102,24 102,34 C102,41 94,42 94,48"/>
+  <path fill="#B34F37" d="M91.8,55.5 a2.6,2.6 0 1 0 5.2,0 a2.6,2.6 0 1 0 -5.2,0 Z"/>
+  <!-- caption (drawn by CoverThumb in the app) -->
+  <rect x="0" y="138" width="120" height="22" fill="#F6E3C5" opacity="0.7"/>
+  <text x="60" y="149" text-anchor="middle" font-family="sans-serif" font-size="9.5" fill="#7A5A3B">No cover</text>
+  <text x="60" y="158.5" text-anchor="middle" font-family="sans-serif" font-size="9.5" fill="#7A5A3B">available</text>
+</svg>
