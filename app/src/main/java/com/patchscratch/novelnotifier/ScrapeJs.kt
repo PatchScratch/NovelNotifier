@@ -369,6 +369,124 @@ fun moveReadMarkerJs(rid: String, sidFallback: String): String = """
     })();
     """.trimIndent()
 
+
+/**
+ * Shared runtime cipher-derivation code (plain JS functions, no IIFE) —
+ * included by chapterExtractJs() and decodeDomJs(). Same logic ships
+ * standalone as PatchScratch/font-decipher derive_browser.js.
+ */
+val CIPHER_DERIVE_JS = """
+// --- runtime cipher derivation (rotation / PUA / partial substitution) --
+// When the built-in ladder doesn't apply, DERIVE the cipher in this page:
+// render each suspicious codepoint and each ASCII reference on a canvas
+// in the chapter's own font and match by pixel IoU. Font rotation per
+// page load (Qidian-style renamed families) is irrelevant — the family is
+// read off a live paragraph, never stored. Handles Private Use ladders
+// (Chaleuria-style), non-linear permutations, and partial substitution
+// (only the substituted set needs to decode). Fails gracefully (null)
+// when the font ships no ASCII of its own — then there is nothing
+// in-font to compare against and the web view stays the answer.
+// Same code ships standalone: PatchScratch/font-decipher (derive_browser.js).
+var DERIVE_SIZE = 48, DERIVE_RENDER = 96;
+function glyphMask(ch, fontFamily) {
+  var canvas = document.createElement('canvas');
+  canvas.width = DERIVE_RENDER; canvas.height = DERIVE_RENDER;
+  var ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#000';
+  ctx.font = (DERIVE_RENDER * 0.7) + 'px ' + fontFamily;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(ch, DERIVE_RENDER * 0.2, DERIVE_RENDER * 0.8);
+  var data = ctx.getImageData(0, 0, DERIVE_RENDER, DERIVE_RENDER).data;
+  var minX = DERIVE_RENDER, minY = DERIVE_RENDER, maxX = -1, maxY = -1;
+  for (var y = 0; y < DERIVE_RENDER; y++) {
+    for (var x = 0; x < DERIVE_RENDER; x++) {
+      if (data[(y * DERIVE_RENDER + x) * 4 + 3] > 40) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  var mask = new Uint8Array(DERIVE_SIZE * DERIVE_SIZE);
+  var bw = maxX - minX + 1, bh = maxY - minY + 1;
+  var scale = DERIVE_SIZE / Math.max(bw, bh);
+  var dw = Math.max(1, Math.round(bw * scale)), dh = Math.max(1, Math.round(bh * scale));
+  var ox = (DERIVE_SIZE - dw) >> 1, oy = (DERIVE_SIZE - dh) >> 1;
+  for (var yy = 0; yy < dh; yy++) {
+    var sy = minY + Math.floor(yy / scale);
+    for (var xx = 0; xx < dw; xx++) {
+      var sx = minX + Math.floor(xx / scale);
+      if (data[((sy | 0) * DERIVE_RENDER + (sx | 0)) * 4 + 3] > 60) {
+        mask[(oy + yy) * DERIVE_SIZE + ox + xx] = 1;
+      }
+    }
+  }
+  return mask;
+}
+function maskIou(a, b) {
+  var inter = 0, union = 0;
+  for (var i = 0; i < a.length; i++) { union += a[i] | b[i]; inter += a[i] & b[i]; }
+  return union ? inter / union : 0;
+}
+function suspiciousCount(t) {
+  var sus = 0, cjk = 0;
+  for (var i = 0; i < t.length; i++) {
+    var c = t.charCodeAt(i);
+    if ((c >= 0x2F00 && c <= 0x2FDF) || (c >= 0xE000 && c <= 0xF8FF) || (c >= 0x3400 && c <= 0x4DBF)) sus++;
+    else if (c >= 0x4E00 && c <= 0x9FFF) cjk++;
+  }
+  return { sus: sus, cjk: cjk, len: t.length };
+}
+function deriveCipher(containerText, probeEl) {
+  var stats = suspiciousCount(containerText);
+  if (stats.len === 0 || stats.sus / stats.len < 0.08) return null;
+  if (stats.cjk / stats.len >= 0.15) return null; // real CJK prose
+  // Font from an actual paragraph — the container inherits the site face.
+  var fontFamily = window.getComputedStyle(probeEl).fontFamily;
+  var used = {};
+  for (var i = 0; i < containerText.length; i++) {
+    var c = containerText.charCodeAt(i);
+    if ((c >= 0x2F00 && c <= 0x2FDF) || (c >= 0xE000 && c <= 0xF8FF) || (c >= 0x3400 && c <= 0x4DBF)) {
+      used[containerText[i]] = true;
+    }
+  }
+  var suspects = Object.keys(used);
+  if (!suspects.length) return null;
+  var refs = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'.,!?-";
+  var refMasks = {};
+  for (var r = 0; r < refs.length; r++) {
+    var m = glyphMask(refs[r], fontFamily);
+    if (m) refMasks[refs[r]] = m;
+  }
+  var map = {};
+  for (var s = 0; s < suspects.length; s++) {
+    var sm = glyphMask(suspects[s], fontFamily);
+    if (!sm) continue;
+    var best = null, bestScore = 0, second = 0;
+    for (var k in refMasks) {
+      var sc = maskIou(sm, refMasks[k]);
+      if (sc > bestScore) { second = bestScore; bestScore = sc; best = k; }
+      else if (sc > second) second = sc;
+    }
+    if (best && bestScore >= 0.70 && bestScore - second >= 0.08) {
+      map[suspects[s]] = best;
+    }
+  }
+  if (Object.keys(map).length < Math.max(3, suspects.length * 0.6)) return null;
+  // sanity: a decoded sample must read like English, else we may have
+  // matched against the wrong fallback font
+  var sample = containerText.slice(0, 1200).replace(/[\s\S]/g, function(c) { return map[c] || c; });
+  var lower = ' ' + sample.toLowerCase() + ' ';
+  var words = [' the ', ' and ', ' to ', ' of ', ' in ', ' that ', ' was ', ' it ', ' with '];
+  var hits = 0;
+  for (var w = 0; w < words.length; w++) if (lower.indexOf(words[w]) !== -1) hits++;
+  if (hits < 2) return null;
+  return map;
+}
+"""
+
 /**
  * Reader-mode extraction (Phase 3.2). Runs in the READER WebView after the
  * chapter page settles. Strategy: readability-lite scoring.
@@ -426,115 +544,7 @@ fun chapterExtractJs(): String = """
       });
     }
 
-    // --- runtime cipher derivation (rotation / PUA / partial substitution) --
-    // When the built-in ladder doesn't apply, DERIVE the cipher in this page:
-    // render each suspicious codepoint and each ASCII reference on a canvas
-    // in the chapter's own font and match by pixel IoU. Font rotation per
-    // page load (Qidian-style renamed families) is irrelevant — the family is
-    // read off a live paragraph, never stored. Handles Private Use ladders
-    // (Chaleuria-style), non-linear permutations, and partial substitution
-    // (only the substituted set needs to decode). Fails gracefully (null)
-    // when the font ships no ASCII of its own — then there is nothing
-    // in-font to compare against and the web view stays the answer.
-    // Same code ships standalone: PatchScratch/font-decipher (derive_browser.js).
-    var DERIVE_SIZE = 48, DERIVE_RENDER = 96;
-    function glyphMask(ch, fontFamily) {
-      var canvas = document.createElement('canvas');
-      canvas.width = DERIVE_RENDER; canvas.height = DERIVE_RENDER;
-      var ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.fillStyle = '#000';
-      ctx.font = (DERIVE_RENDER * 0.7) + 'px ' + fontFamily;
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText(ch, DERIVE_RENDER * 0.2, DERIVE_RENDER * 0.8);
-      var data = ctx.getImageData(0, 0, DERIVE_RENDER, DERIVE_RENDER).data;
-      var minX = DERIVE_RENDER, minY = DERIVE_RENDER, maxX = -1, maxY = -1;
-      for (var y = 0; y < DERIVE_RENDER; y++) {
-        for (var x = 0; x < DERIVE_RENDER; x++) {
-          if (data[(y * DERIVE_RENDER + x) * 4 + 3] > 40) {
-            if (x < minX) minX = x;
-            if (x > maxX) maxX = x;
-            if (y < minY) minY = y;
-            if (y > maxY) maxY = y;
-          }
-        }
-      }
-      if (maxX < 0) return null;
-      var mask = new Uint8Array(DERIVE_SIZE * DERIVE_SIZE);
-      var bw = maxX - minX + 1, bh = maxY - minY + 1;
-      var scale = DERIVE_SIZE / Math.max(bw, bh);
-      var dw = Math.max(1, Math.round(bw * scale)), dh = Math.max(1, Math.round(bh * scale));
-      var ox = (DERIVE_SIZE - dw) >> 1, oy = (DERIVE_SIZE - dh) >> 1;
-      for (var yy = 0; yy < dh; yy++) {
-        var sy = minY + Math.floor(yy / scale);
-        for (var xx = 0; xx < dw; xx++) {
-          var sx = minX + Math.floor(xx / scale);
-          if (data[((sy | 0) * DERIVE_RENDER + (sx | 0)) * 4 + 3] > 60) {
-            mask[(oy + yy) * DERIVE_SIZE + ox + xx] = 1;
-          }
-        }
-      }
-      return mask;
-    }
-    function maskIou(a, b) {
-      var inter = 0, union = 0;
-      for (var i = 0; i < a.length; i++) { union += a[i] | b[i]; inter += a[i] & b[i]; }
-      return union ? inter / union : 0;
-    }
-    function suspiciousCount(t) {
-      var sus = 0, cjk = 0;
-      for (var i = 0; i < t.length; i++) {
-        var c = t.charCodeAt(i);
-        if ((c >= 0x2F00 && c <= 0x2FDF) || (c >= 0xE000 && c <= 0xF8FF) || (c >= 0x3400 && c <= 0x4DBF)) sus++;
-        else if (c >= 0x4E00 && c <= 0x9FFF) cjk++;
-      }
-      return { sus: sus, cjk: cjk, len: t.length };
-    }
-    function deriveCipher(containerText, probeEl) {
-      var stats = suspiciousCount(containerText);
-      if (stats.len === 0 || stats.sus / stats.len < 0.08) return null;
-      if (stats.cjk / stats.len >= 0.15) return null; // real CJK prose
-      // Font from an actual paragraph — the container inherits the site face.
-      var fontFamily = window.getComputedStyle(probeEl).fontFamily;
-      var used = {};
-      for (var i = 0; i < containerText.length; i++) {
-        var c = containerText.charCodeAt(i);
-        if ((c >= 0x2F00 && c <= 0x2FDF) || (c >= 0xE000 && c <= 0xF8FF) || (c >= 0x3400 && c <= 0x4DBF)) {
-          used[containerText[i]] = true;
-        }
-      }
-      var suspects = Object.keys(used);
-      if (!suspects.length) return null;
-      var refs = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'.,!?-";
-      var refMasks = {};
-      for (var r = 0; r < refs.length; r++) {
-        var m = glyphMask(refs[r], fontFamily);
-        if (m) refMasks[refs[r]] = m;
-      }
-      var map = {};
-      for (var s = 0; s < suspects.length; s++) {
-        var sm = glyphMask(suspects[s], fontFamily);
-        if (!sm) continue;
-        var best = null, bestScore = 0, second = 0;
-        for (var k in refMasks) {
-          var sc = maskIou(sm, refMasks[k]);
-          if (sc > bestScore) { second = bestScore; bestScore = sc; best = k; }
-          else if (sc > second) second = sc;
-        }
-        if (best && bestScore >= 0.70 && bestScore - second >= 0.08) {
-          map[suspects[s]] = best;
-        }
-      }
-      if (Object.keys(map).length < Math.max(3, suspects.length * 0.6)) return null;
-      // sanity: a decoded sample must read like English, else we may have
-      // matched against the wrong fallback font
-      var sample = containerText.slice(0, 1200).replace(/[\s\S]/g, function(c) { return map[c] || c; });
-      var lower = ' ' + sample.toLowerCase() + ' ';
-      var words = [' the ', ' and ', ' to ', ' of ', ' in ', ' that ', ' was ', ' it ', ' with '];
-      var hits = 0;
-      for (var w = 0; w < words.length; w++) if (lower.indexOf(words[w]) !== -1) hits++;
-      if (hits < 2) return null;
-      return map;
-    }
+    $CIPHER_DERIVE_JS
 
     // Watermark tokens the same hosts embed inside paragraphs ("cls1b7bcfa179…").
     function cleanText(t) {
@@ -643,6 +653,136 @@ fun chapterExtractJs(): String = """
     return '{"title":' + JSON.stringify(title) + ',"paragraphs":[' + json + ']}';
   } catch (e) {
     return 'FAIL';
+  }
+})();
+""".trimIndent()
+
+/**
+ * Web-view DOM decode (runs in ReaderScreen's WEB mode on substituted pages).
+ * Derives the cipher with the shared code, then rewrites the page's live text
+ * nodes in place — after this, select/copy/share from the web view yields
+ * real text instead of radical gibberish. Read-only elsewhere: returns
+ * 'DECODED:<n>' when it rewrote <n> nodes, 'SKIP' when nothing to do,
+ * 'FAIL' when derivation had no confident map.
+ */
+fun decodeDomJs(): String = """
+(function() {
+  try {
+    $CIPHER_DERIVE_JS
+
+    // Where is the chapter text? Same scoring as the extractor, minimised.
+    function visible(el) {
+      var p = el;
+      while (p && p !== document.body) {
+        var s = window.getComputedStyle(p);
+        if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) <= 0.01) return false;
+        p = p.parentElement;
+      }
+      return el.getBoundingClientRect().height > 0;
+    }
+    var score = new Map();
+    document.querySelectorAll('p').forEach(function(p) {
+      if (!visible(p)) return;
+      var t = (p.innerText || '').trim();
+      if (t.length < 2) return;
+      var climb = p.parentElement;
+      while (climb && climb !== document.body) {
+        score.set(climb, (score.get(climb) || 0) + t.length);
+        climb = climb.parentElement;
+      }
+    });
+    var probe = document.querySelector('p');
+    if (!probe) return 'SKIP';
+    // Derivation sample = visible paragraphs + headings: letters that appear
+    // only in the chapter title must be in the sample or they decode as gaps.
+    var sample = probe.innerText;
+    document.querySelectorAll('p, h1, h2, h3, h4').forEach(function(p) {
+      if (visible(p)) sample += ' ' + p.innerText;
+    });
+    sample = sample.replace(/cls[0-9a-f]{12,}/g, ' ');
+
+    var stats = suspiciousCount(sample);
+    if (stats.len === 0 || stats.sus / stats.len < 0.08) return 'SKIP';
+    if (stats.cjk / stats.len >= 0.15) return 'SKIP';
+    var map = deriveCipher(sample, probe);
+    if (!map) return 'FAIL';
+
+    // Built-in ladder first: it is exact for known hosts.
+    var builtIn = {};
+    for (var c = 0x2F42; c <= 0x2F5B; c++) builtIn[String.fromCharCode(c)] = String.fromCharCode(65 + c - 0x2F42);
+    for (var c2 = 0x2F5C; c2 <= 0x2F75; c2++) builtIn[String.fromCharCode(c2)] = String.fromCharCode(97 + c2 - 0x2F5C);
+
+    var useBuiltIn = false;
+    if (stats.sus / Math.max(1, stats.len) >= 0.3) {
+      // dominance of exactly the built-in ladder range -> prefer it
+      var ladderHits = 0;
+      for (var i = 0; i < sample.length; i++) {
+        var cp = sample.charCodeAt(i);
+        if (cp >= 0x2F42 && cp <= 0x2F75) ladderHits++;
+      }
+      useBuiltIn = ladderHits >= stats.sus * 0.9;
+    }
+    var active = useBuiltIn ? builtIn : map;
+
+    var rewritten = 0;
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        var t = node.nodeValue;
+        if (!t) return;
+        if (/^cls[0-9a-f]{12,}$/.test(t.trim())) { node.nodeValue = ''; return; }
+        var out = '';
+        var changed = false;
+        for (var i = 0; i < t.length; i++) {
+          var rep = active[t[i]];
+          if (rep !== undefined) { out += rep; changed = true; }
+          else out += t[i];
+        }
+        if (changed) { node.nodeValue = out; rewritten++; }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        var tag = node.tagName;
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'CANVAS') return;
+        for (var c = 0; c < node.childNodes.length; c++) walk(node.childNodes[c]);
+      }
+    }
+    walk(document.body);
+    return rewritten > 0 ? 'DECODED:' + rewritten : 'SKIP';
+  } catch (e) {
+    return 'FAIL';
+  }
+})();
+""".trimIndent()
+
+/**
+ * Image-chapter detection: some hosts render whole chapters as sequential
+ * image slices (copy-paste-proof light novels). True when the content area
+ * is image-dense and nearly textless — ReaderScreen then says so and points
+ * at the web view, which renders images natively. Honors data-src/lazy-src
+ * (lazy loaders) so the count reflects what would actually display.
+ */
+fun imageChapterJs(): String = """
+(function() {
+  try {
+    function visible(el) {
+      var p = el;
+      while (p && p !== document.body) {
+        var s = window.getComputedStyle(p);
+        if (s.display === 'none' || s.visibility === 'hidden') return false;
+        p = p.parentElement;
+      }
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    }
+    var area = document.querySelector('article, .chapter-content, .entry-content, #chapter-content')
+      || document.body;
+    var imgs = Array.prototype.slice.call(area.querySelectorAll('img'));
+    var usable = imgs.filter(function(img) {
+      var src = img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || '';
+      return src.startsWith('http') || src.startsWith('data:image');
+    });
+    var alpha = (area.innerText || '').replace(/[^a-zA-Z]/g, '').length;
+    return (usable.length >= 3 && alpha < 300) ? 'IMAGES:' + usable.length : 'NO';
+  } catch (e) {
+    return 'NO';
   }
 })();
 """.trimIndent()

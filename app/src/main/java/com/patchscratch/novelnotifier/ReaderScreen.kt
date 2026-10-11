@@ -129,6 +129,8 @@ fun ReaderScreen(
     var extractResult by remember(target) { mutableStateOf<ChapterExtract?>(null) }
     var extractFailed by remember(target) { mutableStateOf(false) }
     var extracting by remember(target) { mutableStateOf(false) }
+    var imageChapter by remember(target) { mutableStateOf(false) } // chapter is image slices, not text
+    var webDecodeStamp by remember(target) { mutableStateOf("") } // pages the web decode ran on
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
     val textScroll = rememberScrollState()
 
@@ -165,14 +167,15 @@ fun ReaderScreen(
         }
     }
 
-    /** Run the extractor once; remember whatever comes back. */
-    fun tryExtract() {
+    /** Run the extractor once; [onDone] fires in the JS callback (async). */
+    fun tryExtract(onDone: (() -> Unit)? = null) {
         val wv = webViewRef.value ?: return
         extracting = true
         wv.evaluateJavascript(chapterExtractJs()) { res ->
             extractResult = parseChapterExtract(res)
             if (extractResult != null) extractFailed = false
             extracting = false
+            onDone?.invoke()
         }
     }
 
@@ -183,12 +186,38 @@ fun ReaderScreen(
         if (viewMode != READER_VIEW_TEXT || extractTick == 0) return@LaunchedEffect
         extractResult = null
         extractFailed = false
+        imageChapter = false
         delay(1200)
         tryExtract()
         delay(2600)
         if (extractResult == null && !extractFailed) {
-            tryExtract()
-            if (extractResult == null) extractFailed = true
+            // Second try; verdict inside the callback — evaluateJavascript is
+            // asynchronous, so checking extractResult synchronously raced.
+            tryExtract {
+                if (extractResult == null) {
+                    extractFailed = true
+                    webViewRef.value?.evaluateJavascript(imageChapterJs()) { r ->
+                        if (unwrapJsResult(r).startsWith("IMAGES")) imageChapter = true
+                    }
+                }
+            }
+        }
+    }
+
+    // Web-view decode pass: on font-substituted hosts, rewrite the page's own
+    // text nodes so select/copy/share from the web view gives real text. Runs
+    // once per page load, silently skips clean pages.
+    LaunchedEffect(extractTick, viewMode) {
+        if (viewMode != READER_VIEW_WEB || extractTick == 0) return@LaunchedEffect
+        delay(1500)
+        val stamp = "${chapter.url}|$loadKey"
+        if (webDecodeStamp == stamp) return@LaunchedEffect
+        webDecodeStamp = stamp
+        webViewRef.value?.evaluateJavascript(decodeDomJs()) { r ->
+            val res = unwrapJsResult(r)
+            if (res.startsWith("DECODED")) {
+                DebugLog.log("READER", "web view decoded ${res.substringAfter(':')} text nodes (${chapter.chapter})")
+            }
         }
     }
 
@@ -300,7 +329,11 @@ fun ReaderScreen(
         }
         if (viewMode == READER_VIEW_TEXT && extractFailed) {
             Text(
-                "Couldn't extract this page — showing the website instead",
+                text = if (imageChapter) {
+                    "This chapter is rendered as images — showing the website, which displays them"
+                } else {
+                    "Couldn't extract this page — showing the website instead"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
             )
