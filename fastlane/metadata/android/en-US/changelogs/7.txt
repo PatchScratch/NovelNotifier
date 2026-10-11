@@ -1,0 +1,1 @@
+Reader mode: chapters as clean styled text; decodes anti-scrape font-substitution hosts; image-chapter detection; comments-proof extraction.

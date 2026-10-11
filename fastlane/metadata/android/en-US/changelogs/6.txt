@@ -1,0 +1,1 @@
+In-app reader (browser mode) with chapter navigation; site search and Discover rankings; notification deep links, stacking toggle, reboot recovery; themes incl. custom JSON themes.

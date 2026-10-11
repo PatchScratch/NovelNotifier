@@ -1,0 +1,1 @@
+Session-expiry detection: expired logins park the sync and prompt a fresh login.

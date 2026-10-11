@@ -1,0 +1,24 @@
+A clean-room, open-source replacement for the abandoned "Notifications for
+Novel Updates" app.
+
+NovelNotifier shows your Novel Updates reading lists with covers and unread
+counts, notifies you when new chapters release (grouped or individual
+alerts, surviving reboots), and marks chapters read in both directions —
+syncing your position across devices via your NU feeds.
+
+• Browse your library as a grid or list with search, sort modes and unread badges
+• Site search with live suggestions and full paged results
+• Discover rankings (popular, weekly, monthly…)
+• Series pages: INFO + full RELEASES table, list changes written back to the site
+• Built-in reader: chapters as clean styled text (sepia/dark/light, serif/sans,
+  adjustable size) with the full web page one tap away — including decoding of
+  font-substitution anti-scraping hosts
+• Themes: light/dark/AMOLED black/Material You, or bring your own via a JSON
+  theme file
+• One-zip backups via the system file picker (Google Drive, USB, anywhere) —
+  never containing your credentials
+• Paced, polite background sync that respects the site (no Cloudflare-bypass
+  tricks — real challenges are shown for you to complete)
+
+Requires a free Novel Updates account, used only to read your own lists and
+write your own marks back. No ads, no analytics, no trackers.
