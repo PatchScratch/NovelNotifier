@@ -181,24 +181,16 @@ class EpubBulkService : Service() {
         }
     }
 
-    /** Harvest same-series chapter links from the currently loaded page. */
-    private suspend fun harvestInto(toc: HashMap<Pair<Int, Int>, String>, parentScope: Boolean) {
-        val wv = webView ?: return
-        val raw = suspendCancellableCoroutine { cont ->
-            wv.evaluateJavascript(tocHarvestJs(parentScope)) { res -> cont.resume(res) }
-        }
-        parseTocHarvest(raw).forEach { link ->
-            link.key?.let { k -> toc.putIfAbsent(k, link.url) }
-        }
-    }
-
     private suspend fun runBulk(job: BulkJob) {
         val context = this
         try {
             val known = withContext(Dispatchers.IO) {
                 EpubStore.readAllStoredDocs(context, job.seriesUrl).map { it.url }.toSet()
             }
-            val toc = HashMap<Pair<Int, Int>, String>()
+            // ToCs keyed by HOST: multi-host series (different chapters →
+            // different translator sites) need each site's own chapter list;
+            // hosts bootstrap lazily on first touch (see pass 2).
+            val tocByHost = HashMap<String, HashMap<Pair<Int, Int>, String>>()
             var saved = 0
             var failed = 0
             var skipped = 0
@@ -215,6 +207,58 @@ class EpubBulkService : Service() {
                 DebugLog.log("EPUB", "bulk $saved/$total: $line")
             }
             status("starting")
+
+            fun currentHost(): String? {
+                val url = webView?.url ?: return null
+                return try {
+                    java.net.URI(url).host
+                } catch (e: Exception) {
+                    null
+                }
+            }
+
+            /** Harvest the loaded page's chapter list under its host. */
+            suspend fun harvestCurrentPage(parentScope: Boolean) {
+                val host = currentHost() ?: return
+                val map = tocByHost.getOrPut(host) { HashMap() }
+                val wv = webView ?: return
+                val raw = suspendCancellableCoroutine { cont ->
+                    wv.evaluateJavascript(tocHarvestJs(parentScope)) { res -> cont.resume(res) }
+                }
+                val before = map.size
+                parseTocHarvest(raw).forEach { link ->
+                    link.key?.let { k -> map.putIfAbsent(k, link.url) }
+                }
+                DebugLog.log("EPUB", "harvest[$host] +${map.size - before} (total ${map.size})")
+            }
+
+            /** Resolve a chapter key across host ToCs; a number claimed by
+             *  exactly one host resolves, multiple hosts = ambiguous → null. */
+            fun resolveToc(key: Pair<Int, Int>): String? {
+                val hits = tocByHost.values.mapNotNull { it[key] ?: it[0 to key.second] }.distinct()
+                return if (hits.size == 1) hits[0] else null
+            }
+
+            /** After a page load on some host: harvest its ToC, and when the
+             *  page itself carries no chapter list, try the host's series page
+             *  (derived from the page URL — same host, zero NU hits). */
+            suspend fun bootstrapHostToC() {
+                harvestCurrentPage(parentScope = true)
+                delay(1500)
+                harvestCurrentPage(parentScope = true)
+                val host = currentHost() ?: return
+                val map = tocByHost[host] ?: return
+                if (map.isNotEmpty()) return
+                val pageUrl = webView?.url ?: return
+                val seriesUrl = pageUrl.trimEnd('/').substringBeforeLast('/')
+                if (!seriesUrl.startsWith("http") || seriesUrl == pageUrl) return
+                status("reading ToC from the series page ($host)")
+                loadAndExtract(seriesUrl)
+                delay(2000)
+                harvestCurrentPage(parentScope = false)
+                delay(1500)
+                harvestCurrentPage(parentScope = false)
+            }
 
             // ---- pass 1: direct links, 4 s apart, harvesting as we go -------
             val pendingNu = mutableListOf<BulkChapter>()
@@ -233,12 +277,7 @@ class EpubBulkService : Service() {
                     }
                     if (count > 0) saved++
                     consecutiveFailures = 0
-                    // keep enriching the ToC only while it can't cover the rest
-                    if (toc.size < pendingNu.size + 8) {
-                        harvestInto(toc, parentScope = true)
-                        delay(3000)
-                        harvestInto(toc, parentScope = true)
-                    }
+                    harvestCurrentPage(parentScope = true)
                 } else {
                     failed++; consecutiveFailures++
                 }
@@ -251,53 +290,6 @@ class EpubBulkService : Service() {
                 delay(4000)
             }
 
-            // ---- bootstrap: ONE NU visit when everything routes through NU --
-            val volsByNum = HashMap<Int, MutableSet<Int>>()
-            pendingNu.forEach { ch ->
-                val k = chapterKey(ch.label) ?: return@forEach
-                volsByNum.getOrPut(k.second) { mutableSetOf() }.add(k.first)
-            }
-
-            if (pendingNu.isNotEmpty() && toc.size < pendingNu.size) {
-                val boot = pendingNu.first()
-                status("reading ToC from ${boot.label} (single NU visit)")
-                val extract = loadAndExtract(boot.url)
-                if (extract != null) {
-                    val count = withContext(Dispatchers.IO) {
-                        EpubStore.appendChapter(
-                            context, job.seriesTitle, job.seriesUrl,
-                            boot.url, boot.label, extract, job.meta
-                        )
-                    }
-                    if (count > 0) { saved++; viaNu++ }
-                } else {
-                    failed++
-                }
-                harvestInto(toc, parentScope = true)
-                delay(3000)
-                harvestInto(toc, parentScope = true)
-                // series-page fallback when chapter pages carry no ToC
-                if (toc.size < pendingNu.size) {
-                    val chapterUrl = webView?.url ?: ""
-                    val seriesUrl = chapterUrl.trimEnd('/').substringBeforeLast('/')
-                    if (seriesUrl.startsWith("http") && seriesUrl != chapterUrl) {
-                        status("reading ToC from the series page")
-                        loadAndExtract(seriesUrl) // ignore the extract; we want the page loaded
-                        delay(2000)
-                        harvestInto(toc, parentScope = false)
-                        if (toc.size < pendingNu.size) harvestInto(toc, parentScope = false)
-                    }
-                }
-            }
-
-            // volume-tolerant ToC resolution with per-chapter ambiguity
-            fun resolveToc(key: Pair<Int, Int>): String? {
-                toc[key]?.let { return it }
-                val (vol, ch) = key
-                val vols = volsByNum[ch] ?: return null
-                return if (vols == setOf(vol)) toc[0 to ch] else null
-            }
-
             // ---- pass 2: NU-routed chapters — ToC direct, else slow NU ------
             for (chapter in pendingNu) {
                 if (!scope.isActive) return
@@ -308,30 +300,33 @@ class EpubBulkService : Service() {
                     status("ToC-resolved · ${chapter.label}")
                     val extract = loadAndExtract(directUrl)
                     if (extract != null) {
-                        val count = withContext(Dispatchers.IO) {
+                        withContext(Dispatchers.IO) {
                             EpubStore.appendChapter(
                                 context, job.seriesTitle, job.seriesUrl,
                                 chapter.url, chapter.label, extract, job.meta
                             )
                         }
-                        if (count > 0) { saved++; viaToc++ }
+                        saved++; viaToc++
                         consecutiveFailures = 0
                     } else {
                         failed++; consecutiveFailures++
                     }
                     delay(4000)
                 } else {
-                    status("NU failover · ${chapter.label}")
+                    // First touch: the NU link's redirect reveals the chapter's
+                    // real host; harvest its ToC so later siblings resolve.
+                    status("NU first-touch · ${chapter.label}")
                     val extract = loadAndExtract(chapter.url)
                     if (extract != null) {
-                        val count = withContext(Dispatchers.IO) {
+                        withContext(Dispatchers.IO) {
                             EpubStore.appendChapter(
                                 context, job.seriesTitle, job.seriesUrl,
                                 chapter.url, chapter.label, extract, job.meta
                             )
                         }
-                        if (count > 0) { saved++; viaNu++ }
+                        saved++; viaNu++
                         consecutiveFailures = 0
+                        bootstrapHostToC()
                     } else {
                         failed++; consecutiveFailures++
                     }
