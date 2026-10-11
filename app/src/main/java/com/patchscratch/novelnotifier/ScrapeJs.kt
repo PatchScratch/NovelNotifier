@@ -402,6 +402,39 @@ fun chapterExtractJs(): String = """
       return r.height > 0;
     }
 
+    // --- anti-scrape decode (font glyph substitution) ----------------------
+    // Some hosts (verified: storyseedling.com) ship a custom font whose Latin
+    // letters are drawn from Kangxi-radical codepoints — the page RENDERS
+    // English while the DOM text is radical gibberish, which defeats every
+    // DOM extractor. Their font maps U+2F42..U+2F5B -> A-Z and U+2F5C..U+2F75
+    // -> a-z (glyph outlines are identical to the font's own ASCII; only the
+    // dotted i/j compare differently). Decode ONLY when that 52-codepoint
+    // ladder dominates the text — genuine Chinese prose lives in the wide CJK
+    // ranges, not this block. If a host rotates its font, this is the single
+    // table to update (derive the new one by outline comparison against the
+    // font's ASCII glyphs; see ROADMAP 3.2 notes).
+    function decodeSubstituted(t) {
+      var ladder = 0;
+      for (var i = 0; i < t.length; i++) {
+        var c = t.charCodeAt(i);
+        if (c >= 0x2F42 && c <= 0x2F75) ladder++;
+      }
+      if (ladder < t.length * 0.3) return t;
+      return t.replace(/[\u2F42-\u2F75]/g, function(ch) {
+        var c = ch.charCodeAt(0);
+        return c <= 0x2F5B
+          ? String.fromCharCode(65 + c - 0x2F42)
+          : String.fromCharCode(97 + c - 0x2F5C);
+      });
+    }
+
+    // Watermark tokens the same hosts embed inside paragraphs ("cls1b7bcfa179…").
+    function cleanText(t) {
+      var cleaned = t.replace(/cls[0-9a-f]{12,}/g, ' ');
+      cleaned = cleaned.replace(/\s+/g, ' ').trim();
+      return decodeSubstituted(cleaned);
+    }
+
     var paras = Array.prototype.slice.call(document.querySelectorAll('p'));
     var score = new Map();
     paras.forEach(function(p) {
@@ -421,7 +454,10 @@ fun chapterExtractJs(): String = """
 
     function isJunk(t, p) {
       if (t.length > 60) return false;
+      // Footer/copyright lines travel inside the content container sometimes.
+      if (t.indexOf('\\u00A9') === 0 || t.indexOf('\\u00A9') > 0 || t.indexOf('(c)') === 0) return true;
       var low = t.toLowerCase();
+      if (low.indexOf('no comments') === 0) return true; // comments teaser + its ad text
       var junk = ['prev', 'next', 'previous', 'next chapter', 'prev chapter',
         'table of contents', 'advertisement', 'ads', 'click here', 'comments',
         'chapter list', 'join discord', 'patreon', 'donate', 'to be continued',
@@ -441,7 +477,7 @@ fun chapterExtractJs(): String = """
     var out = [];
     Array.prototype.slice.call(best.querySelectorAll('p')).forEach(function(p) {
       if (!nodeVisible(p)) return;
-      var t = (p.innerText || '').trim();
+      var t = cleanText(p.innerText || '');
       if (t.length < 2 || isJunk(t, p)) return;
       if (out.length && out[out.length - 1] === t) return; // consecutive repeat
       out.push(t);
@@ -462,7 +498,10 @@ fun chapterExtractJs(): String = """
     var title = '';
     var heads = best.querySelectorAll('h1, h2, h3, h4');
     for (var h = 0; h < heads.length; h++) {
-      if (nodeVisible(heads[h])) { title = (heads[h].innerText || '').trim(); break; }
+      if (nodeVisible(heads[h])) {
+        title = cleanText(heads[h].innerText || '');
+        break;
+      }
     }
 
     var json = out.map(function(t) { return JSON.stringify(t); }).join(',');
