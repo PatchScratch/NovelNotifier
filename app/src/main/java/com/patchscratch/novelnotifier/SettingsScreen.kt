@@ -16,6 +16,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -57,6 +58,7 @@ fun SettingsScreen(
     var url by remember { mutableStateOf(currentUrl) }
     var hours by remember { mutableIntStateOf(currentHours) }
     var layoutMode by remember { mutableStateOf(loadLayoutMode(prefs)) }
+    var stackAlerts by remember { mutableStateOf(loadStackAlerts(prefs)) }
     var backupMessage by remember { mutableStateOf("") }
     val options = listOf(1, 6, 12, 24)
 
@@ -188,6 +190,36 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(text = "Notifications", style = MaterialTheme.typography.titleMedium)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    stackAlerts = !stackAlerts
+                    saveStackAlerts(prefs, stackAlerts)
+                }
+                .padding(vertical = 4.dp)
+        ) {
+            Switch(
+                checked = stackAlerts,
+                onCheckedChange = {
+                    stackAlerts = it
+                    saveStackAlerts(prefs, it)
+                }
+            )
+            Text(
+                "Stack chapter alerts into one banner",
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+        Text(
+            text = "Off posts one notification per series. Un-read alerts survive reboots either way.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         Text(text = "Checks", style = MaterialTheme.typography.titleMedium)

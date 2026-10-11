@@ -191,6 +191,15 @@ fun saveLayoutMode(prefs: android.content.SharedPreferences, mode: String) {
     prefs.edit { putString("layout_mode", mode) }
 }
 
+/** Stack chapter alerts under one banner (default) or post them individually. */
+fun loadStackAlerts(prefs: android.content.SharedPreferences): Boolean {
+    return prefs.getBoolean("stack_notifications", true)
+}
+
+fun saveStackAlerts(prefs: android.content.SharedPreferences, stack: Boolean) {
+    prefs.edit { putBoolean("stack_notifications", stack) }
+}
+
 fun loadSortMode(prefs: android.content.SharedPreferences): String {
     return prefs.getString("sort_mode", SORT_UNREAD_AGE) ?: SORT_UNREAD_AGE
 }

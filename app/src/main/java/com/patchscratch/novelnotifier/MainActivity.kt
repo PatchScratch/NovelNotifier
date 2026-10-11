@@ -55,12 +55,25 @@ import kotlin.time.Duration.Companion.seconds
 
 class MainActivity : ComponentActivity() {
 
-    /** Set when a notification asks us to open the login screen (session expired). */
+    /** A notification tap asking for a series detail page. */
+    data class SeriesDeepLink(val url: String, val title: String, val chapter: String)
+
     companion object {
+        /** Set when a notification asks us to open the login screen (session expired). */
         @Volatile var openLoginRequested = false
 
         /** Set by `am start --ez probe_endpoints true` — the temporary Phase-2 spike. */
         @Volatile var probeRequested = false
+
+        /**
+         * Chapter-alert deep links. Notifications carry open_series_* extras;
+         * they may arrive before composition (cold start) or while running
+         * (onNewIntent), so a SharedFlow bridges both into NovelApp. No replay:
+         * a restored process must not reopen a stale series.
+         */
+        private val seriesRequests =
+            kotlinx.coroutines.flow.MutableSharedFlow<SeriesDeepLink>(extraBufferCapacity = 4)
+        val openSeriesRequests = seriesRequests
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,6 +81,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (intent?.getBooleanExtra("open_login", false) == true) openLoginRequested = true
         if (intent?.getBooleanExtra("probe_endpoints", false) == true) probeRequested = true
+        handleSeriesDeepLink(intent)
         setContent {
             NovelNotifierTheme {
                 Surface(
@@ -84,6 +98,18 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         if (intent.getBooleanExtra("open_login", false)) openLoginRequested = true
         if (intent.getBooleanExtra("probe_endpoints", false)) probeRequested = true
+        handleSeriesDeepLink(intent)
+    }
+
+    private fun handleSeriesDeepLink(intent: android.content.Intent?) {
+        val url = intent?.getStringExtra(EXTRA_OPEN_SERIES_URL) ?: return
+        seriesRequests.tryEmit(
+            SeriesDeepLink(
+                url = url,
+                title = intent.getStringExtra(EXTRA_OPEN_SERIES_TITLE).orEmpty(),
+                chapter = intent.getStringExtra(EXTRA_OPEN_SERIES_CHAPTER).orEmpty()
+            )
+        )
     }
 }
 
@@ -212,6 +238,26 @@ fun NovelApp() {
         saveCoverCache(prefs, updated)
         selectedNovel = selectedNovel?.let {
             if (it.title == title) it.copy(coverUrl = url) else it
+        }
+    }
+
+    // Tapping a chapter alert lands here: open that series' detail page. The
+    // detail screen loads everything else (lists, releases, cover) itself, so
+    // a title + URL + chapter is enough to construct the entry Novel. Login is
+    // left alone — never yank the user out of an auth flow.
+    LaunchedEffect(Unit) {
+        MainActivity.openSeriesRequests.collect { link ->
+            showSettings = false
+            showSearch = false
+            showDiscover = false
+            showEditLists = false
+            showOnboarding = false
+            selectedNovel = Novel(
+                title = link.title,
+                latestChapter = link.chapter,
+                seriesUrl = link.url,
+                coverUrl = coverCache[link.title].orEmpty()
+            )
         }
     }
 
