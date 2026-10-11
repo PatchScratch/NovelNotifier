@@ -130,8 +130,13 @@ original's green and black variants. Settings picker; persisted choice.
    chapter offline" is an explicit one-off any time; "Download all N loaded
    chapters" bulk-walks the loaded pages (one load per chapter, 1.8 s
    courtesy gap, saved chapters skipped without network, stoppable). Still
-   future (3.3.1): engine-paced download BEYOND loaded pages, the bulk
-   read-position catch-up prompt, and epubs stay out of backup zips.
+   future (3.3.1): engine-paced download BEYOND loaded pages — ideally
+   ToC-first (user idea 2026-10-11: discover the translator site's own table
+   of contents once, ONE NU hit per series, then walk it; NU's extnu links
+   only as fallback with the engine's 10 s pacing) — the bulk read-position
+   catch-up prompt, and epubs stay out of backup zips. Reader bulk already
+   skips NU-hosted links entirely and paces direct hosts at 4 s after bulk
+   downloads escalated Cloudflare and broke auto-updates.
 
    **Storage format decision (user, 2026-10-11): chapters are written as
    standard ePub files** — one book per series, chapters appended as they are

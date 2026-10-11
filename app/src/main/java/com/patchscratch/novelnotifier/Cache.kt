@@ -196,6 +196,11 @@ fun saveSeriesCache(context: Context, seriesUrl: String, page: SeriesPage, loade
             .put("maxPage", page.maxPage)
             .put("currentList", page.currentList)
             .put("sid", page.sid)
+            .put("associatedNames", page.associatedNames)
+            .put("artist", page.artist)
+            .put("year", page.year)
+            .put("originalPublisher", page.originalPublisher)
+            .put("completelyTranslated", page.completelyTranslated)
         val releases = JSONArray()
         page.releases.forEach { release ->
             releases.put(

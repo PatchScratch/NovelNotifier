@@ -48,6 +48,42 @@ object EpubStore {
 
     // --- data shapes ---------------------------------------------------------
 
+    /**
+     * Title-page metadata drawn from the Novel Updates series page (3.3):
+     * title, description, associated names, type, genre, tags, author,
+     * artist, year, completely-translated flag, original publisher. Blank
+     * fields are omitted from the title page rows.
+     */
+    data class BookMeta(
+        val title: String,
+        val description: String = "",
+        val associatedNames: String = "",
+        val type: String = "",
+        val genres: String = "",
+        val tags: String = "",
+        val author: String = "",
+        val artist: String = "",
+        val year: String = "",
+        val completelyTranslated: String = "",
+        val originalPublisher: String = ""
+    ) {
+        companion object {
+            fun from(page: SeriesPage, fallbackTitle: String): BookMeta = BookMeta(
+                title = page.title.ifBlank { fallbackTitle },
+                description = page.description,
+                associatedNames = page.associatedNames,
+                type = page.type,
+                genres = page.genres,
+                tags = page.tags,
+                author = page.author,
+                artist = page.artist,
+                year = page.year,
+                completelyTranslated = page.completelyTranslated,
+                originalPublisher = page.originalPublisher
+            )
+        }
+    }
+
     /** A chapter as stored in the book (also the in-memory merge unit). */
     data class ChapterDoc(
         val url: String,        // source chapter URL — the dedupe key
@@ -71,8 +107,16 @@ object EpubStore {
      * Write (or rewrite) a complete book. [chapters] must already be merged
      * and ordered by reading order. Returns the number of chapters written.
      */
-    fun writeBook(bookFile: File, title: String, coverBytes: ByteArray?, coverMime: String, chapters: List<ChapterDoc>): Int {
-        val uuid = UUID.nameUUIDFromBytes(title.toByteArray()).toString()
+    fun writeBook(
+        bookFile: File,
+        title: String,
+        coverBytes: ByteArray?,
+        coverMime: String,
+        chapters: List<ChapterDoc>,
+        meta: BookMeta? = null
+    ): Int {
+        val metaTitle = meta?.title?.ifBlank { title } ?: title
+        val uuid = UUID.nameUUIDFromBytes(metaTitle.toByteArray()).toString()
         val entries = LinkedHashMap<String, ByteArray>()
 
         entries["mimetype"] = "application/epub+zip".toByteArray(Charsets.US_ASCII)
@@ -93,6 +137,13 @@ object EpubStore {
             )
             spine.append("    <itemref idref=\"cover-page\"/>\n")
         }
+        if (meta != null) {
+            entries["OEBPS/titlepage.xhtml"] = titlepageXhtml(meta).toByteArray()
+            manifest.append(
+                "    <item id=\"titlepage\" href=\"titlepage.xhtml\" media-type=\"application/xhtml+xml\"/>\n"
+            )
+            spine.append("    <itemref idref=\"titlepage\"/>\n")
+        }
 
         chapters.forEachIndexed { index, doc ->
             val file = "chapters/c" + "%04d".format(index + 1) + ".xhtml"
@@ -105,10 +156,11 @@ object EpubStore {
             ncxNavPoints.append(ncxPoint(index + 1, id, tocLabel, file))
         }
 
-        entries["OEBPS/nav.xhtml"] = navXhtml(title, navItems.toString()).toByteArray()
-        entries["OEBPS/toc.ncx"] = ncxDoc(uuid, title, ncxNavPoints.toString()).toByteArray()
-        entries["OEBPS/content.opf"] = opfDoc(uuid, title, manifest.toString(), spine.toString()).toByteArray()
+        entries["OEBPS/nav.xhtml"] = navXhtml(metaTitle, navItems.toString()).toByteArray()
+        entries["OEBPS/toc.ncx"] = ncxDoc(uuid, metaTitle, ncxNavPoints.toString()).toByteArray()
+        entries["OEBPS/content.opf"] = opfDoc(uuid, metaTitle, manifest.toString(), spine.toString(), meta).toByteArray()
         entries["OEBPS/chapters.json"] = chaptersJson(chapters).toByteArray()
+        if (meta != null) entries["OEBPS/meta.json"] = metaJson(meta).toByteArray()
 
         bookFile.parentFile?.mkdirs()
         ZipOutputStream(bookFile.outputStream().buffered()).use { zip ->
@@ -187,7 +239,15 @@ object EpubStore {
 
     private val STYLE_CSS = """body { font-family: serif; line-height: 1.6; margin: 1em; }
 h1 { font-size: 1.3em; margin: 1.5em 0 1em 0; }
-p { margin: 0 0 0.75em 0; text-indent: 1.2em; }"""
+p { margin: 0 0 0.75em 0; text-indent: 1.2em; }
+body.titlepage { margin: 1.5em 1em; }
+.titlepage h1 { font-size: 1.8em; text-align: center; margin: 2em 0 0.5em 0; text-indent: 0; }
+.titlepage .author { text-align: center; font-style: italic; margin: 0 0 2.5em 0; text-indent: 0; }
+.titlepage table.meta { width: 100%; border-collapse: collapse; margin-bottom: 2em; }
+.titlepage table.meta th { text-align: left; vertical-align: top; width: 34%; padding: 0.3em 0.6em 0.3em 0; font-weight: bold; }
+.titlepage table.meta td { padding: 0.3em 0; }
+.titlepage h2 { font-size: 1.2em; }
+.titlepage .description { text-indent: 0; }"""
 
     private val COVER_XHTML = """<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -195,13 +255,107 @@ p { margin: 0 0 0.75em 0; text-indent: 1.2em; }"""
 <body style="margin:0;text-align:center;"><img src="cover.jpg" alt="cover" style="max-width:100%;"/></body>
 </html>"""
 
-    private fun opfDoc(uuid: String, title: String, manifest: String, spine: String) = """<?xml version="1.0" encoding="utf-8"?>
+    /**
+     * The visible title page (right after the cover): series title, author,
+     * a metadata table from the NU series page, then the description. Blank
+     * fields are omitted row by row.
+     */
+    internal fun titlepageXhtml(meta: BookMeta): String {
+        val rows = listOf(
+            "Associated Names" to meta.associatedNames,
+            "Type" to meta.type,
+            "Genre" to meta.genres,
+            "Tags" to meta.tags,
+            "Author" to meta.author,
+            "Artist" to meta.artist,
+            "Year" to meta.year,
+            "Completely Translated" to meta.completelyTranslated,
+            "Original Publisher" to meta.originalPublisher
+        ).filter { it.second.isNotBlank() }
+            .joinToString("\n") { (k, v) ->
+                "  <tr><th>${xmlEscape(k)}</th><td>${xmlEscape(v)}</td></tr>"
+            }
+        val authorLine = if (meta.author.isNotBlank()) "<p class=\"author\">${xmlEscape(meta.author)}</p>\n" else ""
+        val description = if (meta.description.isNotBlank()) {
+            "<h2>Description</h2>\n<p class=\"description\">${xmlEscape(meta.description)}</p>"
+        } else ""
+        return """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>${xmlEscape(meta.title)}</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
+<body class="titlepage">
+<h1>${xmlEscape(meta.title)}</h1>
+$authorLine<table class="meta">
+$rows</table>
+$description</body>
+</html>"""
+    }
+
+    private fun metaJson(meta: BookMeta): String = JSONObject()
+        .put("title", meta.title)
+        .put("description", meta.description)
+        .put("associatedNames", meta.associatedNames)
+        .put("type", meta.type)
+        .put("genres", meta.genres)
+        .put("tags", meta.tags)
+        .put("author", meta.author)
+        .put("artist", meta.artist)
+        .put("year", meta.year)
+        .put("completelyTranslated", meta.completelyTranslated)
+        .put("originalPublisher", meta.originalPublisher)
+        .toString()
+
+    /** Read the stored meta back so later appends keep the title page. */
+    fun readBookMeta(bookFile: File): BookMeta? = try {
+        ZipFile(bookFile).use { zip ->
+            val entry = zip.getEntry("OEBPS/meta.json") ?: return null
+            val j = JSONObject(zip.getInputStream(entry).bufferedReader().readText())
+            BookMeta(
+                title = j.optString("title"),
+                description = j.optString("description"),
+                associatedNames = j.optString("associatedNames"),
+                type = j.optString("type"),
+                genres = j.optString("genres"),
+                tags = j.optString("tags"),
+                author = j.optString("author"),
+                artist = j.optString("artist"),
+                year = j.optString("year"),
+                completelyTranslated = j.optString("completelyTranslated"),
+                originalPublisher = j.optString("originalPublisher")
+            )
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun opfDoc(
+        uuid: String,
+        title: String,
+        manifest: String,
+        spine: String,
+        meta: BookMeta? = null
+    ): String {
+        val dcMeta = buildString {
+            if (meta != null) {
+                if (meta.author.isNotBlank()) append("    <dc:creator>${xmlEscape(meta.author)}</dc:creator>\n")
+                if (meta.description.isNotBlank()) append("    <dc:description>${xmlEscape(meta.description)}</dc:description>\n")
+                // Genres and tags become library subjects — how Calibre, Moon+
+                // etc. classify books.
+                (meta.genres.split(',') + meta.tags.split(','))
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .take(24)
+                    .forEach { append("    <dc:subject>${xmlEscape(it)}</dc:subject>\n") }
+                if (meta.year.isNotBlank()) append("    <dc:date>${xmlEscape(meta.year)}</dc:date>\n")
+                if (meta.originalPublisher.isNotBlank()) append("    <dc:publisher>${xmlEscape(meta.originalPublisher)}</dc:publisher>\n")
+            }
+        }
+        return """<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="en">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="bookid">urn:uuid:$uuid</dc:identifier>
     <dc:title>${xmlEscape(title)}</dc:title>
     <dc:language>en</dc:language>
-    <meta property="dcterms:modified">${modifiedNow()}</meta>
+$dcMeta    <meta property="dcterms:modified">${modifiedNow()}</meta>
     <meta name="generator" content="NovelNotifier"/>
   </metadata>
   <manifest>
@@ -212,6 +366,7 @@ $manifest  </manifest>
   <spine toc="ncx">
 $spine  </spine>
 </package>"""
+    }
 
     private fun navXhtml(title: String, items: String) = """<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -343,7 +498,8 @@ ${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${doc
         seriesUrl: String,
         chapterUrl: String,
         label: String,
-        extract: ChapterExtract
+        extract: ChapterExtract,
+        meta: BookMeta? = null
     ): Int {
         return try {
             val book = bookFile(context, seriesUrl)
@@ -352,7 +508,11 @@ ${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${doc
             val ordered = orderDocs(docs)
             val cover = CoverStore.localFile(context, seriesUrl)?.readBytes()
                 ?: existingCover(book)
-            writeBook(book, seriesTitle, cover, "image/jpeg", ordered)
+            // Title-page metadata: use the freshest provided; a later append
+            // without meta (e.g. from a context that never loaded the series
+            // page) keeps the stored one instead of dropping the page.
+            val bookMeta = meta ?: readBookMeta(book)
+            writeBook(book, seriesTitle, cover, "image/jpeg", ordered, bookMeta)
         } catch (e: Exception) {
             DebugLog.log("EPUB", "appendChapter failed", e)
             -1

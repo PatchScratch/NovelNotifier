@@ -125,7 +125,7 @@ fun NovelDetailScreen(
     onSetLastRead: (String, String, Boolean) -> Unit,
     onToggleNotify: () -> Unit,
     onCoverFound: (String) -> Unit,
-    onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit = { _, _ -> },
+    onOpenReader: (chapters: List<Release>, startIndex: Int, meta: EpubStore.BookMeta?) -> Unit = { _, _, _ -> },
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -271,10 +271,15 @@ fun NovelDetailScreen(
     // The reader walks the book oldest → newest; hand it the full list in
     // reading order plus the tapped row's index.
     val readingOrder = remember(page.releases) { sortedReleases(page.releases, newestFirst = false) }
+    // Title-page metadata rides along once the series page has been scraped
+    // (blank fields simply drop rows); until then the reader keeps book meta.
+    val bookMeta = remember(page.title, page.author, page.genres, page.tags, page.associatedNames) {
+        EpubStore.BookMeta.from(page, novel.title)
+    }
     fun openInReader(release: Release) {
         if (release.url.isBlank()) return
         val at = readingOrder.indexOfFirst { it.url == release.url && it.chapter == release.chapter }
-        onOpenReader(readingOrder, at)
+        onOpenReader(readingOrder, at, bookMeta)
     }
 
     fun openUrl(url: String) {
@@ -877,6 +882,11 @@ fun NovelDetailScreen(
                                 type = parsed.type.ifBlank { page.type },
                                 status = parsed.status.ifBlank { page.status },
                                 coverUrl = parsed.coverUrl.ifBlank { page.coverUrl },
+                                associatedNames = parsed.associatedNames.ifBlank { page.associatedNames },
+                                artist = parsed.artist.ifBlank { page.artist },
+                                year = parsed.year.ifBlank { page.year },
+                                originalPublisher = parsed.originalPublisher.ifBlank { page.originalPublisher },
+                                completelyTranslated = parsed.completelyTranslated.ifBlank { page.completelyTranslated },
                                 currentList = listOf(parsed.currentList, page.currentList, knownListName)
                                     .firstOrNull(::isRealListName)
                                     .orEmpty(),

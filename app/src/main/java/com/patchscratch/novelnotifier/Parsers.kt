@@ -281,7 +281,12 @@ fun parseSeriesPage(raw: String): SeriesPage {
             maxPage = json.optInt("maxPage", 1).coerceAtLeast(1),
             currentList = json.optString("currentList").let { if (isRealListName(it)) it else "" },
             lists = lists,
-            sid = json.optString("sid")
+            sid = json.optString("sid"),
+            associatedNames = json.optString("associatedNames"),
+            artist = json.optString("artist"),
+            year = json.optString("year"),
+            originalPublisher = json.optString("originalPublisher"),
+            completelyTranslated = json.optString("completelyTranslated")
         )
     } catch (_: Exception) {
         SeriesPage()

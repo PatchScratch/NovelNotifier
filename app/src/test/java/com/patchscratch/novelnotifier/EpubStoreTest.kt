@@ -124,4 +124,77 @@ class EpubStoreTest {
     }
 
     private val ZipEntry_METHOD_STORED = java.util.zip.ZipEntry.STORED
+
+    // --- title page + metadata (3.3, user request 2026-10-11) ---
+
+    private val meta = EpubStore.BookMeta(
+        title = "Kuro no Maou",
+        description = "A dark fantasy about a boy <reborn> with black magic & a gun.",
+        associatedNames = "Black Demon Lord, 黒の魔王",
+        type = "Web Novel",
+        genres = "Action, Fantasy",
+        tags = "Anti-Hero, Demons",
+        author = "Hishi Kage Dairi",
+        artist = "Miki",
+        year = "2014",
+        completelyTranslated = "No",
+        originalPublisher = "Shousetsuka ni Narou"
+    )
+
+    @Test
+    fun titlePageWrittenWithMeta() {
+        val book = tempBook("meta")
+        EpubStore.writeBook(book, "T", null, "image/jpeg", listOf(doc("https://h/1", "c1", "One", "p")), meta)
+        ZipFile(book).use { zip ->
+            val tp = zip.getInputStream(zip.getEntry("OEBPS/titlepage.xhtml")).readBytes().decodeToString()
+            assertTrue("title" in tp && "Kuro no Maou" in tp)
+            assertTrue("Associated Names" in tp && "Black Demon Lord" in tp)
+            assertTrue("Original Publisher" in tp && "Shousetsuka ni Narou" in tp)
+            assertTrue("Completely Translated" in tp && "No" in tp)
+            assertTrue("Year" in tp && "2014" in tp)
+            assertTrue("Artist" in tp && "Miki" in tp)
+            // XML escaping on the hostile description
+            assertTrue("&amp;" in tp && "&lt;reborn&gt;" in tp)
+            val opf = zip.getInputStream(zip.getEntry("OEBPS/content.opf")).readBytes().decodeToString()
+            assertTrue("<dc:creator>Hishi Kage Dairi</dc:creator>" in opf)
+            assertTrue("<dc:publisher>Shousetsuka ni Narou</dc:publisher>" in opf)
+            assertTrue("<dc:subject>Anti-Hero</dc:subject>" in opf)
+            // spine order: cover absent here, titlepage BEFORE chapters
+            val spine = Regex("""<itemref idref="([\w-]+)"""").findAll(opf).map { it.groupValues[1] }.toList()
+            assertTrue(spine.indexOf("titlepage") < spine.indexOf("c0001"))
+        }
+    }
+
+    @Test
+    fun bookMetaRoundTripsThroughMetaJson() {
+        val book = tempBook("keepmeta")
+        EpubStore.writeBook(book, "T", null, "image/jpeg", listOf(doc("https://h/1", "c1", "One", "p")), meta)
+        // appendChapter passes meta=null when the series page was never
+        // scraped — it reuses THIS stored snapshot (verified on-device);
+        // here we assert the snapshot read-back that powers it.
+        val readBack = EpubStore.readBookMeta(book)
+        assertEquals("Kuro no Maou", readBack?.title)
+        assertEquals("Hishi Kage Dairi", readBack?.author)
+        assertEquals("2014", readBack?.year)
+        assertEquals("No", readBack?.completelyTranslated)
+        assertEquals("Shousetsuka ni Narou", readBack?.originalPublisher)
+        // a book written WITHOUT meta (pre-title-page books) reads as null
+        val legacy = tempBook("legacy")
+        EpubStore.writeBook(legacy, "T", null, "image/jpeg", listOf(doc("https://h/1", "c1", "One", "p")))
+        assertEquals(null, EpubStore.readBookMeta(legacy))
+    }
+
+    @Test
+    fun coverPageIsFirstSpineItem() {
+        val book = tempBook("coverfirst")
+        EpubStore.writeBook(book, "T", byteArrayOf(1, 2, 3), "image/jpeg",
+            listOf(doc("https://h/1", "c1", "One", "p")), meta)
+        ZipFile(book).use { zip ->
+            val opf = zip.getInputStream(zip.getEntry("OEBPS/content.opf")).readBytes().decodeToString()
+            val spine = Regex("""<itemref idref="([\w-]+)"""").findAll(opf).map { it.groupValues[1] }.toList()
+            assertEquals("cover-page", spine.first())
+            assertTrue(spine.indexOf("cover-page") < spine.indexOf("titlepage"))
+            assertTrue(spine.indexOf("titlepage") < spine.indexOf("c0001"))
+        }
+    }
 }

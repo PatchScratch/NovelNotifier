@@ -53,5 +53,12 @@ data class SeriesPage(
     val maxPage: Int = 1,
     val currentList: String = "",
     val lists: List<ReadingList> = emptyList(),
-    val sid: String = ""
+    val sid: String = "",
+    // Title-page metadata (3.3): blank when the host page or an old cache
+    // didn't provide them — the book simply omits the row.
+    val associatedNames: String = "",
+    val artist: String = "",
+    val year: String = "",
+    val originalPublisher: String = "",
+    val completelyTranslated: String = ""
 )

@@ -569,12 +569,13 @@ fun NovelApp(
             },
             onToggleNotify = { toggleSeriesNotify(selectedWithCover.title) },
             onCoverFound = { url -> rememberCover(selectedWithCover.title, url) },
-            onOpenReader = { chapters, startAt ->
+            onOpenReader = { chapters, startAt, meta ->
                 readerTarget = ReaderTarget(
                     seriesTitle = selectedWithCover.title,
                     seriesUrl = selectedWithCover.seriesUrl,
                     chapters = chapters,
-                    startIndex = if (startAt >= 0) startAt else 0
+                    startIndex = if (startAt >= 0) startAt else 0,
+                    meta = meta
                 )
             },
             onBackClick = { selectedNovel = null }

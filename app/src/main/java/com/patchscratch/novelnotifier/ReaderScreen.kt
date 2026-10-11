@@ -74,7 +74,9 @@ data class ReaderTarget(
     val seriesTitle: String,
     val seriesUrl: String,
     val chapters: List<Release>,
-    val startIndex: Int
+    val startIndex: Int,
+    /** Series-page metadata for the book's title page; null keeps stored meta. */
+    val meta: EpubStore.BookMeta? = null
 )
 
 /**
@@ -192,7 +194,7 @@ fun ReaderScreen(
             val count = withContext(Dispatchers.IO) {
                 EpubStore.appendChapter(
                     context, target.seriesTitle, target.seriesUrl,
-                    chapter.url, chapter.chapter, extract
+                    chapter.url, chapter.chapter, extract, target.meta
                 )
             }
             if (count > 0) {
@@ -296,7 +298,7 @@ fun ReaderScreen(
         val count = withContext(Dispatchers.IO) {
             EpubStore.appendChapter(
                 context, target.seriesTitle, target.seriesUrl,
-                chapter.url, chapter.chapter, extract
+                chapter.url, chapter.chapter, extract, target.meta
             )
         }
         if (count > 0) {
@@ -307,21 +309,35 @@ fun ReaderScreen(
 
     // Bulk downloader (enabled series only): walks the chapters the RELEASES
     // table has loaded, one WebView load at a time with a courtesy gap —
-    // already-saved chapters are skipped without touching the network. Stops
-    // on cancel (menu/back leaves composition and cancels the effect too).
+    // already-saved chapters are skipped without touching the network.
+    //
+    // NU-HOSTED LINKS ARE SKIPPED: many RELEASES rows point at NU's extnu
+    // redirect or NU blog posts, and machine-gunning novelupdates.com at
+    // bulk speed escalates Cloudflare and poisons the shared session for
+    // EVERYTHING (list checks and auto-updates started randomly failing —
+    // user report 2026-10-11). Only links that go DIRECT to the translator
+    // host are bulk-downloaded: one hit per chapter to the site that actually
+    // serves it, 4 s apart. NU-mediated chapters stay available via manual
+    // save (single, user-paced hits are fine) — or 3.3.1's engine-paced
+    // downloader, which is planned to walk the translator's own ToC with a
+    // single NU hit per series.
     LaunchedEffect(bulkActive) {
         if (!bulkActive) return@LaunchedEffect
-        val toLoad = target.chapters.map { it.url }
+        val nuHosted = { url: String ->
+            url.startsWith("https://www.novelupdates.com/") || url.startsWith("http://www.novelupdates.com/")
+        }
         val known = withContext(Dispatchers.IO) {
             EpubStore.readBookIndex(EpubStore.bookFile(context, target.seriesUrl)).map { it.url }.toSet()
         }
         var saved = 0
         var failed = 0
         var skipped = 0
+        var skippedNu = 0
         for (i in target.chapters.indices) {
             if (!bulkActive) break
             val doc = target.chapters[i]
             if (doc.url in known) { skipped++; continue }
+            if (nuHosted(doc.url)) { skippedNu++; continue }
             index = i
             bulkStatus = "Downloading ${i + 1}/${target.chapters.size} · saved $saved · failed $failed"
             // Wait for the extraction pipeline's verdict on this chapter.
@@ -336,17 +352,17 @@ fun ReaderScreen(
                 val count = withContext(Dispatchers.IO) {
                     EpubStore.appendChapter(
                         context, target.seriesTitle, target.seriesUrl,
-                        doc.url, doc.chapter, extract
+                        doc.url, doc.chapter, extract, target.meta
                     )
                 }
                 if (count > 0) { epubCount = count; saved++ }
             } else {
                 failed++
             }
-            delay(1800) // courtesy gap to the host between chapters
+            delay(4000) // courtesy gap to the translator host between chapters
         }
         bulkActive = false
-        bulkStatus = "Bulk done · saved $saved · skipped $skipped · failed $failed"
+        bulkStatus = "Bulk done · saved $saved · skipped $skipped · NU links $skippedNu · failed $failed"
         DebugLog.log("EPUB", "bulk ${target.seriesTitle}: $bulkStatus")
     }
 
@@ -454,7 +470,7 @@ fun ReaderScreen(
                 )
                 if (offlineEnabled && !bulkActive && target.chapters.size > 0) {
                     DropdownMenuItem(
-                        text = { Text("Download all ${target.chapters.size} loaded chapters") },
+                        text = { Text("Bulk download loaded chapters (direct links only)") },
                         onClick = {
                             showMenu = false
                             // Extraction only runs in text mode — switch first.

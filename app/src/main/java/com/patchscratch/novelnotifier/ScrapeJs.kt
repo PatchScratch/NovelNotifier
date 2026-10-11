@@ -236,8 +236,19 @@ fun seriesPageJs(): String = """
         description: text('#editdescription, #editdesc'),
         genres: texts('#seriesgenre a, .seriesgenre a'),
         tags: texts('#showtags a, #edittags a'),
-        type: text('#showtype, #edittype'),
+        type: text('#showtype') || text('#edittype'),
         status: text('#editstatus, #showstatus'),
+        // Display ids verified against the live series page 2026-10-11:
+        // #editassociated/#edityear are DISPLAY elements on NU (no show-twins);
+        // artists is plain text (no links); publishers are link lists. Show
+        // variants must be tried EXPLICITLY first — a comma selector returns
+        // the first match in document order, and the empty edit-mode
+        // placeholder (#edittype/#edittranslated) precedes the filled #show*.
+        associatedNames: text('#editassociated').replace(/\n+/g, ', '),
+        artist: text('#showartists') || text('#editartist'),
+        year: text('#edityear'),
+        originalPublisher: texts('#showopublisher a') || text('#showopublisher'),
+        completelyTranslated: text('#showtranslated') || text('#edittranslated'),
         cover: img ? (img.src || '') : '',
         maxPage: max,
         currentList: currentList,
