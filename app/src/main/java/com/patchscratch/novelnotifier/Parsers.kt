@@ -48,8 +48,16 @@ fun chapterKey(text: String): Pair<Int, Int>? {
     val src = text.lowercase()
     val vol = Regex("""v(?:ol(?:ume)?)?\s*\.?\s*(\d+)""").find(src)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     val ch = chapterNum(src)
-    if (ch < 0) return null
-    return vol to ch
+    if (ch >= 0) return vol to ch
+    // Bare numbered labels ("001 – First Battle", "12. Shopping") — used by
+    // custom reader platforms; NOT added to chapterNum because bare numbers
+    // are ambiguous in its other call sites (labels, last-read comparisons).
+    // separators incl. CJK brackets (「595 「Title」」 style); a bare SPACE
+    // separator needs 2+ digits so nav junk like "0 cart" stays unknown.
+    val bare = Regex("""^(\d{1,4})\s*[-–—.:)）「（]""").find(src)?.groupValues?.get(1)?.toIntOrNull()
+        ?: Regex("""^(\d{2,4})\s+\D""").find(src)?.groupValues?.get(1)?.toIntOrNull()
+    if (bare != null) return 0 to bare
+    return null
 }
 
 /** One same-host chapter link harvested from a loaded page (tocHarvestJs). */

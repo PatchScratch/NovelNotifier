@@ -833,20 +833,39 @@ fun imageChapterJs(): String = """
  * without ever touching novelupdates.com. Returns [{u,t}] of same-host links
  * whose text looks like a chapter label.
  */
-fun tocHarvestJs(): String = """
+fun tocHarvestJs(parentScope: Boolean = true): String = """
 (function() {
   try {
     var out = [];
     var seen = {};
     function looksLikeChapter(t) {
-      return /(?:^|\s)(?:v(?:ol(?:ume)?)?\.?\s*\d+\s*[-:]\s*)?c(?:h(?:apter)?)?\.?\s*\d+|ep(?:isode)?\.?\s*\d+|^\s*#\s*\d+|^»+|^‹+\d*|^›+/i.test(t);
+      return /(?:^|\s)(?:v(?:ol(?:ume)?)?\.?\s*\d+\s*[-:]\s*)?c(?:h(?:apter)?)?\.?\s*\d+|ep(?:isode)?\.?\s*\d+|^\s*#\s*\d+|^[»›→»]+|^‹+\d*|^[«‹←]+|next\s+chapter|previous\s+chapter|^\d{1,4}\s*[-–—.:)]\s*\S/i.test(t);
+    }
+    // SERIES SCOPING: chapter links must live under the current series' path —
+    // custom platforms (verified: lightnovelstranslations.com) show OTHER
+    // series' chapter links in sidebars, and number-only matching would
+    // resolve chapters to the wrong book. Chapter pages scope to the PARENT
+    // directory (siblings); a series/listing page scopes to its OWN path.
+    var PARENT_SCOPE = $parentScope; // interpolated by Kotlin (true/false)
+    var segs = location.pathname.split('/').filter(Boolean);
+    var scope = null;
+    if (segs.length >= 2) {
+      var take = PARENT_SCOPE ? Math.max(1, segs.length - 1) : segs.length;
+      scope = '/' + segs.slice(0, take).join('/') + '/';
+    }
+    function inScope(href) {
+      if (!scope) return true;
+      try {
+        var u = new URL(href, location.href);
+        return u.host === location.host && (u.pathname + '/').indexOf(scope) === 0;
+      } catch (e) { return false; }
     }
     var here = location.protocol + '//' + location.host;
     // 1) same-host anchor links whose text looks like a chapter label
     document.querySelectorAll('a[href]').forEach(function(a) {
       var href = a.href || '';
-      if (href.indexOf(here + '/') !== 0 && href.indexOf(location.origin + '/') !== 0) return;
       if (href.indexOf('#') === href.length - 1) return;
+      if (!inScope(href)) return;
       var t = (a.textContent || '').replace(/\s+/g, ' ').trim();
       if (!t || t.length > 80) return;
       if (!looksLikeChapter(t)) return;
@@ -879,6 +898,7 @@ fun tocHarvestJs(): String = """
         var abs = '';
         try { abs = new URL(v, location.href).href; } catch (e) { continue; }
         if (abs.indexOf('http') !== 0) continue;
+        if (!inScope(abs)) continue;
         if (seen[abs]) continue;
         seen[abs] = true;
         out.push({ u: abs, t: t.slice(0, 80) });

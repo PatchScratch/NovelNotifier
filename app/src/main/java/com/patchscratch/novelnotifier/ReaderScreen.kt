@@ -350,14 +350,23 @@ fun ReaderScreen(
             }
             return extractResult
         }
-        suspend fun harvestFromPage() {
+        // Runs twice (now + 3 s): custom platforms render their chapter lists
+        // with JS a beat after load — one immediate pass would miss them.
+        suspend fun harvestFromPage(parentScope: Boolean = true) {
             val wv = webViewRef.value ?: return
-            wv.evaluateJavascript(tocHarvestJs()) { res ->
-                scope.launch {
-                    val links = parseTocHarvest(res)
-                    links.forEach { link -> link.key?.let { k -> toc.putIfAbsent(k, link.url) } }
+            suspend fun collect() {
+                val res = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                    wv.evaluateJavascript(tocHarvestJs(parentScope)) { r ->
+                        cont.resumeWith(Result.success(r))
+                    }
+                }
+                parseTocHarvest(res).forEach { link ->
+                    link.key?.let { k -> toc.putIfAbsent(k, link.url) }
                 }
             }
+            collect()
+            delay(3000)
+            collect()
         }
 
         val pendingNu = mutableListOf<Int>() // indices needing NU resolution
@@ -381,7 +390,6 @@ fun ReaderScreen(
             } else {
                 failed++
             }
-            delay(4000) // courtesy gap to the translator host between chapters
         }
 
         // ---- pass 2: NU-routed chapters — ToC resolve first, then NU -------
@@ -409,7 +417,22 @@ fun ReaderScreen(
                 }
                 if (count > 0) { epubCount = count; saved++; viaNu++ }
                 harvestFromPage()
-                delay(3000) // let the async harvest callback land in `toc`
+                // SERIES-PAGE FALLBACK: some platforms (verified:
+                // lightnovelstranslations.com) keep the chapter list ONLY on
+                // the series page — chapter pages carry just prev/next. The
+                // series URL is the chapter URL minus its last path segment,
+                // same host, zero NU involvement.
+                if (toc.isEmpty() && bulkActive) {
+                    val chapterUrl = webViewRef.value?.url ?: ""
+                    val seriesUrl = chapterUrl.trimEnd('/').substringBeforeLast('/')
+                    if (seriesUrl.startsWith("http") && seriesUrl != chapterUrl) {
+                        bulkStatus = "Reading ToC from the series page…"
+                        loadedStamp = Triple(seriesUrl, loadKey, jsOn)
+                        webViewRef.value?.loadUrl(seriesUrl)
+                        delay(6000) // let the JS chapter list render
+                        harvestFromPage(parentScope = false)
+                    }
+                }
             }
         }
         for (i in pendingNu) {
@@ -438,7 +461,6 @@ fun ReaderScreen(
                     }
                     if (count > 0) { epubCount = count; saved++; viaToc++ }
                     harvestFromPage()
-                    delay(4000)
                     continue
                 }
                 failed++

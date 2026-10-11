@@ -379,6 +379,14 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertEquals(0 to 45, chapterKey("Episode 45"))
         assertEquals(null, chapterKey("no numbers here"))
         assertEquals(null, chapterKey(""))
+        // bare numbered labels (custom reader platforms)
+        assertEquals(0 to 1, chapterKey("001- First Battle"))
+        assertEquals(0 to 12, chapterKey("012 – Shopping with Mimi (Part 1)"))
+        assertEquals(0 to 595, chapterKey("595 「Is It Really That Simple…」"))
+        assertEquals(0 to 7, chapterKey("7. The Escape"))
+        // bare numbers WITHOUT separator+title stay unknown (nav junk like "0")
+        assertEquals(null, chapterKey("0"))
+        assertEquals(null, chapterKey("12"))
     }
 
     @Test
