@@ -125,6 +125,8 @@ Ideas in rough order: reader mode (extracted, themed chapter text — browser mo
 
 Design informed by reverse-engineering the original *Notifications for Novel Updates* v1.9.3–v1.13 (Apache-licensed era, abandoned) — thank you to its author. This codebase shares no code with it.
 
+The reader's font-substitution decoder (for hosts that render text through custom substitution fonts) is also published standalone as [font-decipher](https://github.com/PatchScratch/font-decipher).
+
 ## License
 
 [MIT](LICENSE) — © 2026 Wayne Yow (PatchScratch)
