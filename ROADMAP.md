@@ -112,6 +112,26 @@ original's green and black variants. Settings picker; persisted choice.
    attaches to reader display; includes the conflict-resolution prompt
    (local vs site read position) designed here for the first time.
 
+   **Storage format decision (user, 2026-10-11): chapters are written as
+   standard ePub files** — one book per series, chapters appended as they are
+   cached — not a proprietary cache. Serves two purposes:
+   - in-app offline reading renders straight from the stored ePub;
+   - other e-reader apps can open the same file, and the user's existing
+     "(ePub)" library workflow (Calibre-style) can ingest what NovelNotifier
+     produces.
+
+   Design notes:
+   - Write ePubs by hand (java.util.zip + our own OPF/nav XHTML — no external
+     dependency); embed the series cover from CoverStore as the book cover.
+   - Internal copy lives in filesDir/epubs/ for the app; getting it OUT to
+     other apps goes through Android's storage rules (scoped storage):
+     export/share via SAF file picker (Google Drive/Downloads/USB all work)
+     and/or a FileProvider share intent — decide during implementation.
+   - Reading our own ePub back is trivial (we control the XHTML), but keep
+     the import tolerant: future versions may meet files written by older ones.
+   - Update-in-place: appending a chapter rewrites the zip entry list —
+     cheap at book sizes we'll see (a few hundred chapters).
+
 ## Phase 4 — architecture debt (interleavable with Phase 2/3)
 
 - **SiteClient unification** (medium): one shared WebView + request queue for
