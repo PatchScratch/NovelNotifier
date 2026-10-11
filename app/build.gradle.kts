@@ -13,8 +13,8 @@ android {
         applicationId = "com.patchscratch.novelnotifier"
         minSdk = 26
         targetSdk = 37
-        versionCode = 7
-        versionName = "1.2"
+        versionCode = 8
+        versionName = "1.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -24,14 +24,24 @@ android {
     // devices running earlier builds update in place instead of reinstalling.
     // Conditional so source-only builds (e.g. F-Droid's servers, where the
     // keystore does not exist) still compile — they re-sign with their own key.
-    val releaseKeystore = File(System.getProperty("user.home") + "/.android/debug.keystore")
+    // Release signing: prefer the real release keystore; fall back to the
+    // debug keystore only on machines that don't have it (CI, fresh clones).
+    // Keystore lives OUTSIDE the repo at ~/.keystores/novelnotifier-release.jks
+    // with its password in the sibling .password file — never commit either.
+    // v1.2 and earlier shipped debug-signed; v1.2.1+ ships release-signed.
+    val releaseKeystore = File(System.getProperty("user.home") + "/.keystores/novelnotifier-release.jks")
+    val releaseKeystorePassword = runCatching {
+        File(System.getProperty("user.home") + "/.keystores/novelnotifier-release.password")
+            .readText().trim()
+    }.getOrDefault("")
+    val legacyDebugKeystore = File(System.getProperty("user.home") + "/.android/debug.keystore")
     if (releaseKeystore.exists()) {
         signingConfigs {
             create("release") {
                 storeFile = releaseKeystore
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
+                storePassword = releaseKeystorePassword
+                keyAlias = "novelnotifier"
+                keyPassword = releaseKeystorePassword
             }
         }
     }
