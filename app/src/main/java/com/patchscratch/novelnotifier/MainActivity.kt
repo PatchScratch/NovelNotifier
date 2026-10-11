@@ -62,9 +62,6 @@ class MainActivity : ComponentActivity() {
         /** Set when a notification asks us to open the login screen (session expired). */
         @Volatile var openLoginRequested = false
 
-        /** Set by `am start --ez probe_endpoints true` — the temporary Phase-2 spike. */
-        @Volatile var probeRequested = false
-
         /**
          * Chapter-alert deep links. Notifications carry open_series_* extras.
          * Cold start: onCreate runs long before NovelApp composes, and a
@@ -85,7 +82,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (intent?.getBooleanExtra("open_login", false) == true) openLoginRequested = true
-        if (intent?.getBooleanExtra("probe_endpoints", false) == true) probeRequested = true
         handleSeriesDeepLink(intent)
         setContent {
             // Hoisted so Settings can re-theme the whole app without a restart.
@@ -111,7 +107,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         if (intent.getBooleanExtra("open_login", false)) openLoginRequested = true
-        if (intent.getBooleanExtra("probe_endpoints", false)) probeRequested = true
         handleSeriesDeepLink(intent)
     }
 
@@ -165,7 +160,6 @@ fun NovelApp(
     var showSearch by remember { mutableStateOf(false) }
     var showDiscover by remember { mutableStateOf(false) }
     var readerTarget by remember { mutableStateOf<ReaderTarget?>(null) } // in-app reader (Phase 3.1)
-    var probeMode by remember { mutableStateOf(false) } // adb-only Phase-2 spike (EndpointProbe.kt)
     var loginState by remember {
         mutableStateOf(
             if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
@@ -241,10 +235,6 @@ fun NovelApp(
             if (MainActivity.openLoginRequested) {
                 MainActivity.openLoginRequested = false
                 showLoginWeb = true
-            }
-            if (MainActivity.probeRequested) {
-                MainActivity.probeRequested = false
-                probeMode = true
             }
             coverCache = loadCoverCache(prefs)
         }
@@ -438,13 +428,12 @@ fun NovelApp(
     }
 
     // Only one screen is composed at a time. Order matters: the reader is
-    // topmost reading surface; login overlays settings; probe overlays all.
+    // the topmost surface; login overlays settings.
     when {
         readerTarget != null -> ReaderScreen(
             target = readerTarget!!,
             onBack = { readerTarget = null }
         )
-        probeMode -> EndpointProbeScreen(onFinished = { probeMode = false })
         showLoginWeb -> LoginWebScreen(
             onLoggedIn = { cookies -> onLoggedIn(cookies) },
             onCancel = {
