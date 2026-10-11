@@ -138,9 +138,18 @@ fun ReaderScreen(
     var imageChapter by remember(target) { mutableStateOf(false) } // chapter is image slices, not text
     var webDecodeStamp by remember(target) { mutableStateOf("") } // pages the web decode ran on
     // --- offline library state (3.3) ---
+    // Saving is PER-SERIES opt-in (user decision 2026-10-11): a 1400-series
+    // library must never silently fill device storage. An enabled series
+    // auto-saves chapters as they are read; bulk download is offered for
+    // enabled series; explicit single-chapter saves are always allowed.
+    var offlineEnabled by remember(target.seriesUrl) {
+        mutableStateOf(target.seriesUrl in loadIdSet(prefs, "epub_series_on"))
+    }
     var epubCount by remember(target.seriesUrl) { mutableIntStateOf(EpubStore.storedCount(context, target.seriesUrl)) }
     var savedOffline by remember(target) { mutableStateOf(false) } // this chapter is in the book
     var offlineCopy by remember(target) { mutableStateOf(false) } // rendered FROM the book
+    var bulkActive by remember(target) { mutableStateOf(false) }
+    var bulkStatus by remember(target) { mutableStateOf("") }
     val savedUrls = remember(target) { mutableSetOf<String>() } // already appended this session
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
     val textScroll = rememberScrollState()
@@ -167,6 +176,31 @@ fun ReaderScreen(
 
     fun openExternally() {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(chapter.url)))
+    }
+
+    fun toggleOfflineForSeries() {
+        offlineEnabled = !offlineEnabled
+        val on = loadIdSet(prefs, "epub_series_on")
+        val next = if (offlineEnabled) on + target.seriesUrl else on - target.seriesUrl
+        prefs.edit { putStringSet("epub_series_on", next) }
+    }
+
+    /** User-selected save of the current chapter into the series' ePub. */
+    fun saveChapterOffline() {
+        val extract = extractResult ?: return
+        scope.launch {
+            val count = withContext(Dispatchers.IO) {
+                EpubStore.appendChapter(
+                    context, target.seriesTitle, target.seriesUrl,
+                    chapter.url, chapter.chapter, extract
+                )
+            }
+            if (count > 0) {
+                epubCount = count
+                savedOffline = true
+                DebugLog.log("EPUB", "saved ${chapter.chapter} (${extract.paragraphs.size} paragraphs) → $count chapters in book")
+            }
+        }
     }
 
     // Offline library: export the series book via the file picker (Drive,
@@ -247,11 +281,17 @@ fun ReaderScreen(
         }
     }
 
-    // Auto-save: every successfully web-extracted chapter lands in the series'
-    // offline ePub (dedup by chapter URL; once per session per URL).
-    LaunchedEffect(extractResult, chapter.url) {
+    // Per-chapter saved flag, refreshed from the book on chapter change.
+    LaunchedEffect(chapter.url) {
+        savedOffline = withContext(Dispatchers.IO) {
+            EpubStore.readChapter(context, target.seriesUrl, chapter.url) != null
+        }
+    }
+
+    // Auto-save — ONLY for series the user opted in, dedup by chapter URL.
+    LaunchedEffect(extractResult, chapter.url, offlineEnabled) {
         val extract = extractResult ?: return@LaunchedEffect
-        if (offlineCopy || chapter.url in savedUrls) return@LaunchedEffect
+        if (!offlineEnabled || offlineCopy || chapter.url in savedUrls) return@LaunchedEffect
         savedUrls.add(chapter.url)
         val count = withContext(Dispatchers.IO) {
             EpubStore.appendChapter(
@@ -262,8 +302,52 @@ fun ReaderScreen(
         if (count > 0) {
             epubCount = count
             savedOffline = true
-            DebugLog.log("EPUB", "saved ${chapter.chapter} (${extract.paragraphs.size} paragraphs) → $count chapters in book")
         }
+    }
+
+    // Bulk downloader (enabled series only): walks the chapters the RELEASES
+    // table has loaded, one WebView load at a time with a courtesy gap —
+    // already-saved chapters are skipped without touching the network. Stops
+    // on cancel (menu/back leaves composition and cancels the effect too).
+    LaunchedEffect(bulkActive) {
+        if (!bulkActive) return@LaunchedEffect
+        val toLoad = target.chapters.map { it.url }
+        val known = withContext(Dispatchers.IO) {
+            EpubStore.readBookIndex(EpubStore.bookFile(context, target.seriesUrl)).map { it.url }.toSet()
+        }
+        var saved = 0
+        var failed = 0
+        var skipped = 0
+        for (i in target.chapters.indices) {
+            if (!bulkActive) break
+            val doc = target.chapters[i]
+            if (doc.url in known) { skipped++; continue }
+            index = i
+            bulkStatus = "Downloading ${i + 1}/${target.chapters.size} · saved $saved · failed $failed"
+            // Wait for the extraction pipeline's verdict on this chapter.
+            val deadline = System.currentTimeMillis() + 45_000
+            while (extractResult == null && !extractFailed && bulkActive &&
+                System.currentTimeMillis() < deadline
+            ) {
+                delay(500)
+            }
+            val extract = extractResult
+            if (extract != null && !offlineCopy) {
+                val count = withContext(Dispatchers.IO) {
+                    EpubStore.appendChapter(
+                        context, target.seriesTitle, target.seriesUrl,
+                        doc.url, doc.chapter, extract
+                    )
+                }
+                if (count > 0) { epubCount = count; saved++ }
+            } else {
+                failed++
+            }
+            delay(1800) // courtesy gap to the host between chapters
+        }
+        bulkActive = false
+        bulkStatus = "Bulk done · saved $saved · skipped $skipped · failed $failed"
+        DebugLog.log("EPUB", "bulk ${target.seriesTitle}: $bulkStatus")
     }
 
     // Web-view decode pass: on font-substituted hosts, rewrite the page's own
@@ -363,6 +447,40 @@ fun ReaderScreen(
                     }
                 )
                 DropdownMenuItem(
+                    text = {
+                        Text(if (offlineEnabled) "Offline for this series: ON" else "Offline for this series: OFF")
+                    },
+                    onClick = { showMenu = false; toggleOfflineForSeries() }
+                )
+                if (offlineEnabled && !bulkActive && target.chapters.size > 0) {
+                    DropdownMenuItem(
+                        text = { Text("Download all ${target.chapters.size} loaded chapters") },
+                        onClick = {
+                            showMenu = false
+                            // Extraction only runs in text mode — switch first.
+                            pickView(READER_VIEW_TEXT)
+                            bulkActive = true
+                        }
+                    )
+                }
+                if (bulkActive) {
+                    DropdownMenuItem(
+                        text = { Text("Stop bulk download") },
+                        onClick = { showMenu = false; bulkActive = false }
+                    )
+                }
+                if (savedOffline) {
+                    DropdownMenuItem(
+                        text = { Text("✓ Chapter saved offline ($epubCount in book)") },
+                        onClick = { showMenu = false }
+                    )
+                } else if (extractResult != null) {
+                    DropdownMenuItem(
+                        text = { Text("Save this chapter offline") },
+                        onClick = { showMenu = false; saveChapterOffline() }
+                    )
+                }
+                DropdownMenuItem(
                     text = { Text(if (jsOn) "JavaScript: ON (tap to disable)" else "JavaScript: OFF (tap to enable)") },
                     onClick = { showMenu = false; toggleJs() }
                 )
@@ -398,6 +516,13 @@ fun ReaderScreen(
             progress = { progress / 100f },
             modifier = Modifier.fillMaxWidth()
         )
+        if (bulkStatus.isNotBlank()) {
+            Text(
+                bulkStatus,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
+        }
         if (offlineCopy) {
             Text(
                 "Offline copy — saved earlier, shown without the site",
