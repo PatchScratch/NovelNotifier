@@ -350,6 +350,26 @@ fun ReaderScreen(
             }
             return extractResult
         }
+
+        /**
+         * Switch to chapter [i] and wait for ITS page to finish loading before
+         * waiting for extraction. Without the tick gate, waitForExtraction
+         * could return the PREVIOUS chapter's still-cached result — the bulk
+         * loop would then save the wrong chapter's text and the bootstrap
+         * would "succeed" before the real page ever loaded.
+         */
+        suspend fun loadAndWait(i: Int): ChapterExtract? {
+            val tickBefore = extractTick
+            index = i
+            val loadDeadline = System.currentTimeMillis() + 60_000
+            while (extractTick <= tickBefore && bulkActive &&
+                System.currentTimeMillis() < loadDeadline
+            ) {
+                delay(500)
+            }
+            if (!bulkActive) return null
+            return waitForExtraction()
+        }
         // Runs twice (now + 3 s): custom platforms render their chapter lists
         // with JS a beat after load — one immediate pass would miss them.
         suspend fun harvestFromPage(parentScope: Boolean = true) {
@@ -375,9 +395,8 @@ fun ReaderScreen(
             val doc = target.chapters[i]
             if (doc.url in known) { skipped++; continue }
             if (nuHosted(doc.url)) { pendingNu.add(i); continue }
-            index = i
             bulkStatus = "Direct ${i + 1}/${target.chapters.size} · saved $saved · failed $failed"
-            val extract = waitForExtraction()
+            val extract = loadAndWait(i)
             if (extract != null && !offlineCopy) {
                 val count = withContext(Dispatchers.IO) {
                     EpubStore.appendChapter(
@@ -402,12 +421,15 @@ fun ReaderScreen(
         // hit — harvest that page's chapter list, and resolve the rest
         // direct. That is the whole point of ToC-first: one NU visit per
         // series instead of one per chapter.
-        if (pendingNu.isNotEmpty() && toc.isEmpty() && bulkActive) {
+        if (pendingNu.isNotEmpty() && toc.size < pendingNu.size && bulkActive) {
             val boot = pendingNu.first()
             val bootDoc = target.chapters[boot]
-            index = boot
             bulkStatus = "Reading ToC from ${bootDoc.chapter} (single NU visit)"
-            val extract = waitForExtraction()
+            // ToC discovery does NOT depend on extraction success — the page
+            // being loaded is enough for harvesting. (The extractor failing on
+            // a platform used to skip the harvest entirely, sending every
+            // chapter to NU failover.)
+            val extract = loadAndWait(boot)
             if (extract != null && !offlineCopy) {
                 val count = withContext(Dispatchers.IO) {
                     EpubStore.appendChapter(
@@ -416,22 +438,26 @@ fun ReaderScreen(
                     )
                 }
                 if (count > 0) { epubCount = count; saved++; viaNu++ }
-                harvestFromPage()
-                // SERIES-PAGE FALLBACK: some platforms (verified:
-                // lightnovelstranslations.com) keep the chapter list ONLY on
-                // the series page — chapter pages carry just prev/next. The
-                // series URL is the chapter URL minus its last path segment,
-                // same host, zero NU involvement.
-                if (toc.isEmpty() && bulkActive) {
-                    val chapterUrl = webViewRef.value?.url ?: ""
-                    val seriesUrl = chapterUrl.trimEnd('/').substringBeforeLast('/')
-                    if (seriesUrl.startsWith("http") && seriesUrl != chapterUrl) {
-                        bulkStatus = "Reading ToC from the series page…"
-                        loadedStamp = Triple(seriesUrl, loadKey, jsOn)
-                        webViewRef.value?.loadUrl(seriesUrl)
-                        delay(6000) // let the JS chapter list render
-                        harvestFromPage(parentScope = false)
-                    }
+            } else {
+                failed++
+            }
+            harvestFromPage()
+            // SERIES-PAGE FALLBACK: some platforms (verified:
+            // lightnovelstranslations.com) keep the chapter list ONLY on the
+            // series page — chapter pages carry just prev/next. The series
+            // URL is the chapter URL minus its last path segment, same host,
+            // zero NU involvement. Runs whenever the harvest so far can't
+            // cover the pending chapters, not only when it found nothing.
+            if (toc.size < pendingNu.size && bulkActive) {
+                val chapterUrl = webViewRef.value?.url ?: ""
+                val seriesUrl = chapterUrl.trimEnd('/').substringBeforeLast('/')
+                if (seriesUrl.startsWith("http") && seriesUrl != chapterUrl) {
+                    bulkStatus = "Reading ToC from the series page…"
+                    loadedStamp = Triple(seriesUrl, loadKey, jsOn)
+                    webViewRef.value?.loadUrl(seriesUrl)
+                    delay(8000) // heavy JS-rendered lists (541 links on LNT)
+                    harvestFromPage(parentScope = false)
+                    if (toc.isEmpty()) harvestFromPage(parentScope = false)
                 }
             }
         }
@@ -442,15 +468,23 @@ fun ReaderScreen(
             val key = chapterKey(doc.chapter)
             val directUrl = key?.let { toc[it] }
             if (directUrl != null && !nuHosted(directUrl)) {
-                // ToC resolved it — a direct load, no NU involved.
+                // ToC resolved it — a direct load, no NU involved. The stamp
+                // must be aligned with it FIRST — the update block reloads
+                // whenever the (url, loadKey, jsOn) stamp changes, and it
+                // watches the NU chapter.url that `index` just selected.
                 index = i
-                // Substitute the direct URL for this load. The stamp must be
-                // aligned with it FIRST — the update block reloads whenever
-                // the (url, loadKey, jsOn) stamp changes, and it watches the
-                // NU chapter.url that `index` just selected.
                 loadedStamp = Triple(directUrl, loadKey, jsOn)
                 webViewRef.value?.loadUrl(directUrl)
                 bulkStatus = "ToC-resolved ${doc.chapter} · saved $saved"
+                // manual loadUrl: gate on the tick like loadAndWait, but the
+                // chapter index is already set — wait for the next load only.
+                val tickBefore = extractTick
+                val loadDeadline = System.currentTimeMillis() + 60_000
+                while (extractTick <= tickBefore && bulkActive &&
+                    System.currentTimeMillis() < loadDeadline
+                ) {
+                    delay(500)
+                }
                 val extract = waitForExtraction()
                 if (extract != null && !offlineCopy) {
                     val count = withContext(Dispatchers.IO) {
@@ -468,9 +502,8 @@ fun ReaderScreen(
                 continue
             }
             // No ToC entry — fail over to the NU link itself, slowly.
-            index = i
             bulkStatus = "NU failover ${doc.chapter} · saved $saved · NU $viaNu"
-            val extract = waitForExtraction()
+            val extract = loadAndWait(i)
             if (extract != null && !offlineCopy) {
                 val count = withContext(Dispatchers.IO) {
                     EpubStore.appendChapter(
