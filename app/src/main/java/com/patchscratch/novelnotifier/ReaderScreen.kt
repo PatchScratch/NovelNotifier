@@ -384,9 +384,34 @@ fun ReaderScreen(
             delay(4000) // courtesy gap to the translator host between chapters
         }
 
-        // ---- pass 2: NU-routed chapters — ToC resolve first, then NU ------- 
+        // ---- pass 2: NU-routed chapters — ToC resolve first, then NU -------
         // Failover pacing is the engine's 10 s per NU hit (bulk-speed extnu
         // traffic escalates Cloudflare for the whole session).
+        //
+        // BOOTSTRAP: some series have NO direct links at all (every RELEASES
+        // row is an extnu redirect), so pass 1 loaded nothing and the ToC is
+        // empty. Visit ONE chapter via its NU link — a single, engine-paced
+        // hit — harvest that page's chapter list, and resolve the rest
+        // direct. That is the whole point of ToC-first: one NU visit per
+        // series instead of one per chapter.
+        if (pendingNu.isNotEmpty() && toc.isEmpty() && bulkActive) {
+            val boot = pendingNu.first()
+            val bootDoc = target.chapters[boot]
+            index = boot
+            bulkStatus = "Reading ToC from ${bootDoc.chapter} (single NU visit)"
+            val extract = waitForExtraction()
+            if (extract != null && !offlineCopy) {
+                val count = withContext(Dispatchers.IO) {
+                    EpubStore.appendChapter(
+                        context, target.seriesTitle, target.seriesUrl,
+                        bootDoc.url, bootDoc.chapter, extract, target.meta
+                    )
+                }
+                if (count > 0) { epubCount = count; saved++; viaNu++ }
+                harvestFromPage()
+                delay(3000) // let the async harvest callback land in `toc`
+            }
+        }
         for (i in pendingNu) {
             if (!bulkActive) break
             val doc = target.chapters[i]

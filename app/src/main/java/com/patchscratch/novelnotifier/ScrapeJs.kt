@@ -838,18 +838,52 @@ fun tocHarvestJs(): String = """
   try {
     var out = [];
     var seen = {};
+    function looksLikeChapter(t) {
+      return /(?:^|\s)(?:v(?:ol(?:ume)?)?\.?\s*\d+\s*[-:]\s*)?c(?:h(?:apter)?)?\.?\s*\d+|ep(?:isode)?\.?\s*\d+|^\s*#\s*\d+|^»+|^‹+\d*|^›+/i.test(t);
+    }
     var here = location.protocol + '//' + location.host;
+    // 1) same-host anchor links whose text looks like a chapter label
     document.querySelectorAll('a[href]').forEach(function(a) {
       var href = a.href || '';
       if (href.indexOf(here + '/') !== 0 && href.indexOf(location.origin + '/') !== 0) return;
       if (href.indexOf('#') === href.length - 1) return;
       var t = (a.textContent || '').replace(/\s+/g, ' ').trim();
       if (!t || t.length > 80) return;
-      if (!/(?:^|\s)(?:v(?:ol(?:ume)?)?\.?\s*\d+\s*[-:]\s*)?c(?:h(?:apter)?)?\.?\s*\d+|ep(?:isode)?\.?\s*\d+|^\s*#\s*\d+|^»+|^‹+\d*|^›+/i.test(t)) return;
+      if (!looksLikeChapter(t)) return;
       if (seen[href]) return;
       seen[href] = true;
       out.push({ u: href, t: t.slice(0, 80) });
-      if (out.length >= 400) return;
+      if (out.length >= 500) return;
+    });
+    // 2) chapter DROPDOWNS — the standard WordPress translator ToC: a <select>
+    //    (name/id mentions chapter, or most options look like chapter labels)
+    //    whose option values are chapter permalinks. Verified live on
+    //    asianhobbyist.com: <select name="chapter"> with 281 options.
+    document.querySelectorAll('select').forEach(function(sel) {
+      var ident = ((sel.name || '') + ' ' + (sel.id || '') + ' ' + (sel.className || '')).toLowerCase();
+      var opts = sel.options;
+      if (ident.indexOf('chap') === -1) {
+        if (opts.length < 5) return;
+        var chapish = 0;
+        var check = Math.min(opts.length, 20);
+        for (var i = 0; i < check; i++) {
+          if (looksLikeChapter((opts[i].textContent || '').trim())) chapish++;
+        }
+        if (chapish < check * 0.6) return;
+      }
+      for (var j = 0; j < opts.length; j++) {
+        var o = opts[j];
+        var t = (o.textContent || '').replace(/\s+/g, ' ').trim();
+        var v = (o.value || '').trim();
+        if (!t || t.length > 80 || !v) continue;
+        var abs = '';
+        try { abs = new URL(v, location.href).href; } catch (e) { continue; }
+        if (abs.indexOf('http') !== 0) continue;
+        if (seen[abs]) continue;
+        seen[abs] = true;
+        out.push({ u: abs, t: t.slice(0, 80) });
+        if (out.length >= 500) return;
+      }
     });
     return JSON.stringify(out);
   } catch (e) {

@@ -137,7 +137,8 @@ original's green and black variants. Settings picker; persisted choice.
    fails over to NU's links at the engine's 10 s pacing, strictly after the
    4 s direct pass. Direct links pace 4 s; NU-link hammering was escalating
    Cloudflare and breaking auto-updates. Still future: engine-paced bulk
-   BEYOND loaded pages, the bulk read-position catch-up prompt; epubs stay
+   BEYOND loaded pages (incl. bootstrap-per-host when a series spans several
+   translator sites), the bulk read-position catch-up prompt; epubs stay
    out of backup zips.
 
    **Storage format decision (user, 2026-10-11): chapters are written as
