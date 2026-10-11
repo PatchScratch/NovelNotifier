@@ -823,3 +823,37 @@ fun imageChapterJs(): String = """
   }
 })();
 """.trimIndent()
+
+/**
+ * ToC-first bulk (3.3.1, user design): harvest same-host chapter links from
+ * the CURRENTLY LOADED page — most translator sites embed their chapter list
+ * (a ToC panel, a chapter <select>, prev/next bars) right on the chapter
+ * page. Runs on pages the bulk downloader already loaded, so discovery costs
+ * ZERO extra requests; NU-routed chapters can then resolve to direct URLs
+ * without ever touching novelupdates.com. Returns [{u,t}] of same-host links
+ * whose text looks like a chapter label.
+ */
+fun tocHarvestJs(): String = """
+(function() {
+  try {
+    var out = [];
+    var seen = {};
+    var here = location.protocol + '//' + location.host;
+    document.querySelectorAll('a[href]').forEach(function(a) {
+      var href = a.href || '';
+      if (href.indexOf(here + '/') !== 0 && href.indexOf(location.origin + '/') !== 0) return;
+      if (href.indexOf('#') === href.length - 1) return;
+      var t = (a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 80) return;
+      if (!/(?:^|\s)(?:v(?:ol(?:ume)?)?\.?\s*\d+\s*[-:]\s*)?c(?:h(?:apter)?)?\.?\s*\d+|ep(?:isode)?\.?\s*\d+|^\s*#\s*\d+|^»+|^‹+\d*|^›+/i.test(t)) return;
+      if (seen[href]) return;
+      seen[href] = true;
+      out.push({ u: href, t: t.slice(0, 80) });
+      if (out.length >= 400) return;
+    });
+    return JSON.stringify(out);
+  } catch (e) {
+    return '[]';
+  }
+})();
+""".trimIndent()

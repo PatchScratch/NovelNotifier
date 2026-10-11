@@ -1,6 +1,7 @@
 package com.patchscratch.novelnotifier
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -366,4 +367,41 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
     val raw = "\"{\\\"title\\\":\\\"x\\\",\\\"paragraphs\\\":[\\\"One.\\\",\\\"Two.\\\"]}\""
     assertNull(parseChapterExtract(raw))
 }
+
+    // --- ToC-first bulk (3.3.1): chapter keys + harvest parsing ---
+
+    @Test
+    fun chapterKey_parsesVolumeAndChapter() {
+        assertEquals(0 to 673, chapterKey("c673"))
+        assertEquals(2 to 220, chapterKey("v2c220"))
+        assertEquals(0 to 673, chapterKey("Chapter 673: The Arrow of Judgment"))
+        assertEquals(1 to 12, chapterKey("Vol. 1 Ch. 12 - Somewhere"))
+        assertEquals(0 to 45, chapterKey("Episode 45"))
+        assertEquals(null, chapterKey("no numbers here"))
+        assertEquals(null, chapterKey(""))
+    }
+
+    @Test
+    fun chapterKey_volumeZeroDoesNotMatchVolumeChapters() {
+        // the conservative-match rule: plain c673 must not claim v2c673
+        assertEquals(2 to 673, chapterKey("v2c673"))
+        assertNotEquals(chapterKey("c673"), chapterKey("v2c673"))
+    }
+
+    @Test
+    fun parseTocHarvest_roundTripsAndFilters() {
+        val raw = """"[{\"u\":\"https://host/chapter-673\",\"t\":\"Chapter 673\"},{\"u\":\"https://host/chapter-672\",\"t\":\"c672\"},{\"u\":\"javascript:void(0)\",\"t\":\"c1\"},{\"u\":\"https://host/next\",\"t\":\"»\"}]""""
+        val links = parseTocHarvest(raw)
+        // non-http dropped at parse; nav text (») has no chapter key
+        assertEquals(3, links.size)
+        assertEquals(0 to 673, links[0].key)
+        assertEquals(0 to 672, links[1].key)
+        assertEquals(null, links[2].key)
+    }
+
+    @Test
+    fun parseTocHarvest_badInputIsEmpty() {
+        assertEquals(0, parseTocHarvest("\"not json\"").size)
+        assertEquals(0, parseTocHarvest("").size)
+    }
 }

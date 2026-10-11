@@ -332,22 +332,43 @@ fun ReaderScreen(
         var saved = 0
         var failed = 0
         var skipped = 0
-        var skippedNu = 0
-        for (i in target.chapters.indices) {
-            if (!bulkActive) break
-            val doc = target.chapters[i]
-            if (doc.url in known) { skipped++; continue }
-            if (nuHosted(doc.url)) { skippedNu++; continue }
-            index = i
-            bulkStatus = "Downloading ${i + 1}/${target.chapters.size} · saved $saved · failed $failed"
-            // Wait for the extraction pipeline's verdict on this chapter.
+        var viaToc = 0
+        var viaNu = 0
+
+        // ---- pass 1: DIRECT links only, 4 s apart ---------------------------
+        // Each loaded page is also harvested for same-host chapter links
+        // (tocHarvestJs) — most translator sites embed their chapter list on
+        // the page, so NU-routed chapters can often resolve to direct URLs
+        // without touching novelupdates.com at all.
+        val toc = HashMap<Pair<Int, Int>, String>()
+        suspend fun waitForExtraction(): ChapterExtract? {
             val deadline = System.currentTimeMillis() + 45_000
             while (extractResult == null && !extractFailed && bulkActive &&
                 System.currentTimeMillis() < deadline
             ) {
                 delay(500)
             }
-            val extract = extractResult
+            return extractResult
+        }
+        suspend fun harvestFromPage() {
+            val wv = webViewRef.value ?: return
+            wv.evaluateJavascript(tocHarvestJs()) { res ->
+                scope.launch {
+                    val links = parseTocHarvest(res)
+                    links.forEach { link -> link.key?.let { k -> toc.putIfAbsent(k, link.url) } }
+                }
+            }
+        }
+
+        val pendingNu = mutableListOf<Int>() // indices needing NU resolution
+        for (i in target.chapters.indices) {
+            if (!bulkActive) break
+            val doc = target.chapters[i]
+            if (doc.url in known) { skipped++; continue }
+            if (nuHosted(doc.url)) { pendingNu.add(i); continue }
+            index = i
+            bulkStatus = "Direct ${i + 1}/${target.chapters.size} · saved $saved · failed $failed"
+            val extract = waitForExtraction()
             if (extract != null && !offlineCopy) {
                 val count = withContext(Dispatchers.IO) {
                     EpubStore.appendChapter(
@@ -356,13 +377,68 @@ fun ReaderScreen(
                     )
                 }
                 if (count > 0) { epubCount = count; saved++ }
+                harvestFromPage()
             } else {
                 failed++
             }
             delay(4000) // courtesy gap to the translator host between chapters
         }
+
+        // ---- pass 2: NU-routed chapters — ToC resolve first, then NU ------- 
+        // Failover pacing is the engine's 10 s per NU hit (bulk-speed extnu
+        // traffic escalates Cloudflare for the whole session).
+        for (i in pendingNu) {
+            if (!bulkActive) break
+            val doc = target.chapters[i]
+            if (doc.url in known) { skipped++; continue }
+            val key = chapterKey(doc.chapter)
+            val directUrl = key?.let { toc[it] }
+            if (directUrl != null && !nuHosted(directUrl)) {
+                // ToC resolved it — a direct load, no NU involved.
+                index = i
+                // Substitute the direct URL for this load. The stamp must be
+                // aligned with it FIRST — the update block reloads whenever
+                // the (url, loadKey, jsOn) stamp changes, and it watches the
+                // NU chapter.url that `index` just selected.
+                loadedStamp = Triple(directUrl, loadKey, jsOn)
+                webViewRef.value?.loadUrl(directUrl)
+                bulkStatus = "ToC-resolved ${doc.chapter} · saved $saved"
+                val extract = waitForExtraction()
+                if (extract != null && !offlineCopy) {
+                    val count = withContext(Dispatchers.IO) {
+                        EpubStore.appendChapter(
+                            context, target.seriesTitle, target.seriesUrl,
+                            doc.url, doc.chapter, extract, target.meta
+                        )
+                    }
+                    if (count > 0) { epubCount = count; saved++; viaToc++ }
+                    harvestFromPage()
+                    delay(4000)
+                    continue
+                }
+                failed++
+                delay(4000)
+                continue
+            }
+            // No ToC entry — fail over to the NU link itself, slowly.
+            index = i
+            bulkStatus = "NU failover ${doc.chapter} · saved $saved · NU $viaNu"
+            val extract = waitForExtraction()
+            if (extract != null && !offlineCopy) {
+                val count = withContext(Dispatchers.IO) {
+                    EpubStore.appendChapter(
+                        context, target.seriesTitle, target.seriesUrl,
+                        doc.url, doc.chapter, extract, target.meta
+                    )
+                }
+                if (count > 0) { epubCount = count; saved++; viaNu++ }
+            } else {
+                failed++
+            }
+            delay(10_000) // engine-grade courtesy gap between NU hits
+        }
         bulkActive = false
-        bulkStatus = "Bulk done · saved $saved · skipped $skipped · NU links $skippedNu · failed $failed"
+        bulkStatus = "Bulk done · saved $saved (ToC $viaToc · NU $viaNu) · skipped $skipped · failed $failed"
         DebugLog.log("EPUB", "bulk ${target.seriesTitle}: $bulkStatus")
     }
 

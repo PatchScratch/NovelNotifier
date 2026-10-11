@@ -37,6 +37,45 @@ fun chapterNum(text: String): Int {
     return -1
 }
 
+/**
+ * Volume+chapter key from a label like "v2c220" / "c673" / "Chapter 673: …".
+ * Volume 0 when absent. Returns null when no chapter number parses. Used by
+ * the ToC-first bulk downloader to match harvested links against RELEASES
+ * labels — (0, 673) must NOT match "v2c673", only "c673".
+ */
+fun chapterKey(text: String): Pair<Int, Int>? {
+    if (text.isBlank()) return null
+    val src = text.lowercase()
+    val vol = Regex("""v(?:ol(?:ume)?)?\s*\.?\s*(\d+)""").find(src)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    val ch = chapterNum(src)
+    if (ch < 0) return null
+    return vol to ch
+}
+
+/** One same-host chapter link harvested from a loaded page (tocHarvestJs). */
+data class HarvestedLink(val url: String, val text: String) {
+    val key: Pair<Int, Int>? get() = chapterKey(text)
+}
+
+/**
+ * Parse the JSON from tocHarvestJs(). Bad input → empty; the bulk downloader
+ * treats every entry as a candidate, matched conservatively by chapter key.
+ */
+fun parseTocHarvest(raw: String): List<HarvestedLink> {
+    val unwrapped = unwrapJsResult(raw).trim()
+    if (unwrapped.isBlank() || unwrapped == "[]") return emptyList()
+    return try {
+        val arr = org.json.JSONArray(unwrapped)
+        (0 until arr.length()).mapNotNull { i ->
+            val item = arr.optJSONObject(i) ?: return@mapNotNull null
+            val url = item.optString("u")
+            if (url.startsWith("http")) HarvestedLink(url, item.optString("t")) else null
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
 /** Unread chapters: latest minus last-read. Unknown last-read → 0, not the whole series. */
 fun unreadCount(latestChapter: String, lastReadChapter: String?): Int {
     val latest = chapterNum(latestChapter)
