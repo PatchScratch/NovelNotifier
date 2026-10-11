@@ -189,16 +189,18 @@ fun ReaderScreen(
     fun saveChapterOffline() {
         val extract = extractResult ?: return
         scope.launch {
-            val count = withContext(Dispatchers.IO) {
+            val written = withContext(Dispatchers.IO) {
                 EpubStore.appendChapter(
                     context, target.seriesTitle, target.seriesUrl,
                     chapter.url, chapter.chapter, extract, target.meta
                 )
             }
-            if (count > 0) {
-                epubCount = count
+            if (written > 0) {
+                epubCount = withContext(Dispatchers.IO) {
+                    EpubStore.storedCount(context, target.seriesUrl)
+                }
                 savedOffline = true
-                DebugLog.log("EPUB", "saved ${chapter.chapter} (${extract.paragraphs.size} paragraphs) → $count chapters in book")
+                DebugLog.log("EPUB", "saved ${chapter.chapter} (${extract.paragraphs.size} paragraphs)")
             }
         }
     }
@@ -229,7 +231,10 @@ fun ReaderScreen(
     ) { uri ->
         if (uri != null) scope.launch {
             val msg = withContext(Dispatchers.IO) {
-                EpubStore.exportTo(context, target.seriesUrl, target.seriesTitle, uri)
+                EpubStore.exportTo(
+                    context, target.seriesUrl,
+                    EpubStore.chapterBucket(chapter.chapter), target.seriesTitle, uri
+                )
             }
             exportMessage = msg
         }
@@ -316,6 +321,9 @@ fun ReaderScreen(
                 context, target.seriesTitle, target.seriesUrl,
                 chapter.url, chapter.chapter, extract, target.meta
             )
+            // appendChapter returns the BUCKET book's chapter count — the
+            // reader's counter means the series total across all books.
+            EpubStore.storedCount(context, target.seriesUrl)
         }
         if (count > 0) {
             epubCount = count
@@ -460,10 +468,20 @@ fun ReaderScreen(
                 )
                 if (epubCount > 0) {
                     DropdownMenuItem(
-                        text = { Text("Export ePub ($epubCount chapters)…") },
+                        text = {
+                            val bucket = EpubStore.chapterBucket(chapter.chapter)
+                            val label = EpubStore.bookDisplayTitle("", bucket, emptySet())
+                            Text("Export ePub — ${label.replace(" — ", "")} ($epubCount in series)…")
+                        },
                         onClick = {
                             showMenu = false
-                            epubExportLauncher.launch("${target.seriesTitle}.epub")
+                            epubExportLauncher.launch(
+                                EpubStore.exportName(
+                                    target.seriesTitle,
+                                    EpubStore.chapterBucket(chapter.chapter),
+                                    EpubStore.bucketsOf(context, target.seriesUrl)
+                                )
+                            )
                         }
                     )
                     DropdownMenuItem(

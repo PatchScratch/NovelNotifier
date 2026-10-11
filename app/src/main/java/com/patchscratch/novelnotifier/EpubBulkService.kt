@@ -95,12 +95,14 @@ class EpubBulkService : Service() {
             // pre-13 always has permission; on 13+ the notification is simply hidden
         }
         job = parsed
+        serviceAlive = true
         startInForeground(parsed.seriesTitle)
         scope.launch { runBulk(parsed) }
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        serviceAlive = false
         scope.cancel()
         webView?.destroy()
         webView = null
@@ -193,9 +195,8 @@ class EpubBulkService : Service() {
     private suspend fun runBulk(job: BulkJob) {
         val context = this
         try {
-            val book = EpubStore.bookFile(context, job.seriesUrl)
             val known = withContext(Dispatchers.IO) {
-                EpubStore.readBookIndex(book).map { it.url }.toSet()
+                EpubStore.readAllStoredDocs(context, job.seriesUrl).map { it.url }.toSet()
             }
             val toc = HashMap<Pair<Int, Int>, String>()
             var saved = 0
@@ -406,10 +407,12 @@ class EpubBulkService : Service() {
             context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
                 .getString(STATUS_KEY, "") ?: ""
 
-        fun running(context: Context): Boolean = statusText(context).let {
-            it.startsWith("direct") || it.startsWith("ToC") || it.startsWith("NU") ||
-                it.startsWith("reading") || it.startsWith("starting")
-        }
+        /** True only while the service process is alive — a killed service
+         *  leaves stale status text behind (no onDestroy guarantee), and the
+         *  reader must not offer "Stop" for a dead download. */
+        @Volatile var serviceAlive: Boolean = false
+
+        fun running(context: Context): Boolean = serviceAlive
 
         private fun writeStatus(context: Context, text: String) {
             context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE).edit()

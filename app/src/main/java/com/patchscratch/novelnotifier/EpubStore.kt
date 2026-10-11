@@ -43,8 +43,53 @@ object EpubStore {
 
     fun dir(context: Context): File = context.filesDir.resolve("epubs").apply { mkdirs() }
 
-    fun bookFile(context: Context, seriesUrl: String): File =
+    // --- volume/part split (user decision 2026-10-12) -----------------------
+    // Books split per VOLUME when labels carry one ("v2c220"), else into
+    // 100-chapter PARTS by chapter number. One file per bucket:
+    //   epubs/<hash>-v2.epub | epubs/<hash>-p1.epub
+    // The pre-split single file (<hash>.epub) is a LEGACY book — absorbed and
+    // deleted by the first append under the new scheme.
+
+    /** "v2" when the label has a volume; else "p<N>" = ceil(chapter/100). */
+    fun chapterBucket(label: String): String {
+        val key = chapterKey(label) ?: return "p1"
+        val (vol, ch) = key
+        if (vol > 0) return "v$vol"
+        if (ch > 0) return "p${(ch - 1) / 100 + 1}"
+        return "p1"
+    }
+
+    /** Display title for a bucket book ("— Vol 2" / "— Part 2"); plain when
+     *  it is the series' only bucket and a plain p1. */
+    fun bookDisplayTitle(seriesTitle: String, bucket: String, buckets: Collection<String>): String {
+        val plainOk = bucket == "p1" && buckets.none { it.startsWith("v") } && buckets.none { it != "p1" }
+        if (plainOk) return seriesTitle
+        return if (bucket.startsWith("v")) {
+            seriesTitle + " — Vol " + bucket.removePrefix("v")
+        } else {
+            seriesTitle + " — Part " + bucket.removePrefix("p")
+        }
+    }
+
+    fun bookFile(context: Context, seriesUrl: String, bucket: String): File =
+        dir(context).resolve(seriesUrl.hashCode().toUInt().toString() + "-" + bucket + ".epub")
+
+    /** Legacy pre-split book, if any (read for absorption / migration reads). */
+    fun legacyBookFile(context: Context, seriesUrl: String): File =
         dir(context).resolve(seriesUrl.hashCode().toUInt().toString() + ".epub")
+
+    /** All bucket files that exist for the series (legacy excluded). */
+    fun bookFiles(context: Context, seriesUrl: String): List<File> {
+        val prefix = seriesUrl.hashCode().toUInt().toString() + "-"
+        return dir(context).listFiles().orEmpty()
+            .filter { it.name.startsWith(prefix) && it.name.endsWith(".epub") }
+            .sorted()
+    }
+
+    fun bucketsOf(context: Context, seriesUrl: String): List<String> =
+        bookFiles(context, seriesUrl).map { it.name.removePrefix(prefixOf(seriesUrl)).removeSuffix(".epub") }
+
+    private fun prefixOf(seriesUrl: String) = seriesUrl.hashCode().toUInt().toString() + "-"
 
     // --- data shapes ---------------------------------------------------------
 
@@ -502,56 +547,102 @@ ${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${doc
         meta: BookMeta? = null
     ): Int {
         return try {
-            val book = bookFile(context, seriesUrl)
-            val kept = readAllChapterDocs(book).filter { it.url != chapterUrl }
+            val bucket = chapterBucket(label)
+            val book = bookFile(context, seriesUrl, bucket)
+            val legacy = legacyBookFile(context, seriesUrl)
+            // Merge this bucket's chapters with the legacy book's (if this is
+            // the first split write) — legacy chapters in OTHER buckets are
+            // absorbed by their own first append.
+            val existing = readAllChapterDocs(book) +
+                (if (legacy.exists()) readAllChapterDocs(legacy).filter { chapterBucket(it.label) == bucket } else emptyList())
+            val kept = existing.filter { it.url != chapterUrl }
             val docs = kept + ChapterDoc(chapterUrl, label, extract.title, extract.paragraphs)
             val ordered = orderDocs(docs)
             val cover = CoverStore.localFile(context, seriesUrl)?.readBytes()
-                ?: existingCover(book)
+                ?: existingCover(book) ?: if (legacy.exists()) existingCover(legacy) else null
             // Title-page metadata: use the freshest provided; a later append
-            // without meta (e.g. from a context that never loaded the series
-            // page) keeps the stored one instead of dropping the page.
-            val bookMeta = meta ?: readBookMeta(book)
-            writeBook(book, seriesTitle, cover, "image/jpeg", ordered, bookMeta)
+            // without meta keeps the stored one instead of dropping the page.
+            val bookMeta = meta ?: readBookMeta(book) ?: if (legacy.exists()) readBookMeta(legacy) else null
+            // Delete the legacy book ONLY when every one of its chapters is
+            // covered by a BUCKET file (this write included). Coverage must be
+            // counted from bucket files alone — including legacy in the check
+            // made it self-covering, deleting v2/v3 chapters before their
+            // buckets existed.
+            if (legacy.exists()) {
+                val bucketCovered = (bookFiles(context, seriesUrl).filter { it != book }
+                    .flatMap { readAllChapterDocs(it) } + ordered)
+                    .map { it.url }.toSet()
+                val legacyDocs = readAllChapterDocs(legacy)
+                if (legacyDocs.all { it.url in bucketCovered }) legacy.delete()
+            }
+            val buckets = (bucketsOf(context, seriesUrl) + bucket).distinct()
+            val displayTitle = bookDisplayTitle(seriesTitle, bucket, buckets)
+            writeBook(book, displayTitle, cover, "image/jpeg", ordered, bookMeta)
         } catch (e: Exception) {
             DebugLog.log("EPUB", "appendChapter failed", e)
             -1
         }
     }
 
+    /** Stored chapters across ALL of the series' books + legacy (bulk skip set). */
+    fun readAllStoredDocs(context: Context, seriesUrl: String): List<ChapterDoc> {
+        val files = bookFiles(context, seriesUrl) +
+            listOfNotNull(legacyBookFile(context, seriesUrl).takeIf { it.exists() })
+        return files.flatMap { f -> readAllChapterDocs(f) }
+    }
+
     fun storedCount(context: Context, seriesUrl: String): Int =
-        readBookIndex(bookFile(context, seriesUrl)).size
+        readAllStoredDocs(context, seriesUrl).size
 
-    /** The stored copy of a chapter, for offline reading. */
-    fun readChapter(context: Context, seriesUrl: String, chapterUrl: String): ChapterExtract? =
-        readChapterDoc(bookFile(context, seriesUrl), chapterUrl)
-            ?.let { ChapterExtract(title = it.title, paragraphs = it.paragraphs) }
+    /** The stored copy of a chapter, for offline reading (any bucket). */
+    fun readChapter(context: Context, seriesUrl: String, chapterUrl: String): ChapterExtract? {
+        val files = bookFiles(context, seriesUrl) +
+            listOfNotNull(legacyBookFile(context, seriesUrl).takeIf { it.exists() })
+        for (f in files) {
+            readChapterDoc(f, chapterUrl)?.let { return ChapterExtract(title = it.title, paragraphs = it.paragraphs) }
+        }
+        return null
+    }
 
-    /** Copy the book to a SAF destination (file picker → Drive/USB/Downloads). */
-    fun exportTo(context: Context, seriesUrl: String, seriesTitle: String, uri: Uri): String {
+    /** Copy ONE bucket's book to a SAF destination (file picker). */
+    fun exportTo(context: Context, seriesUrl: String, bucket: String, seriesTitle: String, uri: Uri): String {
         return try {
-            val book = bookFile(context, seriesUrl)
+            val book = bookFile(context, seriesUrl, bucket)
+            if (!book.exists()) return "No book for this volume yet"
             context.contentResolver.openOutputStream(uri)?.use { out ->
                 book.inputStream().use { it.copyTo(out) }
             } ?: return "Could not open the destination"
-            "Exported ${seriesTitle}.epub (${storedCount(context, seriesUrl)} chapters)"
+            val n = readBookIndex(book).size
+            "Exported ${bookDisplayTitle(seriesTitle, bucket, bucketsOf(context, seriesUrl))} ($n chapters)"
         } catch (e: Exception) {
             DebugLog.log("EPUB", "export failed", e)
             "Export failed: ${e.message}"
         }
     }
 
-    /** Share sheet with the book via FileProvider (other e-reader apps). */
+    /** Export filename suggestion for a bucket. */
+    fun exportName(seriesTitle: String, bucket: String, buckets: Collection<String>): String =
+        bookDisplayTitle(seriesTitle, bucket, buckets).replace(" — ", " - ") + ".epub"
+
+    /** Share sheet with ALL of the series' books (one per volume/part). */
     fun shareIntent(context: Context, seriesUrl: String): Intent? {
-        val book = bookFile(context, seriesUrl)
-        if (!book.exists()) return null
-        val shared = FileProvider.getUriForFile(
-            context, context.packageName + ".fileprovider", book
-        )
-        return Intent(Intent.ACTION_SEND).apply {
-            type = "application/epub+zip"
-            putExtra(Intent.EXTRA_STREAM, shared)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val books = bookFiles(context, seriesUrl)
+        if (books.isEmpty()) return null
+        val shared = books.map {
+            FileProvider.getUriForFile(context, context.packageName + ".fileprovider", it)
+        }
+        return if (shared.size == 1) {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "application/epub+zip"
+                putExtra(Intent.EXTRA_STREAM, shared[0])
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } else {
+            Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "application/epub+zip"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(shared))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
     }
 }

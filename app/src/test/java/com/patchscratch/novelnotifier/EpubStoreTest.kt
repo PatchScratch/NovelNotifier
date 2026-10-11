@@ -197,4 +197,31 @@ class EpubStoreTest {
             assertTrue(spine.indexOf("titlepage") < spine.indexOf("c0001"))
         }
     }
+
+    // --- volume/part split (user decision 2026-10-12) ---
+
+    @Test
+    fun chapterBucket_volumesAndParts() {
+        assertEquals("v2", EpubStore.chapterBucket("v2c220"))
+        assertEquals("v10", EpubStore.chapterBucket("v10c595"))
+        assertEquals("v1", EpubStore.chapterBucket("Vol. 1 Ch. 12"))
+        assertEquals("p7", EpubStore.chapterBucket("c673"))          // (673-1)/100+1 = 7
+        assertEquals("p1", EpubStore.chapterBucket("c50"))
+        assertEquals("p2", EpubStore.chapterBucket("c101"))
+        assertEquals("p1", EpubStore.chapterBucket("no numbers"))
+        assertEquals("p6", EpubStore.chapterBucket("595 「Title」"))   // bare 595 → part 6
+    }
+
+    @Test
+    fun bookDisplayTitle_suffixRules() {
+        // lone p1 → plain series title
+        assertEquals("Kuro no Maou", EpubStore.bookDisplayTitle("Kuro no Maou", "p1", listOf("p1")))
+        // multiple parts → suffixed
+        assertEquals("Star — Part 2", EpubStore.bookDisplayTitle("Star", "p2", listOf("p1", "p2")))
+        assertEquals("Star — Part 1", EpubStore.bookDisplayTitle("Star", "p1", listOf("p1", "p2")))
+        // volumes always suffixed
+        assertEquals("Star — Vol 2", EpubStore.bookDisplayTitle("Star", "v2", listOf("v1", "v2")))
+        // p1 alongside volumes gets its part name too (it's a real split)
+        assertEquals("Star — Part 1", EpubStore.bookDisplayTitle("Star", "p1", listOf("p1", "v2")))
+    }
 }
