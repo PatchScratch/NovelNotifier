@@ -115,9 +115,20 @@ original's green and black variants. Settings picker; persisted choice.
    (light/sepia/dark), serif/sans, font size; per-page fallback to web view
    when extraction fails. Live-host spot-check still pending a Cloudflare
    cooldown after heavy testing.
-3. **Offline reading** (large): gated on the reader existing — chapter storage
-   attaches to reader display; includes the conflict-resolution prompt
-   (local vs site read position) designed here for the first time.
+3. **Offline reading** (large) — ✅ DONE (2026-10-11): `EpubStore.kt`.
+   Chapters are written as standard ePub (EPUB 3 + EPUB-2 NCX, hand-rolled
+   with java.util.zip — no dependency), one book per series in
+   filesDir/epubs/, cover embedded from CoverStore, reading order by chapter
+   number. Every successfully web-extracted chapter auto-appends (dedup by
+   chapter URL); failed extraction falls back to the stored copy ("Offline
+   copy — saved earlier") when one exists. Export via the file picker and
+   share via FileProvider from the reader's ⋮ menu. EpubStoreTest covers
+   structure rules (mimetype first/stored), round-trips incl. XML specials,
+   merge/replace, ordering, corrupt-file tolerance. Deliberately NOT in v1:
+   bulk "download series" (needs pacing against hosts — 3.3.1 via the sync
+   engine), the local-vs-site bulk read-position prompt (per-chapter MARK AS
+   READ covers correctness; bulk catch-up arrives with 3.3.1), and epubs are
+   excluded from backup zips (regenerable by re-reading; keeps backups lean).
 
    **Storage format decision (user, 2026-10-11): chapters are written as
    standard ePub files** — one book per series, chapters appended as they are

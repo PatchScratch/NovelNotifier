@@ -43,6 +43,17 @@
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
 
+        <!-- Share offline ePub books with other e-reader apps. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Chapter-alert bookkeeping: dismissals update the persisted alert
              store, and boot / app-update re-posts unseen alerts. System
              broadcasts reach non-exported receivers. -->

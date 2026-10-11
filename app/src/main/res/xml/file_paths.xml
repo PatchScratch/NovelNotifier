@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider paths: the offline ePub library (share to other e-readers). -->
+<paths>
+    <files-path name="epubs" path="epubs/"/>
+</paths>

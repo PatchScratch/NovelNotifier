@@ -8,6 +8,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -32,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,7 +46,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.edit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * Phase 3 — the reader.
@@ -109,6 +114,7 @@ fun ReaderScreen(
 ) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+    val scope = rememberCoroutineScope()
     var index by remember(target) { mutableIntStateOf(target.startIndex.coerceIn(0, target.chapters.lastIndex)) }
     var jsOn by remember(target.seriesUrl) {
         mutableStateOf(target.seriesUrl !in loadIdSet(prefs, "reader_js_off"))
@@ -131,6 +137,11 @@ fun ReaderScreen(
     var extracting by remember(target) { mutableStateOf(false) }
     var imageChapter by remember(target) { mutableStateOf(false) } // chapter is image slices, not text
     var webDecodeStamp by remember(target) { mutableStateOf("") } // pages the web decode ran on
+    // --- offline library state (3.3) ---
+    var epubCount by remember(target.seriesUrl) { mutableIntStateOf(EpubStore.storedCount(context, target.seriesUrl)) }
+    var savedOffline by remember(target) { mutableStateOf(false) } // this chapter is in the book
+    var offlineCopy by remember(target) { mutableStateOf(false) } // rendered FROM the book
+    val savedUrls = remember(target) { mutableSetOf<String>() } // already appended this session
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
     val textScroll = rememberScrollState()
 
@@ -158,6 +169,20 @@ fun ReaderScreen(
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(chapter.url)))
     }
 
+    // Offline library: export the series book via the file picker (Drive,
+    // USB, Downloads…), or hand it to another e-reader via the share sheet.
+    var exportMessage by remember { mutableStateOf("") }
+    val epubExportLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/epub+zip")
+    ) { uri ->
+        if (uri != null) scope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                EpubStore.exportTo(context, target.seriesUrl, target.seriesTitle, uri)
+            }
+            exportMessage = msg
+        }
+    }
+
     fun pickView(mode: String) {
         viewMode = mode
         saveReaderView(prefs, mode)
@@ -181,12 +206,15 @@ fun ReaderScreen(
 
     // Extraction pipeline: after each finished load (and manual retries) try
     // at ~1.2 s; JS-rendering hosts get one more shot ~2.5 s later. Only in
-    // text mode — the web view needs no extraction.
+    // text mode — the web view needs no extraction. A successful extraction
+    // appends the chapter to the series' offline ePub; total failure falls
+    // back to the stored copy when one exists (offline reading).
     LaunchedEffect(extractTick, retryKey, viewMode, chapter.url) {
         if (viewMode != READER_VIEW_TEXT || extractTick == 0) return@LaunchedEffect
         extractResult = null
         extractFailed = false
         imageChapter = false
+        offlineCopy = false
         delay(1200)
         tryExtract()
         delay(2600)
@@ -195,12 +223,46 @@ fun ReaderScreen(
             // asynchronous, so checking extractResult synchronously raced.
             tryExtract {
                 if (extractResult == null) {
-                    extractFailed = true
-                    webViewRef.value?.evaluateJavascript(imageChapterJs()) { r ->
-                        if (unwrapJsResult(r).startsWith("IMAGES")) imageChapter = true
+                    // Offline fallback first: if this chapter was read before,
+                    // serve the stored ePub copy instead of declaring failure.
+                    // (Plain callback — hop into the composable scope for IO.)
+                    scope.launch {
+                        val stored = withContext(Dispatchers.IO) {
+                            EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+                        }
+                        if (stored != null && extractResult == null) {
+                            extractResult = stored
+                            offlineCopy = true
+                            return@launch
+                        }
+                        if (stored == null && extractResult == null) {
+                            extractFailed = true
+                            webViewRef.value?.evaluateJavascript(imageChapterJs()) { r ->
+                                if (unwrapJsResult(r).startsWith("IMAGES")) imageChapter = true
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    // Auto-save: every successfully web-extracted chapter lands in the series'
+    // offline ePub (dedup by chapter URL; once per session per URL).
+    LaunchedEffect(extractResult, chapter.url) {
+        val extract = extractResult ?: return@LaunchedEffect
+        if (offlineCopy || chapter.url in savedUrls) return@LaunchedEffect
+        savedUrls.add(chapter.url)
+        val count = withContext(Dispatchers.IO) {
+            EpubStore.appendChapter(
+                context, target.seriesTitle, target.seriesUrl,
+                chapter.url, chapter.chapter, extract
+            )
+        }
+        if (count > 0) {
+            epubCount = count
+            savedOffline = true
+            DebugLog.log("EPUB", "saved ${chapter.chapter} (${extract.paragraphs.size} paragraphs) → $count chapters in book")
         }
     }
 
@@ -312,12 +374,44 @@ fun ReaderScreen(
                     text = { Text("Open in browser") },
                     onClick = { showMenu = false; openExternally() }
                 )
+                if (epubCount > 0) {
+                    DropdownMenuItem(
+                        text = { Text("Export ePub ($epubCount chapters)…") },
+                        onClick = {
+                            showMenu = false
+                            epubExportLauncher.launch("${target.seriesTitle}.epub")
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Share ePub to another app") },
+                        onClick = {
+                            showMenu = false
+                            EpubStore.shareIntent(context, target.seriesUrl)?.let {
+                                context.startActivity(Intent.createChooser(it, "Share ${target.seriesTitle}"))
+                            }
+                        }
+                    )
+                }
             }
         }
         if (progress in 1..99 && !showText) LinearProgressIndicator(
             progress = { progress / 100f },
             modifier = Modifier.fillMaxWidth()
         )
+        if (offlineCopy) {
+            Text(
+                "Offline copy — saved earlier, shown without the site",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
+        }
+        if (exportMessage.isNotBlank()) {
+            Text(
+                exportMessage,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
+        }
         if (viewMode == READER_VIEW_TEXT && extractResult == null && !extractFailed) {
             // Covers the extracting flag AND page loads that keep restarting
             // (a spinning challenge re-fires onPageFinished constantly).
