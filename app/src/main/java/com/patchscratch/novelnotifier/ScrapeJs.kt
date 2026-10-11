@@ -553,22 +553,48 @@ fun chapterExtractJs(): String = """
       return decodeSubstituted(cleaned);
     }
 
-    var paras = Array.prototype.slice.call(document.querySelectorAll('p'));
-    var score = new Map();
-    paras.forEach(function(p) {
-      if (!nodeVisible(p)) return;
-      var text = (p.innerText || '').trim();
-      if (text.length < 2) return;
-      var climb = p.parentElement;
-      while (climb && climb !== document.body) {
-        var cur = score.get(climb) || 0;
-        score.set(climb, cur + text.length);
-        climb = climb.parentElement;
+    // --- known content containers (field-verified platform selectors) -------
+    // Comment sections can hold more paragraph text than the chapter itself
+    // (Wuxiaworld et al), and ancestor scoring alone would then crown the
+    // comments. When a known platform selector matches AND holds real visible
+    // paragraph text, start there; scoring stays the fallback for everything
+    // else. Selectors verified per platform reports 2026-10-11; validate any
+    // new host before adding to this list.
+    var KNOWN_SELECTORS = ['div.chapter-inner', '.cha-words', '.novel-content',
+      '#chr-content', '.chapter-content', '#chapter-c', '.post-content',
+      '.entry-content', 'article'];
+    var best = null;
+    for (var ks = 0; ks < KNOWN_SELECTORS.length && !best; ks++) {
+      var cand = document.querySelector(KNOWN_SELECTORS[ks]);
+      if (!cand) continue;
+      var cps = cand.querySelectorAll('p');
+      var cvis = 0, cchars = 0;
+      for (var vp = 0; vp < cps.length; vp++) {
+        if (!nodeVisible(cps[vp])) continue;
+        var cvt = (cps[vp].innerText || '').trim();
+        if (cvt.length > 1) { cvis++; cchars += cvt.length; }
       }
-    });
-    var best = null, bestScore = 0;
-    score.forEach(function(v, el) { if (v > bestScore) { best = el; bestScore = v; } });
-    if (!best || bestScore < 400) return 'FAIL';
+      if (cvis >= 3 && cchars >= 400) best = cand;
+    }
+
+    if (!best) {
+      var paras = Array.prototype.slice.call(document.querySelectorAll('p'));
+      var score = new Map();
+      paras.forEach(function(p) {
+        if (!nodeVisible(p)) return;
+        var text = (p.innerText || '').trim();
+        if (text.length < 2) return;
+        var climb = p.parentElement;
+        while (climb && climb !== document.body) {
+          var cur = score.get(climb) || 0;
+          score.set(climb, cur + text.length);
+          climb = climb.parentElement;
+        }
+      });
+      var bestScore = 0;
+      score.forEach(function(v, el) { if (v > bestScore) { best = el; bestScore = v; } });
+      if (!best || bestScore < 400) return 'FAIL';
+    }
 
     // Title first: letters that appear ONLY in the heading (uppercase C, O…)
     // must be part of the derivation sample or they decode as gaps.
