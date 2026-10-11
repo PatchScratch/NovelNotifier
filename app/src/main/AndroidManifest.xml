@@ -43,6 +43,13 @@
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
 
+        <!-- Bulk offline-ePub download: survives screen-off (the reader-hosted
+             loop paused with the Activity). Same dataSync type as the engine. -->
+        <service
+            android:name=".EpubBulkService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Share offline ePub books with other e-reader apps. -->
         <provider
             android:name="androidx.core.content.FileProvider"
