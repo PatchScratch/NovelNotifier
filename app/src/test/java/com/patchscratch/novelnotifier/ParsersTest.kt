@@ -339,4 +339,31 @@ class ParsersTest {
     // JUnit's assertTrue/assertFalse with underscores to keep asserts uniform above.
     private fun assertTrue_(v: Boolean) = org.junit.Assert.assertTrue(v)
     private fun assertFalse_(v: Boolean) = org.junit.Assert.assertFalse(v)
+
+
+// --- reader-mode extraction (parseChapterExtract) ---
+
+@Test
+fun chapterExtract_parsesTitleAndParagraphs() {
+    val raw = "\"{\\\"title\\\":\\\"Chapter 500\\\",\\\"paragraphs\\\":[\\\"One.\\\",\\\"Two.\\\",\\\"Three.\\\"]}\""
+    val extract = parseChapterExtract(raw)
+    assertEquals("Chapter 500", extract?.title)
+    assertEquals(listOf("One.", "Two.", "Three."), extract?.paragraphs)
+}
+
+@Test
+fun chapterExtract_failReturnsNull() {
+    assertNull(parseChapterExtract("\"FAIL\""))
+}
+
+@Test
+fun chapterExtract_badJsonReturnsNull() {
+    assertNull(parseChapterExtract("\"{not json\""))
+}
+
+@Test
+fun chapterExtract_tooFewParagraphsReturnsNull() {
+    val raw = "\"{\\\"title\\\":\\\"x\\\",\\\"paragraphs\\\":[\\\"One.\\\",\\\"Two.\\\"]}\""
+    assertNull(parseChapterExtract(raw))
+}
 }

@@ -102,12 +102,19 @@ original's green and black variants. Settings picker; persisted choice.
    (requests AND navigations); pop-ups disabled; shares the app cookie session
    so Cloudflare gates can be completed in place. Edge-to-edge insets applied —
    without them the bars sit under the status/gesture bars and taps vanish.
-2. **Reader mode** (large): sepia/dark/light themes, serif/sans + font size,
-   content extraction. **Extraction must filter by computed styles**
-   (`getComputedStyle` in the WebView: `display != none`,
-   `visibility != hidden`, `opacity > 0`) — NU uses randomized class names,
-   zero-opacity text, inverted flexbox ordering, and JS-injected honeypots.
-   Expect this parser to break and design for fast fixes.
+2. **Reader mode** (large) — ✅ DONE (2026-10-11): `chapterExtractJs()` +
+   `parseChapterExtract` + reader text surface in `ReaderScreen.kt`.
+   Readability-lite scoring: every visible <p> credits text length to its
+   ancestors; the top container's visible paragraphs come back minus nav
+   junk, link-only stubs, consecutive duplicates and a mirrored duplicate
+   tail. Computed-style filtering exactly as the hazard note demands
+   (display/visibility/opacity + box height, ancestors included). Verified
+   against a hazard fixture (hidden ad, honeypot, zero-opacity ghost,
+   duplicate chapter) in real Chromium: 40/40 paragraphs exact, zero decoy
+   leakage. Reading prefs persisted: view (text/web), page theme
+   (light/sepia/dark), serif/sans, font size; per-page fallback to web view
+   when extraction fails. Live-host spot-check still pending a Cloudflare
+   cooldown after heavy testing.
 3. **Offline reading** (large): gated on the reader existing — chapter storage
    attaches to reader display; includes the conflict-resolution prompt
    (local vs site read position) designed here for the first time.

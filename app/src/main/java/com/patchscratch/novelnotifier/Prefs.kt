@@ -218,6 +218,43 @@ fun saveThemeMode(prefs: android.content.SharedPreferences, mode: String) {
     prefs.edit { putString("theme_mode", mode) }
 }
 
+// Reader-mode display prefs (Phase 3.2). view: "text" or "web".
+const val READER_VIEW_TEXT = "text"
+const val READER_VIEW_WEB = "web"
+
+fun loadReaderView(prefs: android.content.SharedPreferences): String {
+    return prefs.getString("reader_view", READER_VIEW_TEXT) ?: READER_VIEW_TEXT
+}
+
+fun saveReaderView(prefs: android.content.SharedPreferences, view: String) {
+    prefs.edit { putString("reader_view", view) }
+}
+
+fun loadReaderTheme(prefs: android.content.SharedPreferences): String {
+    return prefs.getString("reader_theme", "sepia") ?: "sepia"
+}
+
+fun saveReaderTheme(prefs: android.content.SharedPreferences, theme: String) {
+    prefs.edit { putString("reader_theme", theme) }
+}
+
+fun loadReaderSerif(prefs: android.content.SharedPreferences): Boolean {
+    return prefs.getBoolean("reader_serif", true)
+}
+
+fun saveReaderSerif(prefs: android.content.SharedPreferences, serif: Boolean) {
+    prefs.edit { putBoolean("reader_serif", serif) }
+}
+
+/** Body font size in sp, clamped to a sane reading range. */
+fun loadReaderFontSize(prefs: android.content.SharedPreferences): Int {
+    return prefs.getInt("reader_font_size", 17).coerceIn(12, 28)
+}
+
+fun saveReaderFontSize(prefs: android.content.SharedPreferences, size: Int) {
+    prefs.edit { putInt("reader_font_size", size.coerceIn(12, 28)) }
+}
+
 fun loadSortMode(prefs: android.content.SharedPreferences): String {
     return prefs.getString("sort_mode", SORT_UNREAD_AGE) ?: SORT_UNREAD_AGE
 }

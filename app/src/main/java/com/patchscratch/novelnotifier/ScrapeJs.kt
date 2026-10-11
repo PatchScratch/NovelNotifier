@@ -368,3 +368,107 @@ fun moveReadMarkerJs(rid: String, sidFallback: String): String = """
       }
     })();
     """.trimIndent()
+
+/**
+ * Reader-mode extraction (Phase 3.2). Runs in the READER WebView after the
+ * chapter page settles. Strategy: readability-lite scoring.
+ *
+ *   1. Every visible <p> credits its text length to each ancestor.
+ *   2. The highest-scoring ancestor (most visible paragraph text) is the
+ *      chapter container.
+ *   3. Its visible <p>s come back in DOM order, minus nav junk, ads, and
+ *      consecutive duplicates; a duplicated second half (mirror-site quirk)
+ *      is dropped.
+ *
+ * "Visible" is computed-style filtering, NOT element presence — NU-adjacent
+ * pages hide decoy text with display:none, visibility:hidden, opacity:0,
+ * zero-size boxes and JS honeypots (roadmap hazard). This payload is the
+ * piece most likely to break when a host changes markup: keep the Kotlin
+ * parser (parseChapterExtract) tolerant and the FAIL path graceful.
+ */
+fun chapterExtractJs(): String = """
+(function() {
+  try {
+    function nodeVisible(el) {
+      var p = el;
+      while (p && p !== document.body) {
+        var s = window.getComputedStyle(p);
+        if (s.display === 'none') return false;
+        if (s.visibility === 'hidden') return false;
+        if (parseFloat(s.opacity) <= 0.01) return false;
+        p = p.parentElement;
+      }
+      var r = el.getBoundingClientRect();
+      return r.height > 0;
+    }
+
+    var paras = Array.prototype.slice.call(document.querySelectorAll('p'));
+    var score = new Map();
+    paras.forEach(function(p) {
+      if (!nodeVisible(p)) return;
+      var text = (p.innerText || '').trim();
+      if (text.length < 2) return;
+      var climb = p.parentElement;
+      while (climb && climb !== document.body) {
+        var cur = score.get(climb) || 0;
+        score.set(climb, cur + text.length);
+        climb = climb.parentElement;
+      }
+    });
+    var best = null, bestScore = 0;
+    score.forEach(function(v, el) { if (v > bestScore) { best = el; bestScore = v; } });
+    if (!best || bestScore < 400) return 'FAIL';
+
+    function isJunk(t, p) {
+      if (t.length > 60) return false;
+      var low = t.toLowerCase();
+      var junk = ['prev', 'next', 'previous', 'next chapter', 'prev chapter',
+        'table of contents', 'advertisement', 'ads', 'click here', 'comments',
+        'chapter list', 'join discord', 'patreon', 'donate', 'to be continued',
+        '<< prev', 'next >>', 'home', 'index'];
+      for (var i = 0; i < junk.length; i++) if (low === junk[i]) return true;
+      // A short paragraph that is basically one link = navigation.
+      var links = p.querySelectorAll('a');
+      if (links.length && t.length < 30) {
+        var linkText = 0;
+        links.forEach = Array.prototype.forEach; // NodeList safety
+        Array.prototype.forEach.call(links, function(a) { linkText += (a.innerText || '').length; });
+        if (linkText >= t.length * 0.8) return true;
+      }
+      return false;
+    }
+
+    var out = [];
+    Array.prototype.slice.call(best.querySelectorAll('p')).forEach(function(p) {
+      if (!nodeVisible(p)) return;
+      var t = (p.innerText || '').trim();
+      if (t.length < 2 || isJunk(t, p)) return;
+      if (out.length && out[out.length - 1] === t) return; // consecutive repeat
+      out.push(t);
+    });
+
+    // Mirror sites sometimes repeat the whole chapter: drop an identical tail.
+    var half = Math.floor(out.length / 2);
+    if (out.length % 2 === 0 && half >= 4) {
+      var dup = true;
+      for (var i = 0; i < half; i++) {
+        if (out[i] !== out[half + i]) { dup = false; break; }
+      }
+      if (dup) out = out.slice(0, half);
+    }
+
+    if (out.length < 3) return 'FAIL';
+
+    var title = '';
+    var heads = best.querySelectorAll('h1, h2, h3, h4');
+    for (var h = 0; h < heads.length; h++) {
+      if (nodeVisible(heads[h])) { title = (heads[h].innerText || '').trim(); break; }
+    }
+
+    var json = out.map(function(t) { return JSON.stringify(t); }).join(',');
+    return '{"title":' + JSON.stringify(title) + ',"paragraphs":[' + json + ']}';
+  } catch (e) {
+    return 'FAIL';
+  }
+})();
+""".trimIndent()

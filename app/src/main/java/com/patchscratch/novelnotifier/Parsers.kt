@@ -387,6 +387,34 @@ data class FinderPage(
     val maxPage: Int
 )
 
+/** Extracted chapter text for reader mode (chapterExtractJs). */
+data class ChapterExtract(
+    val title: String,
+    val paragraphs: List<String>
+)
+
+/**
+ * Parse the JSON from chapterExtractJs(). 'FAIL', bad JSON, or a suspiciously
+ * short result → null: the caller falls back to the web view. Tolerant by
+ * design — this parser meets whatever a translator host looked like the day
+ * the WebView ran it.
+ */
+fun parseChapterExtract(raw: String): ChapterExtract? {
+    val unwrapped = unwrapJsResult(raw).trim()
+    if (unwrapped.isBlank() || unwrapped == "FAIL") return null
+    return try {
+        val json = org.json.JSONObject(unwrapped)
+        val arr = json.optJSONArray("paragraphs") ?: return null
+        val paragraphs = (0 until arr.length()).mapNotNull { i ->
+            arr.optString(i).trim().ifBlank { null }
+        }
+        if (paragraphs.size < 3) return null
+        ChapterExtract(title = json.optString("title"), paragraphs = paragraphs)
+    } catch (e: Exception) {
+        null
+    }
+}
+
 /**
  * Parse the JSON from finderPageJs() (series-finder grid rows). Bad or empty
  * input → an empty page with maxPage 1; callers show a retry, never an
