@@ -61,6 +61,25 @@ object BackupManager {
             .put("coverFiles", CoverStore.count(context))
     }
 
+    /** Pure so tests can verify the crash rule: only STRING_SET_KEYS may be
+     *  read as sets — reading a String/Boolean key with getStringSet throws
+     *  ClassCastException (shipped bug: v1.1..v1.2 crashed Back up library
+     *  for anyone with a theme set; caught while re-signing devices). */
+    private val STRING_SET_KEYS = listOf(
+        "list_notify_off", "list_update_off", "series_notify_off",
+        "last_read", "read_titles"
+    )
+
+    fun backupPrefValues(prefs: android.content.SharedPreferences): Map<String, Any?> = buildMap {
+        put("check_hours", prefs.getInt("check_hours", 12))
+        STRING_SET_KEYS.forEach { put(it, prefs.getStringSet(it, null)) }
+        put("layout_mode", prefs.getString("layout_mode", null))
+        put("sort_mode", prefs.getString("sort_mode", null))
+        put("theme_mode", prefs.getString("theme_mode", null))
+        put("stack_notifications", prefs.getBoolean("stack_notifications", true))
+        put("custom_theme_name", prefs.getString("custom_theme_name", null))
+    }
+
     suspend fun export(context: Context, uri: android.net.Uri): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val output = context.contentResolver.openOutputStream(uri)
             ?: return@withContext "Could not open the destination"
@@ -71,15 +90,7 @@ object BackupManager {
             .put("containsLogin", false)
             .put("counts", snapshotCounts(context))
         val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
-        val prefValues = buildMap<String, Any?> {
-            put("check_hours", prefs.getInt("check_hours", 12))
-            PORTED_KEYS.filter { it != "check_hours" }.forEach { put(it, prefs.getStringSet(it, null)) }
-            put("layout_mode", prefs.getString("layout_mode", null))
-            put("sort_mode", prefs.getString("sort_mode", null))
-            put("theme_mode", prefs.getString("theme_mode", null))
-            put("stack_notifications", prefs.getBoolean("stack_notifications", true))
-            put("custom_theme_name", prefs.getString("custom_theme_name", null))
-        }
+        val prefValues = backupPrefValues(prefs)
         val customThemeFile = context.filesDir.resolve("custom_theme.json")
         ZipOutputStream(output.buffered()).use { zip ->
             fun put(name: String, bytes: ByteArray) {

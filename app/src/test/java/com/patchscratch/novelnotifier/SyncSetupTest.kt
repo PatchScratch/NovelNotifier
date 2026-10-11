@@ -5,6 +5,25 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+
+/** Minimal prefs fake backing the backup regression test (see AlertStoreTest
+ *  for the full-featured twin). */
+class FakePrefsForBackup : android.content.SharedPreferences {
+    private val values = mutableMapOf<String, Any?>()
+    fun putRaw(key: String, value: Any?) { values[key] = value }
+    override fun getAll() = values
+    override fun getString(key: String, defValue: String?) = values[key] as? String ?: defValue
+    override fun getStringSet(key: String, defValues: Set<String>?) = values[key] as? Set<String> ?: defValues
+    override fun getInt(key: String, defValue: Int) = values[key] as? Int ?: defValue
+    override fun getLong(key: String, defValue: Long) = values[key] as? Long ?: defValue
+    override fun getFloat(key: String, defValue: Float) = values[key] as? Float ?: defValue
+    override fun getBoolean(key: String, defValue: Boolean) = values[key] as? Boolean ?: defValue
+    override fun contains(key: String) = values.containsKey(key)
+    override fun edit(): android.content.SharedPreferences.Editor = throw UnsupportedOperationException()
+    override fun registerOnSharedPreferenceChangeListener(l: android.content.SharedPreferences.OnSharedPreferenceChangeListener?) {}
+    override fun unregisterOnSharedPreferenceChangeListener(l: android.content.SharedPreferences.OnSharedPreferenceChangeListener?) {}
+}
+
 /**
  * Tests for the onboarding math and the shared list-page parser — the pieces
  * that decide what the user is told and in what order the library downloads.
@@ -137,5 +156,25 @@ class SyncSetupTest {
         // Display + notification choices travel between devices.
         assertEquals("black", json.optString("theme_mode"))
         assertEquals(false, json.optBoolean("stack_notifications", true))
+    }
+
+    // --- backup export regression: mixed-type prefs must not crash ---
+    // v1.1..v1.2 shipped a ClassCastException: the export snapshot read every
+    // ported key as a StringSet, so a String theme_mode (or Boolean stack
+    // toggle) killed "Back up library". Found while re-signing devices.
+
+    @Test
+    fun backupValues_mixedTypePrefsDoNotCrash() {
+        val prefs = com.patchscratch.novelnotifier.FakePrefsForBackup().apply {
+            putRaw("theme_mode", "black")             // String
+            putRaw("stack_notifications", false)      // Boolean
+            putRaw("custom_theme_name", "Ocean")      // String
+            putRaw("check_hours", 6)                  // Int
+            putRaw("list_notify_off", setOf("3"))     // real set
+        }
+        val values = BackupManager.backupPrefValues(prefs)
+        assertEquals("black", values["theme_mode"])
+        assertEquals(false, values["stack_notifications"])
+        assertEquals(setOf("3"), values["list_notify_off"])
     }
 }

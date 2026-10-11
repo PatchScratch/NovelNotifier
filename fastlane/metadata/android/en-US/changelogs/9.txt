@@ -1,0 +1,1 @@
+Fixes "Back up library" crashing for anyone with a theme set (mixed-type prefs bug, v1.1-v1.2). Also the release-key re-sign release — see v1.2.1 notes for the one-time reinstall.
