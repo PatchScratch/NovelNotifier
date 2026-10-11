@@ -124,11 +124,14 @@ original's green and black variants. Settings picker; persisted choice.
    copy — saved earlier") when one exists. Export via the file picker and
    share via FileProvider from the reader's ⋮ menu. EpubStoreTest covers
    structure rules (mimetype first/stored), round-trips incl. XML specials,
-   merge/replace, ordering, corrupt-file tolerance. Deliberately NOT in v1:
-   bulk "download series" (needs pacing against hosts — 3.3.1 via the sync
-   engine), the local-vs-site bulk read-position prompt (per-chapter MARK AS
-   READ covers correctness; bulk catch-up arrives with 3.3.1), and epubs are
-   excluded from backup zips (regenerable by re-reading; keeps backups lean).
+   merge/replace, ordering, corrupt-file tolerance. Saving is PER-SERIES
+   opt-in (user decision: a 1400-series library must not silently fill device
+   storage) — an enabled series auto-saves chapters as read; "Save this
+   chapter offline" is an explicit one-off any time; "Download all N loaded
+   chapters" bulk-walks the loaded pages (one load per chapter, 1.8 s
+   courtesy gap, saved chapters skipped without network, stoppable). Still
+   future (3.3.1): engine-paced download BEYOND loaded pages, the bulk
+   read-position catch-up prompt, and epubs stay out of backup zips.
 
    **Storage format decision (user, 2026-10-11): chapters are written as
    standard ePub files** — one book per series, chapters appended as they are
