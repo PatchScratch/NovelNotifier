@@ -83,12 +83,16 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra("probe_endpoints", false) == true) probeRequested = true
         handleSeriesDeepLink(intent)
         setContent {
-            NovelNotifierTheme {
+            // Hoisted so Settings can re-theme the whole app without a restart.
+            var themeMode by remember {
+                mutableStateOf(loadThemeMode(getSharedPreferences("novel_prefs", MODE_PRIVATE)))
+            }
+            NovelNotifierTheme(mode = themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    NovelApp()
+                    NovelApp(onThemeChange = { themeMode = it })
                 }
             }
         }
@@ -114,7 +118,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun NovelApp() {
+fun NovelApp(onThemeChange: (String) -> Unit = {}) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
@@ -428,6 +432,7 @@ fun NovelApp() {
             currentHours = checkHours,
             loginState = loginState,
             syncStatus = syncStatus,
+            onThemeChange = onThemeChange,
             onStartCoverSync = {
                 if (Build.VERSION.SDK_INT >= 33 &&
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -557,7 +562,7 @@ fun NovelApp() {
 @Preview(showBackground = true)
 @Composable
 fun NovelAppPreview() {
-    NovelNotifierTheme {
+    NovelNotifierTheme(mode = THEME_SYSTEM) {
         NovelApp()
     }
 }

@@ -44,6 +44,7 @@ fun SettingsScreen(
     currentHours: Int,
     loginState: String,
     syncStatus: String,
+    onThemeChange: (String) -> Unit = {},
     onStartCoverSync: () -> Unit,
     onStopCoverSync: () -> Unit,
     onCheckNow: () -> Unit,
@@ -59,6 +60,7 @@ fun SettingsScreen(
     var hours by remember { mutableIntStateOf(currentHours) }
     var layoutMode by remember { mutableStateOf(loadLayoutMode(prefs)) }
     var stackAlerts by remember { mutableStateOf(loadStackAlerts(prefs)) }
+    var themeMode by remember { mutableStateOf(loadThemeMode(prefs)) }
     var backupMessage by remember { mutableStateOf("") }
     val options = listOf(1, 6, 12, 24)
 
@@ -71,6 +73,13 @@ fun SettingsScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) scope.launch { backupMessage = BackupManager.restore(context, uri) }
+    }
+
+    // Persist + tell MainActivity so the new palette applies immediately.
+    fun pickTheme(mode: String) {
+        themeMode = mode
+        saveThemeMode(prefs, mode)
+        onThemeChange(mode)
     }
 
     Column(
@@ -145,6 +154,30 @@ fun SettingsScreen(
                 saveLayoutMode(prefs, LAYOUT_GRID)
             })
             Text("Dynamic grid")
+        }
+
+        Text(
+            text = "Theme. Green is the Novel Updates house style; AMOLED black saves battery on OLED screens; wallpaper colors follow Material You.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
+        )
+        val themeOptions = buildList {
+            add(THEME_SYSTEM to "Follow system (light / dark)")
+            add(THEME_LIGHT to "Light")
+            add(THEME_DARK to "Dark")
+            add(THEME_BLACK to "AMOLED black")
+            if (android.os.Build.VERSION.SDK_INT >= 31) add(THEME_DYNAMIC to "Wallpaper colors")
+        }
+        themeOptions.forEach { (mode, label) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { pickTheme(mode) }
+            ) {
+                RadioButton(selected = themeMode == mode, onClick = { pickTheme(mode) })
+                Text(label)
+            }
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))

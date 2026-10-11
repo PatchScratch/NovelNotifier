@@ -31,7 +31,8 @@ object BackupManager {
         "check_hours",
         "list_notify_off", "list_update_off", "series_notify_off",
         "last_read", "read_titles",
-        "layout_mode", "sort_mode"
+        "layout_mode", "sort_mode",
+        "theme_mode", "stack_notifications"
     )
 
     /** Pure so tests can verify the credentials-exclusion rule. */
@@ -42,6 +43,7 @@ object BackupManager {
             when (value) {
                 null -> {}
                 is Int -> json.put(key, value)
+                is Boolean -> json.put(key, value)
                 is String -> json.put(key, value)
                 is Set<*> -> json.put(key, org.json.JSONArray(value))
             }
@@ -73,6 +75,8 @@ object BackupManager {
             PORTED_KEYS.filter { it != "check_hours" }.forEach { put(it, prefs.getStringSet(it, null)) }
             put("layout_mode", prefs.getString("layout_mode", null))
             put("sort_mode", prefs.getString("sort_mode", null))
+            put("theme_mode", prefs.getString("theme_mode", null))
+            put("stack_notifications", prefs.getBoolean("stack_notifications", true))
         }
         ZipOutputStream(output.buffered()).use { zip ->
             fun put(name: String, bytes: ByteArray) {
@@ -141,7 +145,8 @@ object BackupManager {
             json.keys().forEach { key ->
                 when (key) {
                     "check_hours" -> putInt(key, json.optInt(key, 12))
-                    "layout_mode", "sort_mode" -> putString(key, json.optString(key))
+                    "layout_mode", "sort_mode", "theme_mode" -> putString(key, json.optString(key))
+                    "stack_notifications" -> putBoolean(key, json.optBoolean(key, true))
                     else -> {
                         val arr = json.optJSONArray(key)
                         if (arr != null) {

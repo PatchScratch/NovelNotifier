@@ -122,7 +122,9 @@ class SyncSetupTest {
                 "check_hours" to 12,
                 "list_update_off" to setOf("9"),
                 "nu_cookies" to "wordpress_logged_in=SECRET",
-                "cf_needed" to true
+                "cf_needed" to true,
+                "theme_mode" to "black",
+                "stack_notifications" to false
             )
         )
         // The feed link carries a private access token and is auto-captured on
@@ -132,5 +134,8 @@ class SyncSetupTest {
         assertFalse(json.has("cf_needed"))
         assertEquals(12, json.optInt("check_hours"))
         assertTrue(json.has("list_update_off"))
+        // Display + notification choices travel between devices.
+        assertEquals("black", json.optString("theme_mode"))
+        assertEquals(false, json.optBoolean("stack_notifications", true))
     }
 }

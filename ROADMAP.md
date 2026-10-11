@@ -38,14 +38,14 @@ log). Remove the probe file with 2.2's cleanup.
 
 Dead end noted: `/series-search/?src=` renders nothing — do not use.
 
-### 2.1 Change list via `updatelist.php` (small)
+### 2.1 Change list via `updatelist.php` (small) — ✅ DONE (2026-10-10)
 
 Replace the jQuery `change`-trigger JS in `moveToListJs()` with the direct GET
 endpoint (same pattern as the read marker). Lower failure rate, one round trip.
 *Acceptance: moving a series between lists survives a hard refresh on the NU
 site, and works when jQuery is absent.*
 
-### 2.2 Site search (medium)
+### 2.2 Site search (medium) — ✅ DONE (2026-10-10)
 
 - `SearchScreen`: query field, autocomplete suggestions (the original's v1.13
   feature — the AJAX endpoint serves them), paged result grid reusing
@@ -55,7 +55,7 @@ site, and works when jQuery is absent.*
 - *Acceptance: searching a known title finds it; paging loads more; a series
   can be added to a list without leaving the app.*
 
-### 2.3 Discover (medium)
+### 2.3 Discover (medium) — ✅ DONE (2026-10-10)
 
 - Drawer item → `DiscoverScreen`: rankings grid, paged, rank-type tabs from
   the spike results.
@@ -63,7 +63,7 @@ site, and works when jQuery is absent.*
 - *Acceptance: browse N pages without tripping Cloudflare at normal use speed;
   parser failure shows a retry, never an empty "no results".*
 
-### 2.4 Notification polish (small–medium)
+### 2.4 Notification polish (small–medium) — ✅ DONE (2026-10-11)
 
 - **Tap → in-app detail page** instead of the browser (introduces the first
   real deep link: notification → `NovelDetailScreen`; needs the nav handoff
@@ -75,7 +75,11 @@ site, and works when jQuery is absent.*
   the active chapter notifications (original app's
   `NotificationClearedReceiver` pattern).
 
-### 2.5 Themes (small)
+### 2.5 Themes (small) — ✅ DONE (2026-10-11)
+
+Shipped: green identity palette (light/dark/auto), AMOLED black variant,
+optional Material You wallpaper colors (Android 12+). Picker in Settings →
+Display; choice persists and travels in backups.
 
 Material 3 color schemes: light / dark / **auto (system)** default, plus the
 original's green and black variants. Settings picker; persisted choice.
