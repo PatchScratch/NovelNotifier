@@ -32,7 +32,8 @@ object BackupManager {
         "list_notify_off", "list_update_off", "series_notify_off",
         "last_read", "read_titles",
         "layout_mode", "sort_mode",
-        "theme_mode", "stack_notifications"
+        "theme_mode", "stack_notifications",
+        "custom_theme_name"
     )
 
     /** Pure so tests can verify the credentials-exclusion rule. */
@@ -77,7 +78,9 @@ object BackupManager {
             put("sort_mode", prefs.getString("sort_mode", null))
             put("theme_mode", prefs.getString("theme_mode", null))
             put("stack_notifications", prefs.getBoolean("stack_notifications", true))
+            put("custom_theme_name", prefs.getString("custom_theme_name", null))
         }
+        val customThemeFile = context.filesDir.resolve("custom_theme.json")
         ZipOutputStream(output.buffered()).use { zip ->
             fun put(name: String, bytes: ByteArray) {
                 zip.putNextEntry(ZipEntry(name))
@@ -88,6 +91,9 @@ object BackupManager {
             put(BACKUP_PREFS, backupPrefsJson(prefValues).toString().toByteArray())
             listOfNotNull(context.filesDir.resolve("list_cache.json").takeIf { it.exists() }).forEach {
                 put("data/list_cache.json", it.readBytes())
+            }
+            listOfNotNull(customThemeFile.takeIf { it.exists() }).forEach {
+                put("data/custom_theme.json", it.readBytes())
             }
             context.filesDir.resolve("series_cache").listFiles().orEmpty().forEach {
                 put("data/series_cache/${it.name}", it.readBytes())
@@ -115,6 +121,10 @@ object BackupManager {
                     name == BACKUP_PREFS -> applyPrefs(context, zip.readBytes())
                     name == "data/list_cache.json" -> {
                         context.filesDir.resolve("list_cache.json").writeBytes(zip.readBytes())
+                        restoredFiles++
+                    }
+                    name == "data/custom_theme.json" -> {
+                        context.filesDir.resolve("custom_theme.json").writeBytes(zip.readBytes())
                         restoredFiles++
                     }
                     name.startsWith("data/series_cache/") -> {
@@ -145,7 +155,8 @@ object BackupManager {
             json.keys().forEach { key ->
                 when (key) {
                     "check_hours" -> putInt(key, json.optInt(key, 12))
-                    "layout_mode", "sort_mode", "theme_mode" -> putString(key, json.optString(key))
+                    "layout_mode", "sort_mode", "theme_mode", "custom_theme_name" ->
+                        putString(key, json.optString(key))
                     "stack_notifications" -> putBoolean(key, json.optBoolean(key, true))
                     else -> {
                         val arr = json.optJSONArray(key)

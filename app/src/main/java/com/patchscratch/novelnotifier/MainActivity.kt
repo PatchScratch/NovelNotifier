@@ -89,15 +89,20 @@ class MainActivity : ComponentActivity() {
         handleSeriesDeepLink(intent)
         setContent {
             // Hoisted so Settings can re-theme the whole app without a restart.
+            // customTheme is the imported JSON theme; reloaded on every import.
             var themeMode by remember {
                 mutableStateOf(loadThemeMode(getSharedPreferences("novel_prefs", MODE_PRIVATE)))
             }
-            NovelNotifierTheme(mode = themeMode) {
+            var customTheme by remember { mutableStateOf<CustomTheme?>(loadCustomTheme(this)) }
+            NovelNotifierTheme(mode = themeMode, custom = customTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    NovelApp(onThemeChange = { themeMode = it })
+                    NovelApp(
+                        onThemeChange = { themeMode = it },
+                        onCustomThemeReady = { customTheme = it }
+                    )
                 }
             }
         }
@@ -124,7 +129,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun NovelApp(onThemeChange: (String) -> Unit = {}) {
+fun NovelApp(
+    onThemeChange: (String) -> Unit = {},
+    onCustomThemeReady: (CustomTheme?) -> Unit = {}
+) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
@@ -444,6 +452,7 @@ fun NovelApp(onThemeChange: (String) -> Unit = {}) {
             loginState = loginState,
             syncStatus = syncStatus,
             onThemeChange = onThemeChange,
+            onCustomThemeReady = onCustomThemeReady,
             onStartCoverSync = {
                 if (Build.VERSION.SDK_INT >= 33 &&
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=

@@ -202,12 +202,13 @@ fun saveStackAlerts(prefs: android.content.SharedPreferences, stack: Boolean) {
 
 // Theme modes (Settings → Display). "system" follows the OS light/dark switch
 // with the green palette; "black" is the AMOLED variant of dark; "dynamic" is
-// wallpaper colors on Android 12+.
+// wallpaper colors on Android 12+; "custom" is the user's imported JSON theme.
 const val THEME_SYSTEM = "system"
 const val THEME_LIGHT = "light"
 const val THEME_DARK = "dark"
 const val THEME_BLACK = "black"
 const val THEME_DYNAMIC = "dynamic"
+const val THEME_CUSTOM = "custom"
 
 fun loadThemeMode(prefs: android.content.SharedPreferences): String {
     return prefs.getString("theme_mode", THEME_SYSTEM) ?: THEME_SYSTEM

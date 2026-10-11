@@ -45,6 +45,7 @@ fun SettingsScreen(
     loginState: String,
     syncStatus: String,
     onThemeChange: (String) -> Unit = {},
+    onCustomThemeReady: (CustomTheme?) -> Unit = {},
     onStartCoverSync: () -> Unit,
     onStopCoverSync: () -> Unit,
     onCheckNow: () -> Unit,
@@ -61,6 +62,11 @@ fun SettingsScreen(
     var layoutMode by remember { mutableStateOf(loadLayoutMode(prefs)) }
     var stackAlerts by remember { mutableStateOf(loadStackAlerts(prefs)) }
     var themeMode by remember { mutableStateOf(loadThemeMode(prefs)) }
+    // Mirrors filesDir/custom_theme.json; the radio only exists while set.
+    var customThemeName by remember {
+        mutableStateOf(prefs.getString("custom_theme_name", "").orEmpty())
+    }
+    var themeMessage by remember { mutableStateOf("") }
     var backupMessage by remember { mutableStateOf("") }
     val options = listOf(1, 6, 12, 24)
 
@@ -80,6 +86,43 @@ fun SettingsScreen(
         themeMode = mode
         saveThemeMode(prefs, mode)
         onThemeChange(mode)
+    }
+
+    // Import a user theme file: validate, store, switch to it — or show why not.
+    val themeImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch {
+            try {
+                val parsed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    importCustomTheme(context, uri)
+                }
+                customThemeName = parsed.name
+                themeMessage = "Imported \"${parsed.name}\""
+                onCustomThemeReady(parsed)
+                pickTheme(THEME_CUSTOM)
+            } catch (e: ThemeParseException) {
+                themeMessage = "Theme not imported: ${e.message}"
+            } catch (e: Exception) {
+                themeMessage = "Theme not imported: ${e.message}"
+            }
+        }
+    }
+    val themeTemplateLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) scope.launch {
+            themeMessage = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                        it.write(templateThemeJson())
+                    } ?: return@withContext "Could not open the destination"
+                    "Template saved — edit it and import it back"
+                } catch (e: Exception) {
+                    "Could not save template: ${e.message}"
+                }
+            }
+        }
     }
 
     Column(
@@ -167,6 +210,7 @@ fun SettingsScreen(
             add(THEME_DARK to "Dark")
             add(THEME_BLACK to "AMOLED black")
             if (android.os.Build.VERSION.SDK_INT >= 31) add(THEME_DYNAMIC to "Wallpaper colors")
+            if (customThemeName.isNotBlank()) add(THEME_CUSTOM to "Custom: $customThemeName")
         }
         themeOptions.forEach { (mode, label) ->
             Row(
@@ -178,6 +222,23 @@ fun SettingsScreen(
                 RadioButton(selected = themeMode == mode, onClick = { pickTheme(mode) })
                 Text(label)
             }
+        }
+        TextButton(
+            onClick = {
+                themeImportLauncher.launch(arrayOf("application/json", "text/*", "application/octet-stream"))
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Import theme file (JSON)…") }
+        TextButton(
+            onClick = { themeTemplateLauncher.launch("novelnotifier-theme.json") },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Save a theme template to edit") }
+        if (themeMessage.isNotBlank()) {
+            Text(
+                text = themeMessage,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))

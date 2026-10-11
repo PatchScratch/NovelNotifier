@@ -81,6 +81,15 @@ Shipped: green identity palette (light/dark/auto), AMOLED black variant,
 optional Material You wallpaper colors (Android 12+). Picker in Settings →
 Display; choice persists and travels in backups.
 
+### 2.6 Custom theme files (small) — ✅ DONE (2026-10-11)
+
+User themes from a JSON file: Settings → Display → import via the file
+picker; "Save a theme template" writes a complete editable starter. Strict
+validation (unknown roles / malformed colors abort with a message), omitted
+roles fall back to the built-in green, light+dark follow the system switch,
+single-mode files pin that mode. Stored in the app and carried in backups.
+Format documented in README → "Custom themes".
+
 Material 3 color schemes: light / dark / **auto (system)** default, plus the
 original's green and black variants. Settings picker; persisted choice.
 

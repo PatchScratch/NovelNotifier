@@ -14,9 +14,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.patchscratch.novelnotifier.THEME_BLACK
+import com.patchscratch.novelnotifier.THEME_CUSTOM
 import com.patchscratch.novelnotifier.THEME_DARK
 import com.patchscratch.novelnotifier.THEME_DYNAMIC
 import com.patchscratch.novelnotifier.THEME_LIGHT
+import com.patchscratch.novelnotifier.applyThemeColors
+import com.patchscratch.novelnotifier.CustomTheme
 
 /**
  * App themes. [mode] is the persisted Settings choice (Prefs.kt constants):
@@ -25,6 +28,10 @@ import com.patchscratch.novelnotifier.THEME_LIGHT
  *   dark    — green palette, always dark
  *   black   — AMOLED variant of dark, true-black surfaces
  *   dynamic — wallpaper colors (Material You, Android 12+), light or dark by OS
+ *   custom  — the user's imported JSON theme ([custom]); follows the system
+ *             light/dark switch when the file defines both variants, else
+ *             always uses the one it defines. Omitted roles keep the green.
+ *             A missing/unreadable file falls back to system green silently.
  */
 
 private val LightScheme = lightColorScheme(
@@ -85,16 +92,30 @@ private val BlackScheme = DarkScheme.copy(
 @Composable
 fun NovelNotifierTheme(
     mode: String,
+    custom: CustomTheme? = null,
     content: @Composable () -> Unit
 ) {
     val systemDark = isSystemInDarkTheme()
-    val dark = mode == THEME_DARK || mode == THEME_BLACK || (mode != THEME_LIGHT && systemDark)
+    val customLight = custom?.light?.let { applyThemeColors(LightScheme, it) }
+    val customDark = custom?.dark?.let { applyThemeColors(DarkScheme, it) }
+    val dark = when (mode) {
+        THEME_DARK, THEME_BLACK -> true
+        THEME_LIGHT -> false
+        THEME_CUSTOM -> when {
+            customDark != null && customLight != null -> systemDark
+            customDark != null -> true
+            else -> false
+        }
+        else -> systemDark
+    }
     val colorScheme = when {
         mode == THEME_DYNAMIC && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
         mode == THEME_BLACK -> BlackScheme
+        mode == THEME_CUSTOM && (customLight != null || customDark != null) ->
+            if (dark) customDark ?: customLight!! else customLight ?: customDark!!
         dark -> DarkScheme
         else -> LightScheme
     }

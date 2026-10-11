@@ -65,6 +65,27 @@ import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.seconds
 
 /**
+ * Layout mode for the pane WebViews (shared with NovelListScreen). Hidden, the
+ * WebView scrapes server HTML where a desktop-ish layout viewport
+ * (useWideViewPort, ~980px) matches how the site serves pages. Expanded for a
+ * Cloudflare check, that viewport makes the challenge render as a zoomed-in
+ * desktop page — checkbox off-screen, both axes scrolling. setInitialScale(100)
+ * alone does not fix it: the scale is capped but the LAYOUT stays 980px wide.
+ * Mobile mode lays the page out at the pane's real width, 1:1 scale, system
+ * font zoom cancelled — a normal phone-sized challenge box.
+ */
+fun applyChallengeLayout(webView: WebView, mobile: Boolean) {
+    webView.settings.useWideViewPort = !mobile
+    webView.settings.loadWithOverviewMode = !mobile
+    if (mobile) {
+        webView.setInitialScale(100)
+        webView.settings.textZoom = 100
+    } else {
+        webView.setInitialScale(0) // 0 = WebView picks (overview for wide pages)
+    }
+}
+
+/**
  * One series: INFO + RELEASES, CHANGE LIST, mark as read, ⋮ Refresh.
  *
  * How Compose state works here:
@@ -782,17 +803,17 @@ fun NovelDetailScreen(
                     if (!challengeRescaled) {
                         challengeRescaled = true
                         // The page was laid out at 1dp while hidden, which
-                        // wrecks the WebView's computed zoom. Force a sane
-                        // scale and reload AFTER this frame's layout pass
+                        // wrecks the WebView's computed zoom. Relayout as a
+                        // phone page and reload AFTER this frame's layout pass
                         // (post), when the pane has its real size.
                         webView.post {
-                            webView.setInitialScale(100)
-                            webView.settings.textZoom = 100
+                            applyChallengeLayout(webView, mobile = true)
                             webView.reload()
                         }
                     }
                 } else {
                     challengeRescaled = false
+                    applyChallengeLayout(webView, mobile = false)
                     webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 }
                 webView.webViewClient = object : WebViewClient() {

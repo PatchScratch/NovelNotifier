@@ -13,6 +13,7 @@ This is a clean-room, from-scratch replacement for the abandoned *"Notifications
 - **Cross-device read sync** — chapters you mark as read on one device appear read on your others via NU's read-activity feed.
 - **Series pages** — INFO + full RELEASES table (cached page by page), next-chapter card, mark-as-read and list changes written back to the site.
 - **Backups & device transfer** — one zip with your lists, chapter caches, cover images, and settings; export/import through the system file picker (Google Drive, OneDrive, USB — anywhere it reaches). Backups never contain your password, login session, or feed tokens.
+- **Themes** — light/dark/AMOLED-black/Material You, plus **custom themes from a JSON file** (see below).
 - **Debug log** — a rotating on-device log of every Cloudflare encounter, scrape outcome, and image failure, pullable via adb (see below).
 
 ## How it works
@@ -40,7 +41,9 @@ There is no API and no Cloudflare bypass. The app embeds WebViews that share a r
 | `CoverStore.kt` / `CoverUi.kt` | Cover image files on disk; thumbnails prefer local files, then the network. |
 | `BackupManager.kt` | One-zip export/import via the system file picker. Never contains login or feed tokens. |
 | `UpdateCheck.kt` | Background checks (RSS when configured, engine list-checks otherwise) via WorkManager. |
-| `ChapterAlerts.kt` | Grouped chapter notifications and mute rules. |
+| `ChapterAlerts.kt` | Grouped chapter notifications, mute rules, tap deep links, and the persisted alert store that survives reboots. |
+| `AlertReceivers.kt` | Dismissal bookkeeping + BOOT_COMPLETED / app-update re-posting of unseen alerts. |
+| `CustomTheme.kt` | Custom JSON themes: parser, strict validation, import, and the editable template. |
 | `SettingsScreen.kt`, `ListOptionsScreen.kt`, `LoginWebScreen.kt`, `EditListsScreen.kt` | Screens. |
 | `SeriesSync.kt` | Per-series merge after a new chapter is detected. |
 | `DebugLog.kt` | Rotating file log for on-device diagnosis. |
@@ -66,6 +69,47 @@ The app records Cloudflare encounters (which detector, which URL), sync/check ou
 ```
 adb shell run-as com.patchscratch.novelnotifier cat files/debug.log > debug.log
 ```
+
+## Themes
+
+Settings → **Display** offers the built-in looks: **Follow system** (light/dark, the default), Light, Dark, **AMOLED black** (true-black surfaces for OLED screens), and **Wallpaper colors** (Material You, Android 12+). Your choice — plus the layout and notification preferences — travels inside backups.
+
+### Custom themes
+
+You can also theme the app yourself with a JSON file:
+
+1. **Save a theme template** in Settings → Display — it writes a complete, working starter file (`novelnotifier-theme.json`, pre-filled with the built-in green palette) through the file picker.
+2. Edit the colors in any text editor. Delete any line you don't care about — anything omitted falls back to the built-in green.
+3. **Import theme file (JSON)…** picks it back up. The theme applies immediately and shows in the picker as **Custom: *name***.
+
+The format:
+
+```json
+{
+  "name": "Ocean",
+  "light": {
+    "primary": "#0B57D0",
+    "background": "#F8F9FF",
+    "surface": "#F8F9FF"
+  },
+  "dark": {
+    "primary": "#A8C7FA",
+    "background": "#0F1420",
+    "surface": "#0F1420"
+  }
+}
+```
+
+Rules:
+
+- `"light"` and `"dark"` are each optional, but **at least one is required**. With both, the theme follows the system light/dark switch; with only one, that scheme is always used.
+- Colors are `"#RRGGBB"` or `"#AARRGGBB"` (alpha first).
+- Settable roles: `primary`, `onPrimary`, `primaryContainer`, `onPrimaryContainer`, `secondary`, `onSecondary`, `secondaryContainer`, `onSecondaryContainer`, `tertiary`, `onTertiary`, `tertiaryContainer`, `onTertiaryContainer`, `background`, `onBackground`, `surface`, `onSurface`, `surfaceVariant`, `onSurfaceVariant`, `outline`.
+- Pair each color with its `on…` partner (e.g. `background` + `onBackground`) or text may become unreadable — contrast is your responsibility, the app doesn't check it.
+- Typos fail loudly: an unknown role or malformed color aborts the import with a message naming the problem. Nothing half-applies.
+- The imported file is stored inside the app and copied into backups, so it moves with your library to a new device.
+
+The on-screen contrast tip: the status bar icon color follows whichever scheme is active, so light text on a light status bar in your theme usually means `background`/`onBackground` got swapped.
 
 ## Backups & moving devices
 

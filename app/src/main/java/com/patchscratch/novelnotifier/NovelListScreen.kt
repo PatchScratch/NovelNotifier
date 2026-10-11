@@ -713,19 +713,19 @@ fun NovelListScreen(
                 if (!challengeRescaled) {
                     challengeRescaled = true
                     // The page was laid out at 1dp while hidden, which wrecks
-                    // the WebView's computed zoom. Force a sane scale and
+                    // the WebView's computed zoom. Relayout as a phone page
+                    // (width = pane, 1:1 scale — see applyChallengeLayout) and
                     // reload AFTER this frame's layout pass (post), when the
-                    // pane has its real size — reload() alone keeps the old
-                    // broken scale, and waiting for width to change may never
-                    // re-run update on this screen.
+                    // pane has its real size; reload() alone keeps the old
+                    // broken layout.
                     webView.post {
-                        webView.setInitialScale(100)
-                        webView.settings.textZoom = 100
+                        applyChallengeLayout(webView, mobile = true)
                         webView.reload()
                     }
                 }
             } else {
                 challengeRescaled = false
+                applyChallengeLayout(webView, mobile = false)
                 webView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
             }
             val target = if (selectedListId.isBlank()) {
