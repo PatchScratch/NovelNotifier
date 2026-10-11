@@ -66,11 +66,16 @@ class MainActivity : ComponentActivity() {
         @Volatile var probeRequested = false
 
         /**
-         * Chapter-alert deep links. Notifications carry open_series_* extras;
-         * they may arrive before composition (cold start) or while running
-         * (onNewIntent), so a SharedFlow bridges both into NovelApp. No replay:
-         * a restored process must not reopen a stale series.
+         * Chapter-alert deep links. Notifications carry open_series_* extras.
+         * Cold start: onCreate runs long before NovelApp composes, and a
+         * no-replay SharedFlow drops a value emitted with no subscribers — so
+         * the request parks in a volatile that NovelApp consumes on first
+         * composition. Warm taps (onNewIntent) go through the flow, which the
+         * running collector receives instantly. No replay: a recreated process
+         * must not reopen a stale series.
          */
+        @Volatile var openSeriesRequested: SeriesDeepLink? = null
+
         private val seriesRequests =
             kotlinx.coroutines.flow.MutableSharedFlow<SeriesDeepLink>(extraBufferCapacity = 4)
         val openSeriesRequests = seriesRequests
@@ -107,13 +112,14 @@ class MainActivity : ComponentActivity() {
 
     private fun handleSeriesDeepLink(intent: android.content.Intent?) {
         val url = intent?.getStringExtra(EXTRA_OPEN_SERIES_URL) ?: return
-        seriesRequests.tryEmit(
-            SeriesDeepLink(
-                url = url,
-                title = intent.getStringExtra(EXTRA_OPEN_SERIES_TITLE).orEmpty(),
-                chapter = intent.getStringExtra(EXTRA_OPEN_SERIES_CHAPTER).orEmpty()
-            )
+        val link = SeriesDeepLink(
+            url = url,
+            title = intent.getStringExtra(EXTRA_OPEN_SERIES_TITLE).orEmpty(),
+            chapter = intent.getStringExtra(EXTRA_OPEN_SERIES_CHAPTER).orEmpty()
         )
+        // Park for the cold-start consumer; the flow covers the running app.
+        openSeriesRequested = link
+        seriesRequests.tryEmit(link)
     }
 }
 
@@ -249,20 +255,25 @@ fun NovelApp(onThemeChange: (String) -> Unit = {}) {
     // detail screen loads everything else (lists, releases, cover) itself, so
     // a title + URL + chapter is enough to construct the entry Novel. Login is
     // left alone — never yank the user out of an auth flow.
+    fun openFromNotification(link: MainActivity.SeriesDeepLink) {
+        MainActivity.openSeriesRequested = null
+        showSettings = false
+        showSearch = false
+        showDiscover = false
+        showEditLists = false
+        showOnboarding = false
+        selectedNovel = Novel(
+            title = link.title,
+            latestChapter = link.chapter,
+            seriesUrl = link.url,
+            coverUrl = coverCache[link.title].orEmpty()
+        )
+    }
+
+    // Cold start first (volatile parked by onCreate), then live taps while running.
     LaunchedEffect(Unit) {
-        MainActivity.openSeriesRequests.collect { link ->
-            showSettings = false
-            showSearch = false
-            showDiscover = false
-            showEditLists = false
-            showOnboarding = false
-            selectedNovel = Novel(
-                title = link.title,
-                latestChapter = link.chapter,
-                seriesUrl = link.url,
-                coverUrl = coverCache[link.title].orEmpty()
-            )
-        }
+        MainActivity.openSeriesRequested?.let { openFromNotification(it) }
+        MainActivity.openSeriesRequests.collect { openFromNotification(it) }
     }
 
     // RSS is the cheap change detector. Pull-to-refresh and Check now bump refreshKey.
