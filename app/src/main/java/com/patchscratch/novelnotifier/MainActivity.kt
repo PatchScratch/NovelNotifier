@@ -164,6 +164,7 @@ fun NovelApp(
     var showOnboarding by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     var showDiscover by remember { mutableStateOf(false) }
+    var readerTarget by remember { mutableStateOf<ReaderTarget?>(null) } // in-app reader (Phase 3.1)
     var probeMode by remember { mutableStateOf(false) } // adb-only Phase-2 spike (EndpointProbe.kt)
     var loginState by remember {
         mutableStateOf(
@@ -419,9 +420,10 @@ fun NovelApp(
     // System back returns to the previous screen instead of leaving the app.
     // Login overlays Settings, so close it the way its Cancel button does.
     BackHandler(
-        enabled = showLoginWeb || showSettings || showEditLists || showOnboarding || selectedNovel != null
+        enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding || selectedNovel != null
     ) {
         when {
+            readerTarget != null -> readerTarget = null
             showLoginWeb -> {
                 showLoginWeb = false
                 showSettings = true
@@ -435,9 +437,13 @@ fun NovelApp(
         }
     }
 
-    // Only one screen is composed at a time. Order matters: login overlays settings.
-    // The probe screen (adb-only) overlays everything while it runs.
+    // Only one screen is composed at a time. Order matters: the reader is
+    // topmost reading surface; login overlays settings; probe overlays all.
     when {
+        readerTarget != null -> ReaderScreen(
+            target = readerTarget!!,
+            onBack = { readerTarget = null }
+        )
         probeMode -> EndpointProbeScreen(onFinished = { probeMode = false })
         showLoginWeb -> LoginWebScreen(
             onLoggedIn = { cookies -> onLoggedIn(cookies) },
@@ -574,6 +580,14 @@ fun NovelApp(
             },
             onToggleNotify = { toggleSeriesNotify(selectedWithCover.title) },
             onCoverFound = { url -> rememberCover(selectedWithCover.title, url) },
+            onOpenReader = { chapters, startAt ->
+                readerTarget = ReaderTarget(
+                    seriesTitle = selectedWithCover.title,
+                    seriesUrl = selectedWithCover.seriesUrl,
+                    chapters = chapters,
+                    startIndex = if (startAt >= 0) startAt else 0
+                )
+            },
             onBackClick = { selectedNovel = null }
         )
     }

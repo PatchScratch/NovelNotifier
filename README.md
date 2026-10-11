@@ -12,6 +12,7 @@ This is a clean-room, from-scratch replacement for the abandoned *"Notifications
 - **Chapter notifications** — new chapters detected via your personal NU RSS feed (captured automatically from the reading-list page — no URL copying) or, without any feed, by paced background checks of your lists. Per-list and per-series mute switches.
 - **Cross-device read sync** — chapters you mark as read on one device appear read on your others via NU's read-activity feed.
 - **Series pages** — INFO + full RELEASES table (cached page by page), next-chapter card, mark-as-read and list changes written back to the site.
+- **In-app reader (browser mode)** — chapter rows and READ CHAPTER open inside the app; ‹ Prev / Next › walk the book; per-novel JavaScript toggle; ad/tracker hosts blocked; pop-ups disabled; open-in-browser escape hatch. Reader mode (extracted, themed text) is on the roadmap.
 - **Backups & device transfer** — one zip with your lists, chapter caches, cover images, and settings; export/import through the system file picker (Google Drive, OneDrive, USB — anywhere it reaches). Backups never contain your password, login session, or feed tokens.
 - **Themes** — light/dark/AMOLED-black/Material You, plus **custom themes from a JSON file** (see below).
 - **Debug log** — a rotating on-device log of every Cloudflare encounter, scrape outcome, and image failure, pullable via adb (see below).
@@ -45,6 +46,7 @@ There is no API and no Cloudflare bypass. The app embeds WebViews that share a r
 | `AlertReceivers.kt` | Dismissal bookkeeping + BOOT_COMPLETED / app-update re-posting of unseen alerts. |
 | `CustomTheme.kt` | Custom JSON themes: parser, strict validation, import, and the editable template. |
 | `SettingsScreen.kt`, `ListOptionsScreen.kt`, `LoginWebScreen.kt`, `EditListsScreen.kt` | Screens. |
+| `ReaderScreen.kt` | In-app chapter reader (browser mode): WebView, chapter nav, JS toggle, ad-block. |
 | `SeriesSync.kt` | Per-series merge after a new chapter is detected. |
 | `DebugLog.kt` | Rotating file log for on-device diagnosis. |
 
@@ -117,7 +119,7 @@ Settings → **Back up library** writes one zip via the file picker — save it 
 
 ## Roadmap
 
-Ideas in rough order: site search, Discover/rankings, notification tap → in-app detail page, themes, an in-app chapter reader (browser mode first, then a reader view — the original app's most-loved feature), and — only after the reader exists — **offline reading**, since storing chapters for offline use has nothing to attach to until the app can display them. Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction must filter by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
+Ideas in rough order: reader mode (extracted, themed chapter text — browser mode shipped), and — only after the reader exists — **offline reading**, since storing chapters for offline use has nothing to attach to until the app can display them. Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction must filter by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
 
 ## Acknowledgements
 

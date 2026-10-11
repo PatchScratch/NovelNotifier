@@ -95,9 +95,13 @@ original's green and black variants. Settings picker; persisted choice.
 
 ## Phase 3 — the reader (largest, riskiest, most-loved)
 
-1. **Browser mode** (medium): in-app WebView reader for chapter links with
-   per-novel JS toggle, ad-block host list, "open externally". Sidesteps the
-   decoy-link problem entirely — ship first.
+1. **Browser mode** (medium) — ✅ DONE (2026-10-11): `ReaderScreen.kt`.
+   Chapter rows and READ CHAPTER open in-app; ‹ Prev / Next › walk the book in
+   reading order from the loaded RELEASES pages; ⋮ menu = per-novel JavaScript
+   toggle (persisted), Reload, Open in browser; ~40 ad/tracker hosts blocked
+   (requests AND navigations); pop-ups disabled; shares the app cookie session
+   so Cloudflare gates can be completed in place. Edge-to-edge insets applied —
+   without them the bars sit under the status/gesture bars and taps vanish.
 2. **Reader mode** (large): sepia/dark/light themes, serif/sans + font size,
    content extraction. **Extraction must filter by computed styles**
    (`getComputedStyle` in the WebView: `display != none`,

@@ -110,7 +110,8 @@ fun applyChallengeLayout(webView: WebView, mobile: Boolean) {
  *   rid = checkbox id without the "chklist" prefix
  *   sid = #mypostid on the series page (cached on SeriesPage.sid)
  *
- * READ CHAPTER opens the chapter URL in the default browser (v1).
+ * READ CHAPTER (and chapter rows in RELEASES) open the in-app reader
+ * (browser mode, Phase 3.1); ⋮ still offers Open on Novel Updates externally.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
@@ -124,6 +125,7 @@ fun NovelDetailScreen(
     onSetLastRead: (String, String, Boolean) -> Unit,
     onToggleNotify: () -> Unit,
     onCoverFound: (String) -> Unit,
+    onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit = { _, _ -> },
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -264,6 +266,15 @@ fun NovelDetailScreen(
     }
     val shownReleases = sortedReleases(page.releases, newestFirst).filter { release ->
         !hideRead || lastRead == null || chapterNum(release.chapter) >= lastReadNum
+    }
+
+    // The reader walks the book oldest → newest; hand it the full list in
+    // reading order plus the tapped row's index.
+    val readingOrder = remember(page.releases) { sortedReleases(page.releases, newestFirst = false) }
+    fun openInReader(release: Release) {
+        if (release.url.isBlank()) return
+        val at = readingOrder.indexOfFirst { it.url == release.url && it.chapter == release.chapter }
+        onOpenReader(readingOrder, at)
     }
 
     fun openUrl(url: String) {
@@ -482,7 +493,7 @@ fun NovelDetailScreen(
                             )
                             Row(modifier = Modifier.padding(top = 8.dp)) {
                                 TextButton(
-                                    onClick = { nextUnread?.url?.let(::openUrl) },
+                                    onClick = { nextUnread?.let(::openInReader) },
                                     enabled = nextUnread?.url?.isNotBlank() == true
                                 ) { Text("READ CHAPTER") }
                                 TextButton(
@@ -642,7 +653,7 @@ fun NovelDetailScreen(
                                         style = MaterialTheme.typography.titleMedium,
                                         modifier = Modifier
                                             .width(88.dp)
-                                            .clickable { openUrl(release.url) }
+                                            .clickable { openInReader(release) }
                                     )
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(release.group)
