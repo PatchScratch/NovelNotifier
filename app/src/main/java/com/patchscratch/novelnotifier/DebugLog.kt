@@ -28,6 +28,10 @@ object DebugLog {
     }
 
     fun log(tag: String, message: String, error: Throwable? = null) {
+        // logcat mirror: release builds can't be run-as'd, but `adb logcat
+        // -s NovelNotifier` always works — the only live window we have into
+        // on-device flows (bulk ToC debugging 2026-10-11).
+        android.util.Log.i("NovelNotifier", "[$tag] $message" + (error?.let { ": ${it.message}" } ?: ""))
         val file = logFile ?: return
         val line = buildString {
             append(stamp.format(Date()))

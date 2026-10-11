@@ -126,6 +126,13 @@ fun ReaderScreen(
     // Next/Prev changes the url, ⋮ Reload bumps the key, the JS toggle changes
     // the flag (loadUrl on the same URL is still a reload).
     var loadedStamp by remember(target) { mutableStateOf(Triple("", -1, true)) }
+    // Bulk URL substitution: when set, the WebView loads THIS url instead of
+    // the current chapter's (NU-routed) url — for ToC-resolved direct loads
+    // and the ToC series-page visit. The update block derives its stamp from
+    // it, so the substitution SURVIVES recompositions (the old trick of
+    // pre-setting loadedStamp got clobbered by the next update pass, which
+    // reloaded the NU url over the substituted page).
+    var loadOverride by remember(target) { mutableStateOf<String?>(null) }
 
     // --- reader-mode state (3.2) ---
     var viewMode by remember { mutableStateOf(loadReaderView(prefs)) } // text | web
@@ -358,7 +365,8 @@ fun ReaderScreen(
          * loop would then save the wrong chapter's text and the bootstrap
          * would "succeed" before the real page ever loaded.
          */
-        suspend fun loadAndWait(i: Int): ChapterExtract? {
+        suspend fun loadAndWait(i: Int, overrideUrl: String? = null): ChapterExtract? {
+            loadOverride = overrideUrl
             val tickBefore = extractTick
             index = i
             val loadDeadline = System.currentTimeMillis() + 60_000
@@ -380,7 +388,9 @@ fun ReaderScreen(
                         cont.resumeWith(Result.success(r))
                     }
                 }
-                parseTocHarvest(res).forEach { link ->
+                val parsed = parseTocHarvest(res)
+                DebugLog.log("EPUB", "harvest got ${parsed.size} links (${parsed.count { it.key != null }} keyed)")
+                parsed.forEach { link ->
                     link.key?.let { k -> toc.putIfAbsent(k, link.url) }
                 }
             }
@@ -442,6 +452,7 @@ fun ReaderScreen(
                 failed++
             }
             harvestFromPage()
+            DebugLog.log("EPUB", "bulk: after chapter harvest toc=${toc.size} pending=${pendingNu.size}")
             // SERIES-PAGE FALLBACK: some platforms (verified:
             // lightnovelstranslations.com) keep the chapter list ONLY on the
             // series page — chapter pages carry just prev/next. The series
@@ -453,39 +464,50 @@ fun ReaderScreen(
                 val seriesUrl = chapterUrl.trimEnd('/').substringBeforeLast('/')
                 if (seriesUrl.startsWith("http") && seriesUrl != chapterUrl) {
                     bulkStatus = "Reading ToC from the series page…"
-                    loadedStamp = Triple(seriesUrl, loadKey, jsOn)
-                    webViewRef.value?.loadUrl(seriesUrl)
-                    delay(8000) // heavy JS-rendered lists (541 links on LNT)
+                    loadOverride = seriesUrl
+                    // the update block performs the load on recomposition;
+                    // wait for it to finish rendering
+                    delay(9000) // heavy pages (541 links, some JS-rendered)
                     harvestFromPage(parentScope = false)
-                    if (toc.isEmpty()) harvestFromPage(parentScope = false)
+                    if (toc.size < pendingNu.size) harvestFromPage(parentScope = false)
+                    DebugLog.log("EPUB", "bulk: after series-page harvest toc=${toc.size} (page=${webViewRef.value?.url})")
+                } else {
+                    DebugLog.log("EPUB", "bulk: series fallback skipped chapterUrl=$chapterUrl")
                 }
             }
+        }
+        // VOLUME-TOLERANT MATCHING: NU labels carry volumes the translator
+        // site may not (verified: NU "v1c1…v10c595" vs lightnovelstranslations
+        // "001–595"). Exact (vol,ch) first; on miss, (0,ch) is allowed when
+        // every pending chapter with that number wants the SAME volume —
+        // same-volume duplicates (same chapter, multiple groups) are
+        // unambiguous, only different-volume collisions block. A global
+        // uniqueness rule was wrong: multi-group series duplicate numbers
+        // everywhere (logcat-verified: v2c46 unique=false with 540-link ToC).
+        val volsByNum = HashMap<Int, MutableSet<Int>>()
+        pendingNu.forEach { idx ->
+            val k = chapterKey(target.chapters[idx].chapter) ?: return@forEach
+            volsByNum.getOrPut(k.second) { mutableSetOf() }.add(k.first)
+        }
+        fun resolveToc(key: Pair<Int, Int>): String? {
+            toc[key]?.let { return it }
+            val (vol, ch) = key
+            val vols = volsByNum[ch] ?: return null
+            return if (vols == setOf(vol)) toc[0 to ch] else null
         }
         for (i in pendingNu) {
             if (!bulkActive) break
             val doc = target.chapters[i]
             if (doc.url in known) { skipped++; continue }
             val key = chapterKey(doc.chapter)
-            val directUrl = key?.let { toc[it] }
+            val directUrl = key?.let { resolveToc(it) }
+            if (directUrl == null) {
+                DebugLog.log("EPUB", "bulk: no ToC hit for ${doc.chapter} key=$key vols=${volsByNum[key?.second]} toc=${toc.size}")
+            }
             if (directUrl != null && !nuHosted(directUrl)) {
-                // ToC resolved it — a direct load, no NU involved. The stamp
-                // must be aligned with it FIRST — the update block reloads
-                // whenever the (url, loadKey, jsOn) stamp changes, and it
-                // watches the NU chapter.url that `index` just selected.
-                index = i
-                loadedStamp = Triple(directUrl, loadKey, jsOn)
-                webViewRef.value?.loadUrl(directUrl)
+                // ToC resolved it — a direct load, no NU involved.
                 bulkStatus = "ToC-resolved ${doc.chapter} · saved $saved"
-                // manual loadUrl: gate on the tick like loadAndWait, but the
-                // chapter index is already set — wait for the next load only.
-                val tickBefore = extractTick
-                val loadDeadline = System.currentTimeMillis() + 60_000
-                while (extractTick <= tickBefore && bulkActive &&
-                    System.currentTimeMillis() < loadDeadline
-                ) {
-                    delay(500)
-                }
-                val extract = waitForExtraction()
+                val extract = loadAndWait(i, directUrl)
                 if (extract != null && !offlineCopy) {
                     val count = withContext(Dispatchers.IO) {
                         EpubStore.appendChapter(
@@ -494,7 +516,9 @@ fun ReaderScreen(
                         )
                     }
                     if (count > 0) { epubCount = count; saved++; viaToc++ }
-                    harvestFromPage()
+                    // Keep enriching the ToC only while it can't cover the
+                    // pending chapters — each harvest costs ~3 s per chapter.
+                    if (toc.size < pendingNu.size) harvestFromPage()
                     continue
                 }
                 failed++
@@ -518,6 +542,7 @@ fun ReaderScreen(
             delay(10_000) // engine-grade courtesy gap between NU hits
         }
         bulkActive = false
+        loadOverride = null
         bulkStatus = "Bulk done · saved $saved (ToC $viaToc · NU $viaNu) · skipped $skipped · failed $failed"
         DebugLog.log("EPUB", "bulk ${target.seriesTitle}: $bulkStatus")
     }
@@ -814,12 +839,13 @@ fun ReaderScreen(
                     }
                 },
                 update = { webView ->
-                    val stamp = Triple(chapter.url, loadKey, jsOn)
+                    val effectiveUrl = loadOverride ?: chapter.url
+                    val stamp = Triple(effectiveUrl, loadKey, jsOn)
                     if (stamp != loadedStamp) {
                         loadedStamp = stamp
                         webView.settings.javaScriptEnabled = jsOn
                         webView.settings.domStorageEnabled = jsOn
-                        webView.loadUrl(chapter.url)
+                        webView.loadUrl(effectiveUrl)
                     }
                 }
             )
