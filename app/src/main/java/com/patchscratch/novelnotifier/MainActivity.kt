@@ -794,7 +794,8 @@ fun NovelApp(
             onOpenWork = { work -> kakuyomuWork = work },
             r18Enabled = kakuyomuR18,
             bookmarks = kakuyomuBookmarks,
-            onOpenBookmarks = { showKakuyomuBookmarks = true }
+            onOpenBookmarks = { showKakuyomuBookmarks = true },
+            loggedIn = kakuyomuLoggedIn
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {

@@ -52,7 +52,8 @@ fun KakuyomuHome(
     onOpenWork: (KakuyomuWork) -> Unit,
     r18Enabled: Boolean = false,
     bookmarks: List<KakuyomuWork> = emptyList(),
-    onOpenBookmarks: () -> Unit = {}
+    onOpenBookmarks: () -> Unit = {},
+    loggedIn: Boolean = false
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -82,8 +83,13 @@ fun KakuyomuHome(
                 )
                 if (bookmarks.isEmpty()) {
                     Text(
-                        t("Open a work and tap ⚑ Bookmark to keep it here — saved on this device and carried in backups.",
-                            "作品を開いて⚑ブックマークをタップするとここに保存されます — 端末内保存で、バックアップにも含まれます。"),
+                        if (loggedIn) t(
+                            "No bookmarks yet — ⚑ on a work follows it on Kakuyomu and keeps it here.",
+                            "ブックマークはまだありません — 作品の⚑でカクヨムでフォローし、ここに表示されます。"
+                        ) else t(
+                            "Open a work and tap ⚑ Bookmark to keep it here — saved on this device and carried in backups.",
+                            "作品を開いて⚑ブックマークをタップするとここに保存されます — 端末内保存で、バックアップにも含まれます。"
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                     )
@@ -100,8 +106,13 @@ fun KakuyomuHome(
                     )
                 }
                 Text(
-                    t("Kakuyomu's site also offers follows (フォロー) when logged in — an in-app login may arrive later. No account is needed to browse and read.",
-                        "カクヨム公式サイトではログインするとフォロー機能が使えます — アプリ内ログインは後日予定。閲覧にアカウントは不要です。"),
+                    if (loggedIn) t(
+                        "Bookmarks sync with your Kakuyomu follows — the site's list is the master.",
+                        "ブックマークはカクヨムのフォローと同期されます — サイトのリストがマスターです。"
+                    ) else t(
+                        "Log in from Settings to sync bookmarks with your Kakuyomu follows. Browsing and reading need no account.",
+                        "設定からログインするとブックマークがカクヨムのフォローと同期されます。閲覧にアカウントは不要です。"
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
