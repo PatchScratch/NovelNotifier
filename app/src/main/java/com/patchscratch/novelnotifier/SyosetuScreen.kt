@@ -163,10 +163,15 @@ fun SyosetuDetailScreen(
                 if (all.size >= novel.episodeCount) break
                 page++
             }
+            // Short stories (短編) have no numbered episodes — the whole
+            // story IS the bare novel page. Synthesize one episode for them.
+            val episodes = all.distinctBy { it.number }.sortedBy { it.number }.ifEmpty {
+                if (novel.isShortStory) listOf(SyosetuEpisode(1, novel.title)) else emptyList()
+            }
             toc = SyosetuToc(
                 title = novel.title,
                 author = novel.writer,
-                episodes = all.distinctBy { it.number }.sortedBy { it.number },
+                episodes = episodes,
                 hasMorePages = false
             )
         } catch (e: Exception) {
@@ -177,7 +182,9 @@ fun SyosetuDetailScreen(
 
     // Reader chapters: label cN keeps ordering/bucket logic identical to NU.
     fun toChapters(): List<Release> = toc!!.episodes.map { ep ->
-        Release(chapter = "c${ep.number}", group = "", date = "", url = "${novel.url}${ep.number}/")
+        // shorts: the story is the bare URL; serials: ncode/N/
+        val url = if (novel.isShortStory) novel.url else "${novel.url}${ep.number}/"
+        Release(chapter = "c${ep.number}", group = "", date = "", url = url)
     }
 
     BackHandler { }

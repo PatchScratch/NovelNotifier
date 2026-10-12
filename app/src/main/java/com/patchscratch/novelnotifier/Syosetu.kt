@@ -69,7 +69,11 @@ suspend fun syosetuApiQuery(params: Map<String, String>): List<SyosetuNovel> =
         val query = params.entries.joinToString("&") { (k, v) ->
             "$k=" + URLEncoder.encode(v, "UTF-8")
         } + "&out=json&gzip=0" +
-            "&of=t-n-w-s-g-k-e-nu-gl-ni-p"  // only the fields we parse
+            // field tokens: t/n/w/s/g/k/e + nt=noveltype, ga=general_all_no,
+            // gl=general_lastup, p=yearly_point (verified against the API —
+            // wrong tokens silently return missing keys, which made every
+            // novel look like a 1-episode serial)
+            "&of=t-n-w-s-g-k-e-nt-ga-gl-p"
         val connection = URL("https://api.syosetu.com/novelapi/api/?$query").openConnection()
         connection.connectTimeout = 15_000
         connection.readTimeout = 20_000
