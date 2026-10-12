@@ -81,7 +81,7 @@ suspend fun syosetuApiQuery(params: Map<String, String>, r18: Boolean = false): 
             // novel look like a 1-episode serial)
             "&of=t-n-w-s-g-k-e-nt-ga-gl-p"
         // R18 lives on a parallel endpoint (novel18api) serving the same shape
-        val base = if (r18) "https://api.syosetu.com/novel18api/api/" else "https://api.syosetu.com/novelapi/api/"
+        val base = if (r18) "https://api.syosetu.com/novel18api/api/?" else "https://api.syosetu.com/novelapi/api/?"
         val connection = URL("$base$query").openConnection()
         connection.connectTimeout = 15_000
         connection.readTimeout = 20_000
