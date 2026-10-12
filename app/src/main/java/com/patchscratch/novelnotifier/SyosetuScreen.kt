@@ -73,19 +73,19 @@ fun SyosetuHome(
                     androidx.compose.material3.FilterChip(
                         selected = activeSite == "nu",
                         onClick = { onSwitchSite("nu") },
-                        label = { Text("Novel Updates") },
+                        label = { Text(t("Novel Updates", "ノベルアップデーツ")) },
                         modifier = Modifier.weight(1f).padding(end = 4.dp)
                     )
                     androidx.compose.material3.FilterChip(
                         selected = activeSite == "syosetu",
                         onClick = { onSwitchSite("syosetu") },
-                        label = { Text("なろう") },
+                        label = { Text(t("Syosetu", "なろう")) },
                         modifier = Modifier.weight(1f)
                     )
                 }
                 HorizontalDivider()
                 NavigationDrawerItem(
-                    label = { Text("なろう Discover  ★") },
+                    label = { Text(t("Discover  ★", "なろう Discover  ★")) },
                     selected = false,
                     onClick = { scope.launch { drawerState.close() } }
                 )
@@ -104,13 +104,13 @@ fun SyosetuHome(
                     }
                 } else {
                     Text(
-                        "Log in from Settings to sync your bookmark library.",
+                        "Log in from Settings to sync your bookmark library. / 設定からログインするとブックマークを同期します。",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
                 NavigationDrawerItem(
-                    label = { Text("Settings  ⚙") },
+                    label = { Text(t("Settings  ⚙", "設定  ⚙")) },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }
@@ -167,15 +167,15 @@ fun SyosetuDiscoverBody(
                 Text("☰", style = MaterialTheme.typography.headlineSmall)
             }
             Text(
-                "なろう Discover",
+                t("Syosetu Discover", "なろう Discover"),
                 style = MaterialTheme.typography.headlineSmall
             )
         }
         ScrollableTabRow(selectedTabIndex = tab) {
-            SYOSETU_ORDERS.forEachIndexed { i, (_, label) ->
-                Tab(selected = tab == i, onClick = { tab = i }, text = { Text(label) })
+            SYOSETU_ORDERS.forEachIndexed { i, (_, labels) ->
+                Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t(labels.first, labels.second)) })
             }
-            Tab(selected = tab == SYOSETU_ORDERS.size, onClick = { tab = SYOSETU_ORDERS.size }, text = { Text("検索") })
+            Tab(selected = tab == SYOSETU_ORDERS.size, onClick = { tab = SYOSETU_ORDERS.size }, text = { Text(t("Search", "検索")) })
         }
         if (tab == SYOSETU_ORDERS.size) {
             Row(
@@ -185,11 +185,11 @@ fun SyosetuDiscoverBody(
                 androidx.compose.material3.OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("タイトル・キーワード") },
+                    label = { Text(t("Title / keyword", "タイトル・キーワード")) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = { if (query.isNotBlank()) load() }) { Text("検索") }
+                TextButton(onClick = { if (query.isNotBlank()) load() }) { Text(t("Search", "検索")) }
             }
         }
         if (loading) {
@@ -285,7 +285,7 @@ fun SyosetuDetailScreen(
 
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ Discover") }
+            TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
         }
         Text(
             novel.title,
@@ -313,7 +313,7 @@ fun SyosetuDetailScreen(
                     if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
                 },
                 enabled = toc?.episodes?.isNotEmpty() == true
-            ) { Text("最初から読む") }
+            ) { Text(t("Read from start", "最初から読む")) }
             TextButton(
                 onClick = {
                     val chapters = toChapters()
@@ -330,7 +330,7 @@ fun SyosetuDetailScreen(
                     }
                 },
                 enabled = toc?.episodes?.isNotEmpty() == true
-            ) { Text("全部ダウンロード (${novel.episodeCount}話)") }
+            ) { Text(t("Download all", "全部ダウンロード") + " (${novel.episodeCount}話)") }
         }
         if (loading) {
             CircularProgressIndicator(modifier = Modifier.padding(24.dp).align(Alignment.CenterHorizontally))

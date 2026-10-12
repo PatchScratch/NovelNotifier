@@ -296,7 +296,7 @@ fun NovelListScreen(
         drawerContent = {
             ModalDrawerSheet {
                 Text(
-                    text = "Reading List",
+                    text = t("Reading List", "リーディングリスト"),
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(16.dp)
                 )
@@ -334,7 +334,7 @@ fun NovelListScreen(
                     HorizontalDivider()
                 } else {
                 NavigationDrawerItem(
-                    label = { Text("Search Novel Updates  ⌕") },
+                    label = { Text(t("Search Novel Updates  ⌕", "ノベルアップデーツを検索  ⌕")) },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }
@@ -342,7 +342,7 @@ fun NovelListScreen(
                     }
                 )
                 NavigationDrawerItem(
-                    label = { Text("Discover  ★") },
+                    label = { Text(t("Discover  ★", "ディスカバー  ★")) },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }

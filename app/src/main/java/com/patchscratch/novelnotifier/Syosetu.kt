@@ -58,11 +58,11 @@ data class SyosetuToc(
 
 /** Sort orders we expose in Discover; API has many more. */
 val SYOSETU_ORDERS = listOf(
-    "dailypoint" to "日別ポイント",
-    "weeklypoint" to "週別ポイント",
-    "monthlypoint" to "月別ポイント",
-    "yearlypoint" to "年間ポイント",
-    "favnovelcnt" to "ブックマーク数"
+    "dailypoint" to ("Daily points" to "日別ポイント"),
+    "weeklypoint" to ("Weekly points" to "週別ポイント"),
+    "monthlypoint" to ("Monthly points" to "月別ポイント"),
+    "yearlypoint" to ("Yearly points" to "年間ポイント"),
+    "favnovelcnt" to ("Bookmarks" to "ブックマーク数")
 )
 
 suspend fun syosetuApiQuery(params: Map<String, String>): List<SyosetuNovel> =

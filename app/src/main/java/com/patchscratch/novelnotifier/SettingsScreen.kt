@@ -1,6 +1,7 @@
 package com.patchscratch.novelnotifier
 
 import android.content.Context
+import androidx.core.content.edit
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -171,7 +172,7 @@ fun SettingsScreen(
                 }
             }
         } else {
-        Text(text = "Account", style = MaterialTheme.typography.titleMedium)
+        Text(text = t("Account", "アカウント"), style = MaterialTheme.typography.titleMedium)
         Text(
             text = loginState,
             style = MaterialTheme.typography.bodySmall,
@@ -201,7 +202,7 @@ fun SettingsScreen(
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = "Display", style = MaterialTheme.typography.titleMedium)
+        Text(text = t("Display", "表示"), style = MaterialTheme.typography.titleMedium)
         Text(
             text = "Home layout. Grid columns follow screen width (3 on a phone, more on a tablet).",
             style = MaterialTheme.typography.bodySmall,
@@ -277,7 +278,7 @@ fun SettingsScreen(
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = "Library sync", style = MaterialTheme.typography.titleMedium)
+        Text(text = t("Library sync", "ライブラリ同期"), style = MaterialTheme.typography.titleMedium)
         Text(
             text = syncStatus,
             style = MaterialTheme.typography.bodySmall,
@@ -296,7 +297,7 @@ fun SettingsScreen(
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = "Backup & restore", style = MaterialTheme.typography.titleMedium)
+        Text(text = t("Backup & restore", "バックアップ"), style = MaterialTheme.typography.titleMedium)
         Text(
             text = "One zip with your lists, chapter caches and cover images. Save it anywhere your file picker reaches — Google Drive, OneDrive, USB. Backups never contain your password, login, or feed links — a restored device asks for a fresh login and picks the rest up automatically.",
             style = MaterialTheme.typography.bodySmall,
@@ -305,13 +306,13 @@ fun SettingsScreen(
         Button(
             onClick = { backupLauncher.launch("novelnotifier-library.zip") },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Back up library") }
+        ) { Text(t("Back up library", "ライブラリをバックアップ")) }
         TextButton(
             onClick = {
                 restoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
             },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Restore from backup") }
+        ) { Text(t("Restore from backup", "バックアップから復元")) }
         if (backupMessage.isNotBlank()) {
             Text(
                 text = backupMessage,
@@ -320,8 +321,37 @@ fun SettingsScreen(
             )
         }
 
+        // UI language toggle — applies to app chrome immediately.
+        Text(
+            text = t("App language", "アプリの言語"),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+        Row(modifier = Modifier.fillMaxWidth()) {
+            listOf(UiLang.EN to "English", UiLang.JP to "日本語").forEach { (code, label) ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable {
+                            UiLang.current = code
+                            prefs.edit { putString("ui_lang", code) }
+                        }
+                ) {
+                    RadioButton(
+                        selected = UiLang.current == code,
+                        onClick = {
+                            UiLang.current = code
+                            prefs.edit { putString("ui_lang", code) }
+                        }
+                    )
+                    Text(label)
+                }
+            }
+        }
+
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = "Notifications", style = MaterialTheme.typography.titleMedium)
+        Text(text = t("Notifications", "通知"), style = MaterialTheme.typography.titleMedium)
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -351,7 +381,7 @@ fun SettingsScreen(
         )
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = "Checks", style = MaterialTheme.typography.titleMedium)
+        Text(text = t("Checks", "更新チェック"), style = MaterialTheme.typography.titleMedium)
         Text(
             text = "Check for updates every",
             style = MaterialTheme.typography.bodySmall,
@@ -373,7 +403,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .padding(top = 16.dp)
                 .fillMaxWidth()
-        ) { Text("Check now") }
+        ) { Text(t("Check now", "今すぐチェック")) }
         Button(
             onClick = { onSave(url, hours) },
             modifier = Modifier

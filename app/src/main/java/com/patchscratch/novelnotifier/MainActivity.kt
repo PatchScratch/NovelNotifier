@@ -84,6 +84,9 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra("open_login", false) == true) openLoginRequested = true
         handleSeriesDeepLink(intent)
         setContent {
+            // UI language (Settings → Display); chrome recomposes on change.
+            UiLang.current = getSharedPreferences("novel_prefs", MODE_PRIVATE)
+                .getString("ui_lang", UiLang.EN) ?: UiLang.EN
             // Hoisted so Settings can re-theme the whole app without a restart.
             // customTheme is the imported JSON theme; reloaded on every import.
             var themeMode by remember {
