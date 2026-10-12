@@ -32,6 +32,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -133,7 +138,7 @@ fun SyosetuDiscoverBody(
     openDrawer: () -> Unit = {}
 ) {
     var tab by remember { mutableIntStateOf(0) }
-    var query by remember { mutableStateOf("") }
+    var searchParams by remember { mutableStateOf(SyosetuSearchParams()) }
     var results by remember { mutableStateOf<List<SyosetuNovel>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
@@ -148,7 +153,7 @@ fun SyosetuDiscoverBody(
                     // ranking-equivalent: order by points, all ages only
                     mapOf("order" to SYOSETU_ORDERS[tab].first, "lim" to "30", "ga" to "none")
                 } else {
-                    mapOf("word" to query, "order" to "yearlypoint", "lim" to "30", "ga" to "none")
+                    searchParams.copy(ga = "none").toApiParams()
                 }
                 syosetuApiQuery(params)
             } catch (e: Exception) {
@@ -178,19 +183,11 @@ fun SyosetuDiscoverBody(
             Tab(selected = tab == SYOSETU_ORDERS.size, onClick = { tab = SYOSETU_ORDERS.size }, text = { Text(t("Search", "検索")) })
         }
         if (tab == SYOSETU_ORDERS.size) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                androidx.compose.material3.OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text(t("Title / keyword", "タイトル・キーワード")) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = { if (query.isNotBlank()) load() }) { Text(t("Search", "検索")) }
-            }
+            SyosetuAdvancedSearch(
+                params = searchParams,
+                onUpdate = { searchParams = it },
+                onSearch = { load() }
+            )
         }
         if (loading) {
             CircularProgressIndicator(modifier = Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
@@ -351,6 +348,225 @@ fun SyosetuDetailScreen(
                         .padding(horizontal = 20.dp, vertical = 10.dp)
                 )
             }
+        }
+    }
+}
+
+/**
+ * The advanced search form (yomou search.php parity, expressed through the
+ * official API): keywords, excluded keywords, genre multi-select, serial
+ * type, completion, reading time / length / points minimums, content
+ * elements (require/exclude), sort order, and search scope. "More filters"
+ * collapses the rarely-touched half; the search button always runs.
+ */
+@Composable
+fun SyosetuAdvancedSearch(
+    params: SyosetuSearchParams,
+    onUpdate: (SyosetuSearchParams) -> Unit,
+    onSearch: () -> Unit
+) {
+    var showFilters by remember { mutableStateOf(false) }
+    var showGenres by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.OutlinedTextField(
+                value = params.word,
+                onValueChange = { onUpdate(params.copy(word = it, page = 1)) },
+                label = { Text(t("Keywords", "キーワード")) },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onSearch) { Text(t("Search", "検索")) }
+        }
+        androidx.compose.material3.OutlinedTextField(
+            value = params.notword,
+            onValueChange = { onUpdate(params.copy(notword = it, page = 1)) },
+            label = { Text(t("Exclude keywords", "除外キーワード")) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        // genre chips row
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            FilterChip(
+                selected = params.genres.isNotEmpty(),
+                onClick = { showGenres = true },
+                label = {
+                    Text(t("Genre", "ジャンル") + if (params.genres.isEmpty()) "" else " (${params.genres.size})")
+                }
+            )
+            // sort order cycling chip
+            val orderLabel = SYOSETU_SEARCH_ORDERS.firstOrNull { it.first == params.order }
+            FilterChip(
+                selected = true,
+                onClick = {
+                    val idx = SYOSETU_SEARCH_ORDERS.indexOfFirst { it.first == params.order }
+                    val next = SYOSETU_SEARCH_ORDERS[(idx + 1) % SYOSETU_SEARCH_ORDERS.size]
+                    onUpdate(params.copy(order = next.first, page = 1))
+                },
+                label = {
+                    val (en, jp) = orderLabel?.second ?: ("" to "")
+                    Text("↕ " + t(en, jp))
+                }
+            )
+        }
+        TextButton(onClick = { showFilters = !showFilters }) {
+            Text((if (showFilters) "▾ " else "▸ ") + t("More filters", "詳細フィルタ"))
+        }
+        if (showFilters) {
+            // type + completion cycling chips
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                FilterChip(
+                    selected = params.serial != null,
+                    onClick = {
+                        val next = when (params.serial) {
+                            null -> true; true -> false; false -> null
+                        }
+                        onUpdate(params.copy(serial = next, page = 1))
+                    },
+                    label = {
+                        Text(t("Type", "形式") + ": " + when (params.serial) {
+                            null -> t("All", "すべて")
+                            true -> t("Serial", "連載")
+                            false -> t("Short", "短編")
+                        })
+                    }
+                )
+                FilterChip(
+                    selected = params.completed != null,
+                    onClick = {
+                        val next = when (params.completed) {
+                            null -> true; true -> false; false -> null
+                        }
+                        onUpdate(params.copy(completed = next, page = 1))
+                    },
+                    label = {
+                        Text(t("Status", "状況") + ": " + when (params.completed) {
+                            null -> t("All", "すべて")
+                            true -> t("Completed", "完結")
+                            false -> t("Ongoing", "連載中")
+                        })
+                    }
+                )
+                // minimums: tap cycles through the site's own ladder values
+                val timeSteps = listOf(0, 5, 10, 30, 60, 120, 180, 240, 300)
+                FilterChip(
+                    selected = params.minMinutes > 0,
+                    onClick = {
+                        val idx = timeSteps.indexOf(params.minMinutes)
+                        onUpdate(params.copy(minMinutes = timeSteps[(idx + 1) % timeSteps.size], page = 1))
+                    },
+                    label = {
+                        Text(if (params.minMinutes == 0) t("Reading time", "読了時間")
+                        else t("≥", "以上") + if (params.minMinutes >= 60) " ${params.minMinutes / 60}h" else " ${params.minMinutes}m")
+                    }
+                )
+                val lenSteps = listOf(0, 10000, 50000, 100000, 300000, 500000, 1000000)
+                FilterChip(
+                    selected = params.minLength > 0,
+                    onClick = {
+                        val idx = lenSteps.indexOf(params.minLength)
+                        onUpdate(params.copy(minLength = lenSteps[(idx + 1) % lenSteps.size], page = 1))
+                    },
+                    label = {
+                        Text(if (params.minLength == 0) t("Length", "文字数")
+                        else " ≥ " + if (params.minLength >= 10000) "${params.minLength / 10000}" + t("0k chars", "万字") else "${params.minLength}")
+                    }
+                )
+                val ptSteps = listOf(0, 100, 1000, 3000, 10000, 50000, 100000, 200000)
+                FilterChip(
+                    selected = params.minPoints > 0,
+                    onClick = {
+                        val idx = ptSteps.indexOf(params.minPoints)
+                        onUpdate(params.copy(minPoints = ptSteps[(idx + 1) % ptSteps.size], page = 1))
+                    },
+                    label = {
+                        Text(if (params.minPoints == 0) t("Points", "ポイント")
+                        else " ≥ ${if (params.minPoints >= 10000) (params.minPoints / 10000).toString() + t("0k", "万") else params.minPoints.toString()}pt")
+                    }
+                )
+            }
+            // content elements: tap cycles don't-care → require → exclude
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                val elems: List<Triple<String, ElementFilter, (ElementFilter) -> SyosetuSearchParams>> = listOf(
+                    Triple("R15", params.r15) { f -> params.copy(r15 = f) },
+                    Triple("R15残酷", params.zankoku) { f -> params.copy(zankoku = f) },
+                    Triple("BL", params.bl) { f -> params.copy(bl = f) },
+                    Triple("GL", params.gl) { f -> params.copy(gl = f) },
+                    Triple("転生", params.tensei) { f -> params.copy(tensei = f) },
+                    Triple("転移", params.tenni) { f -> params.copy(tenni = f) }
+                )
+                elems.forEach { (label, value, setter) ->
+                    FilterChip(
+                        selected = value != ElementFilter.ANY,
+                        onClick = {
+                            onUpdate(setter(
+                                when (value) {
+                                    ElementFilter.ANY -> ElementFilter.REQUIRE
+                                    ElementFilter.REQUIRE -> ElementFilter.EXCLUDE
+                                    ElementFilter.EXCLUDE -> ElementFilter.ANY
+                                }
+                            ).copy(page = 1))
+                        },
+                        label = {
+                            val mark = when (value) {
+                                ElementFilter.ANY -> ""
+                                ElementFilter.REQUIRE -> " ✓"
+                                ElementFilter.EXCLUDE -> " ✗"
+                            }
+                            Text(label + mark)
+                        }
+                    )
+                }
+            }
+            // search scope
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                val scopes: List<Triple<String, Boolean, (Boolean) -> SyosetuSearchParams>> = listOf(
+                    Triple(t("Title", "タイトル"), params.inTitle) { v -> params.copy(inTitle = v) },
+                    Triple(t("Synopsis", "あらすじ"), params.inSynopsis) { v -> params.copy(inSynopsis = v) },
+                    Triple(t("Keywords", "キーワード"), params.inKeywords) { v -> params.copy(inKeywords = v) },
+                    Triple(t("Author", "作者名"), params.inAuthor) { v -> params.copy(inAuthor = v) }
+                )
+                scopes.forEach { (label, checked, setter) ->
+                    FilterChip(
+                        selected = checked,
+                        onClick = { onUpdate(setter(!checked).copy(page = 1)) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+        }
+        if (showGenres) {
+            AlertDialog(
+                onDismissRequest = { showGenres = false },
+                title = { Text(t("Genre", "ジャンル")) },
+                text = {
+                    Column {
+                        SYOSETU_GENRES.forEach { (code, name) ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val next = if (code in params.genres) params.genres - code else params.genres + code
+                                        onUpdate(params.copy(genres = next, page = 1))
+                                    }
+                            ) {
+                                Checkbox(
+                                    checked = code in params.genres,
+                                    onCheckedChange = {
+                                        val next = if (code in params.genres) params.genres - code else params.genres + code
+                                        onUpdate(params.copy(genres = next, page = 1))
+                                    }
+                                )
+                                Text(name)
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { showGenres = false; onSearch() }) { Text("OK") } },
+                dismissButton = { TextButton(onClick = { showGenres = false }) { Text(t("Cancel", "キャンセル")) } }
+            )
         }
     }
 }

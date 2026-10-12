@@ -312,3 +312,93 @@ fun syosetuBookmarksJs(): String = """
   } catch (e) { return 'ERR ' + e; }
 })();
 """.trimIndent()
+
+// --- advanced search (search.php parity, via the official API) -------------
+
+/** Genre codes from yomou's search form (verified 2026-10-12). */
+val SYOSETU_GENRES = listOf(
+    101 to "異世界", 102 to "現実世界",
+    201 to "ハイファンタジー", 202 to "ローファンタジー",
+    301 to "純文学", 302 to "ヒューマンドラマ", 303 to "歴史", 304 to "推理",
+    305 to "ホラー", 306 to "アクション", 307 to "コメディー",
+    401 to "VRゲーム", 402 to "宇宙", 403 to "空想科学", 404 to "パニック",
+    9801 to "ノンジャンル", 9999 to "その他"
+)
+
+/** Sort orders (API-verified tokens; labels from search.php). */
+val SYOSETU_SEARCH_ORDERS = listOf(
+    "hyoka" to ("Total points" to "総合ポイント"),
+    "dailypoint" to ("Daily points" to "日間ポイント"),
+    "weeklypoint" to ("Weekly points" to "週間ポイント"),
+    "monthlypoint" to ("Monthly points" to "月間ポイント"),
+    "quarterpoint" to ("Quarterly points" to "四半期ポイント"),
+    "yearlypoint" to ("Yearly points" to "年間ポイント"),
+    "favnovelcnt" to ("Bookmarks" to "ブックマーク数"),
+    "reviewcnt" to ("Reviews" to "レビュー数"),
+    "hyokacnt" to ("Raters" to "評価者数"),
+    "lengthdesc" to ("Longest" to "文字数"),
+    "new" to ("Newest" to "最新掲載順"),
+    "old" to ("Oldest updated" to "更新が古い順"),
+    "generalfirstup" to ("First posted" to "初回掲載順")
+)
+
+/** Three-state element filter: don't care / require / exclude. */
+enum class ElementFilter { ANY, REQUIRE, EXCLUDE }
+
+/** Everything the advanced search can express; [toApiParams] maps to the API. */
+data class SyosetuSearchParams(
+    val word: String = "",
+    val notword: String = "",
+    val genres: Set<Int> = emptySet(),
+    val serial: Boolean? = null,     // null=both, true=連載, false=短編
+    val completed: Boolean? = null,  // null=both, true=完結, false=連載中
+    val minMinutes: Int = 0,         // reading time (5/10/30/60/…分以上)
+    val minLength: Int = 0,          // 文字数以上
+    val minPoints: Int = 0,          // 総合ポイント以上
+    val r15: ElementFilter = ElementFilter.ANY,
+    val zankoku: ElementFilter = ElementFilter.ANY,   // 残酷な描写
+    val bl: ElementFilter = ElementFilter.ANY,
+    val gl: ElementFilter = ElementFilter.ANY,
+    val tensei: ElementFilter = ElementFilter.ANY,    // 異世界転生
+    val tenni: ElementFilter = ElementFilter.ANY,     // 異世界転移
+    val inTitle: Boolean = true,
+    val inSynopsis: Boolean = false,
+    val inKeywords: Boolean = true,
+    val inAuthor: Boolean = false,
+    val order: String = "hyoka",
+    val page: Int = 1,
+    val ga: String = ""  // "none" pins all-ages results
+) {
+    fun toApiParams(): Map<String, String> = buildMap {
+        if (word.isNotBlank()) put("word", word)
+        if (notword.isNotBlank()) put("notword", notword)
+        genres.sorted().forEach { put("genre", it.toString()) }  // repeats = OR
+        serial?.let { put("nt", if (it) "1" else "2") }
+        completed?.let { put("e", if (it) "1" else "0") }
+        if (minMinutes > 0) put("mintime", minMinutes.toString())
+        if (minLength > 0) put("minlen", minLength.toString())
+        if (minPoints > 0) put("min_globalpoint", minPoints.toString())
+        fun flag(name: String, f: ElementFilter) {
+            when (f) {
+                ElementFilter.REQUIRE -> put("is$name", "1")
+                ElementFilter.EXCLUDE -> put("not$name", "1")
+                ElementFilter.ANY -> {}
+            }
+        }
+        flag("r15", r15); flag("zankoku", zankoku)
+        flag("bl", bl); flag("gl", gl)
+        flag("tensei", tensei); flag("tenni", tenni)
+        // scope flags: API omits a field = search everywhere; setting only
+        // chosen ones narrows the word search to those fields
+        if (!(inTitle && inSynopsis && inKeywords && inAuthor)) {
+            if (inTitle) put("title", "1")
+            if (inSynopsis) put("ex", "1")
+            if (inKeywords) put("keyword", "1")
+            if (inAuthor) put("wname", "1")
+        }
+        put("order", order)
+        put("lim", "20")
+        put("st", ((page - 1) * 20).toString())
+        if (ga.isNotBlank()) put("ga", ga)
+    }
+}
