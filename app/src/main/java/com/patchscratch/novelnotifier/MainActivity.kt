@@ -168,6 +168,8 @@ fun NovelApp(
     var settingsSite by remember { mutableStateOf("nu") } // which site's settings section to show
     var syosetuNovel by remember { mutableStateOf<SyosetuNovel?>(null) }
     var kakuyomuWork by remember { mutableStateOf<KakuyomuWork?>(null) }
+    var kakuyomuR18 by remember { mutableStateOf(prefs.getBoolean("kakuyomu_r18", false)) }
+    var kakuyomuBookmarks by remember { mutableStateOf(loadKakuyomuBookmarks(prefs)) }
     var showSyosetuLogin by remember { mutableStateOf(false) }
     var syosetuLoggedIn by remember {
         mutableStateOf(prefs.getBoolean("syosetu_logged_in", false))
@@ -485,6 +487,11 @@ fun NovelApp(
         )
         showSettings -> SettingsScreen(
             site = settingsSite,
+            kakuyomuR18 = kakuyomuR18,
+            onKakuyomuR18 = { on ->
+                kakuyomuR18 = on
+                prefs.edit { putBoolean("kakuyomu_r18", on) }
+            },
             currentUrl = rssUrl,
             onSyosetuLogin = {
                 // Settings composes BEFORE the login branch in the when-block —
@@ -602,6 +609,14 @@ fun NovelApp(
         )
         kakuyomuWork != null -> KakuyomuDetailScreen(
             work = kakuyomuWork!!,
+            bookmarked = kakuyomuBookmarks.any { it.id == kakuyomuWork!!.id },
+            onToggleBookmark = {
+                val id = kakuyomuWork!!.id
+                kakuyomuBookmarks =
+                    if (kakuyomuBookmarks.any { it.id == id }) kakuyomuBookmarks.filterNot { it.id == id }
+                    else listOf(kakuyomuWork!!) + kakuyomuBookmarks
+                saveKakuyomuBookmarks(prefs, kakuyomuBookmarks)
+            },
             onBack = { kakuyomuWork = null },
             onOpenReader = { chapters, startAt ->
                 readerTarget = ReaderTarget(
@@ -652,7 +667,9 @@ fun NovelApp(
                 settingsSite = "kakuyomu"
                 showSettings = true
             },
-            onOpenWork = { work -> kakuyomuWork = work }
+            onOpenWork = { work -> kakuyomuWork = work },
+            r18Enabled = kakuyomuR18,
+            bookmarks = kakuyomuBookmarks
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {

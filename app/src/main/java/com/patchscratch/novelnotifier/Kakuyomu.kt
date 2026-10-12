@@ -1,5 +1,6 @@
 package com.patchscratch.novelnotifier
 
+import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -39,6 +40,7 @@ data class KakuyomuWork(
     val publishedAt: String,    // ISO "2019-10-12T11:36:32Z"
     val lastUpdate: String,     // lastEpisodePublishedAt, ISO
     val coverUrl: String,       // adminCoverImageUrl ("" when absent)
+    val isSexual: Boolean = false,  // the site's R18 flag (no separate genre)
     val introduction: String = "",  // synopsis — detail pages only
     val tags: String = ""           // tagLabels joined — detail pages only
 ) {
@@ -184,6 +186,7 @@ private fun parseWorkNode(node: JSONObject): KakuyomuWork? {
         publishedAt = node.optString("publishedAt"),
         lastUpdate = node.optString("lastEpisodePublishedAt"),
         coverUrl = node.optString("adminCoverImageUrl"),
+        isSexual = node.optBoolean("isSexual"),
         introduction = node.optString("introduction"),
         tags = node.optJSONArray("tagLabels")?.let { arr ->
             (0 until arr.length()).joinToString(" ") { arr.optString(it) }
@@ -195,7 +198,7 @@ private fun parseWorkNode(node: JSONObject): KakuyomuWork? {
 private const val KAKUYOMU_WORK_FIELDS =
     "id title catchphrase genre serialStatus publicEpisodeCount " +
         "totalReviewPoint totalCharacterCount publishedAt lastEpisodePublishedAt " +
-        "adminCoverImageUrl author { activityName }"
+        "adminCoverImageUrl isSexual author { activityName }"
 
 /** GraphQL response (the whole {data:…} envelope) → search result. */
 internal fun parseKakuyomuSearchJson(json: String): KakuyomuSearchResult = try {
@@ -323,6 +326,7 @@ fun parseKakuyomuWorkPage(html: String): KakuyomuWorkDetail? {
         publishedAt = workNode.optString("publishedAt"),
         lastUpdate = workNode.optString("lastEpisodePublishedAt"),
         coverUrl = workNode.optString("adminCoverImageUrl"),
+        isSexual = workNode.optBoolean("isSexual"),
         introduction = workNode.optString("introduction"),
         tags = workNode.optJSONArray("tagLabels")?.let { arr ->
             (0 until arr.length()).joinToString(" ") { arr.optString(it) }
@@ -392,4 +396,50 @@ fun parseKakuyomuEpisode(html: String): Pair<String, List<String>> {
         }.filter { it.isNotEmpty() }.toList()
     } ?: emptyList()
     return title to paragraphs
+}
+
+// --- Local bookmarks (device reading list) -----------------------------------
+
+/**
+ * Kakuyomu bookmarks, stored as one JSON-array pref (`kakuyomu_bookmarks`)
+ * so they ride device backups. Kakuyomu's own site offers follows
+ * (フォロー) to logged-in users — no in-app login yet, so these stay
+ * on-device; the drawer suggests the site account when relevant.
+ */
+private fun KakuyomuWork.toBookmarkJson(): JSONObject = JSONObject().apply {
+    put("id", id); put("title", title); put("catchphrase", catchphrase)
+    put("genre", genre); put("author", author); put("end", isCompleted)
+    put("eps", episodeCount); put("pts", points); put("chars", charCount)
+    put("pub", publishedAt); put("up", lastUpdate); put("cover", coverUrl)
+    put("r18", isSexual)
+}
+
+internal fun kakuyomuBookmarksJson(works: List<KakuyomuWork>): String =
+    JSONArray().apply { works.forEach { put(it.toBookmarkJson()) } }.toString()
+
+internal fun parseKakuyomuBookmarks(json: String): List<KakuyomuWork> = try {
+    val arr = JSONArray(json)
+    (0 until arr.length()).mapNotNull { i ->
+        val row = arr.optJSONObject(i) ?: return@mapNotNull null
+        val id = row.optString("id")
+        if (id.isBlank()) return@mapNotNull null
+        KakuyomuWork(
+            id = id, title = row.optString("title"), catchphrase = row.optString("catchphrase"),
+            genre = row.optString("genre"), author = row.optString("author"),
+            isCompleted = row.optBoolean("end"), episodeCount = row.optInt("eps"),
+            points = row.optInt("pts"), charCount = row.optLong("chars"),
+            publishedAt = row.optString("pub"), lastUpdate = row.optString("up"),
+            coverUrl = row.optString("cover"), isSexual = row.optBoolean("r18")
+        )
+    }
+} catch (e: Exception) {
+    DebugLog.log("KAKUYOMU", "bookmarks parse failed", e)
+    emptyList()
+}
+
+fun loadKakuyomuBookmarks(prefs: android.content.SharedPreferences): List<KakuyomuWork> =
+    prefs.getString("kakuyomu_bookmarks", null)?.let { parseKakuyomuBookmarks(it) } ?: emptyList()
+
+fun saveKakuyomuBookmarks(prefs: android.content.SharedPreferences, works: List<KakuyomuWork>) {
+    prefs.edit { putString("kakuyomu_bookmarks", kakuyomuBookmarksJson(works)) }
 }

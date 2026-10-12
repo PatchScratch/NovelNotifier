@@ -33,7 +33,8 @@ object BackupManager {
         "last_read", "read_titles",
         "layout_mode", "sort_mode",
         "theme_mode", "stack_notifications",
-        "custom_theme_name"
+        "custom_theme_name",
+        "kakuyomu_bookmarks"
     )
 
     /** Pure so tests can verify the credentials-exclusion rule. */

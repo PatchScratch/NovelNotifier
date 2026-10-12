@@ -49,7 +49,9 @@ fun KakuyomuHome(
     activeSite: String,
     onSwitchSite: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenWork: (KakuyomuWork) -> Unit
+    onOpenWork: (KakuyomuWork) -> Unit,
+    r18Enabled: Boolean = false,
+    bookmarks: List<KakuyomuWork> = emptyList()
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -71,9 +73,40 @@ fun KakuyomuHome(
                     selected = false,
                     onClick = { scope.launch { drawerState.close() } }
                 )
+                HorizontalDivider()
                 Text(
-                    t("Kakuyomu needs no account — search and read right away. Login features may arrive later.",
-                        "カクヨムはアカウント不要です — すぐ検索・閲覧できます。ログイン機能は後日。"),
+                    t("Bookmarks", "ブックマーク"),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                )
+                if (bookmarks.isEmpty()) {
+                    Text(
+                        t("Open a work and tap ⚑ Bookmark to keep it here — saved on this device and carried in backups.",
+                            "作品を開いて⚑ブックマークをタップするとここに保存されます — 端末内保存で、バックアップにも含まれます。"),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                } else {
+                    bookmarks.forEach { work ->
+                        NavigationDrawerItem(
+                            label = {
+                                Text(
+                                    (if (work.isSexual) "R18 · " else "") + work.title,
+                                    maxLines = 1,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            },
+                            selected = false,
+                            onClick = {
+                                scope.launch { drawerState.close() }
+                                onOpenWork(work)
+                            }
+                        )
+                    }
+                }
+                Text(
+                    t("Kakuyomu's site also offers follows (フォロー) when logged in — an in-app login may arrive later. No account is needed to browse and read.",
+                        "カクヨム公式サイトではログインするとフォロー機能が使えます — アプリ内ログインは後日予定。閲覧にアカウントは不要です。"),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
@@ -90,7 +123,8 @@ fun KakuyomuHome(
     ) {
         KakuyomuDiscoverBody(
             onOpenWork = onOpenWork,
-            openDrawer = { scope.launch { drawerState.open() } }
+            openDrawer = { scope.launch { drawerState.open() } },
+            r18Enabled = r18Enabled
         )
     }
 }
@@ -132,11 +166,17 @@ fun SiteSwitcherChips(activeSite: String, onSwitchSite: (String) -> Unit) {
 @Composable
 fun KakuyomuDiscoverBody(
     onOpenWork: (KakuyomuWork) -> Unit,
-    openDrawer: () -> Unit = {}
+    openDrawer: () -> Unit = {},
+    r18Enabled: Boolean = false
 ) {
     // Default to All-time rankings so the screen fills on entry; the Search
     // tab (index KAKUYOMU_PERIODS.size) stays a deliberate tap away.
     var tab by remember { mutableIntStateOf(KAKUYOMU_PERIODS.size - 1) }
+    // Kakuyomu mixes R18 into the same index (no sister site, no server
+    // gate — the API serves isSexual rows to anyone). The app gates: all-ages
+    // hides them; the chip (only with the Settings 18+ gate passed) flips to
+    // R18-only browsing, mirroring the Syosetu sister chip's mental model.
+    var r18Mode by remember { mutableStateOf(false) }
     var genre by remember { mutableStateOf<String?>(null) }
     var variation by remember { mutableStateOf("LONG") }
     var query by remember { mutableStateOf("") }
@@ -191,6 +231,14 @@ fun KakuyomuDiscoverBody(
                 t("Kakuyomu Discover", "カクヨム Discover"),
                 style = MaterialTheme.typography.headlineSmall
             )
+            if (r18Enabled) {
+                Spacer(modifier = Modifier.weight(1f))
+                FilterChip(
+                    selected = r18Mode,
+                    onClick = { r18Mode = !r18Mode },
+                    label = { Text(if (r18Mode) "R18" else "R18 ✕") }
+                )
+            }
         }
         ScrollableTabRow(selectedTabIndex = tab.coerceAtMost(KAKUYOMU_PERIODS.size)) {
             KAKUYOMU_PERIODS.forEachIndexed { i, (_, labels) ->
@@ -259,8 +307,23 @@ fun KakuyomuDiscoverBody(
             CircularProgressIndicator(modifier = Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
         }
         if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+        // R18 gate: all-ages hides isSexual rows entirely; R18 mode shows
+        // ONLY them. Applied at render so toggling is instant (no refetch).
+        val shown = when {
+            !r18Enabled -> results.filter { !it.isSexual }
+            r18Mode -> results.filter { it.isSexual }
+            else -> results
+        }
+        if (r18Enabled && r18Mode && shown.isEmpty()) {
+            Text(
+                t("No R18 works in these results — try the Search tab or another genre.",
+                    "この条件ではR18作品がありません — 検索タブや別ジャンルをお試しください。"),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(16.dp)
+            )
+        }
         LazyColumn {
-            items(results, key = { it.id }) { work ->
+            items(shown, key = { it.id }) { work ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -268,7 +331,10 @@ fun KakuyomuDiscoverBody(
                         .clickable { onOpenWork(work) }
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Text(work.title, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            (if (work.isSexual) "R18 · " else "") + work.title,
+                            style = MaterialTheme.typography.titleMedium
+                        )
                         if (work.catchphrase.isNotBlank()) {
                             Text(
                                 work.catchphrase,
@@ -300,7 +366,9 @@ fun KakuyomuDiscoverBody(
 fun KakuyomuDetailScreen(
     work: KakuyomuWork,
     onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit,
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    bookmarked: Boolean = false,
+    onToggleBookmark: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var detail by remember { mutableStateOf<KakuyomuWorkDetail?>(null) }
@@ -334,9 +402,18 @@ fun KakuyomuDetailScreen(
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
+            Spacer(modifier = Modifier.weight(1f))
+            // Local bookmark (device reading list) — the site's own follow
+            // (フォロー) needs an account; the drawer notes that.
+            TextButton(onClick = onToggleBookmark) {
+                Text(
+                    if (bookmarked) t("⚑ Bookmarked", "⚑ ブックマーク済み") else t("⚑ Bookmark", "⚑ ブックマーク"),
+                    color = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                )
+            }
         }
         Text(
-            work.title,
+            (if (work.isSexual) "R18 · " else "") + work.title,
             style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.padding(horizontal = 16.dp)
         )

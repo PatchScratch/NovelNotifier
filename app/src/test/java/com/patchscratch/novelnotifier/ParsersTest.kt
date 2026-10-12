@@ -602,4 +602,23 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertEquals("2019", meta.year)
         assertEquals("連載中", meta.completelyTranslated)
     }
+
+    @Test
+    fun kakuyomuBookmarks_roundTripKeepsR18AndCoreFields() {
+        val works = parseKakuyomuSearchJson(kakuSearchJson).works +
+            parseKakuyomuSearchJson(kakuSearchJson).works[1].copy(isSexual = true)
+        val restored = parseKakuyomuBookmarks(kakuyomuBookmarksJson(works))
+        assertEquals(works.size, restored.size)
+        assertEquals(works.map { it.id }, restored.map { it.id })
+        assertTrue(restored.last().isSexual)
+        assertFalse(restored.first().isSexual)
+        assertEquals("じゃがバター", restored.first().author)
+        assertEquals(763, restored.first().episodeCount)
+    }
+
+    @Test
+    fun kakuyomuBookmarks_garbageIsHarmless() {
+        assertTrue(parseKakuyomuBookmarks("not json").isEmpty())
+        assertTrue(parseKakuyomuBookmarks("""[{"id":""}]""").isEmpty())
+    }
 }

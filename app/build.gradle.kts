@@ -19,6 +19,12 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // JVM unit tests: parser catch-blocks log via DebugLog → android.util.Log;
+    // default-values keep those paths testable instead of throwing "not mocked".
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     // The APK is distributed directly (GitHub Releases), not via a store.
     // Signing with the standard debug keystore keeps the signature stable so
     // devices running earlier builds update in place instead of reinstalling.
