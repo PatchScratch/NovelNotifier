@@ -62,7 +62,8 @@ fun SyosetuHome(
     loggedIn: Boolean = false,
     bookmarks: List<SyosetuBookmark> = emptyList(),
     r18Enabled: Boolean = false,
-    enabledSubsites: Set<Int> = setOf(1, 2, 3)
+    enabledSubsites: Set<Int> = setOf(1, 2, 3),
+    onOpenBookmarks: (String) -> Unit = {}
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -91,9 +92,17 @@ fun SyosetuHome(
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
-                    TextButton(onClick = { scope.launch { drawerState.close() } }) { Text(t("All", "すべて") + " (${bookmarks.size})") }
+                    // Opens the bookmark library screen (grid/list, covers)
+                    // instead of just closing the drawer.
+                    TextButton(onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenBookmarks("")
+                    }) { Text(t("All", "すべて") + " (${bookmarks.size}) ▦") }
                     bookmarks.map { it.category }.filter { it.isNotBlank() }.distinct().forEach { cat ->
-                        TextButton(onClick = { scope.launch { drawerState.close() } }) {
+                        TextButton(onClick = {
+                            scope.launch { drawerState.close() }
+                            onOpenBookmarks(cat)
+                        }) {
                             Text("$cat (${bookmarks.count { it.category == cat }})")
                         }
                     }

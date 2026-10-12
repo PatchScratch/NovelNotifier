@@ -299,34 +299,48 @@ data class SyosetuBookmark(
  * on a real account may need tuning — [raw] echoes a snippet for the log.
  */
 fun parseSyosetuBookmarks(html: String): List<SyosetuBookmark> {
+    // Verified live (2026-10-12): bookmark rows are
+    //   <a href="https://ncode.syosetu.com/nXXXX/"><span class="c-up-label
+    //   c-up-label--novel-long">連載</span>&nbsp;Title</a>
+    // — the anchor content STARTS with the serial/short label span. Matching
+    // that signature EXACTLY is what keeps sidebar ranking links, "recent"
+    // carousels and other page furniture out of the bookmark list (a user
+    // report of a long junk list, 2026-10-12: only ncode-anchor matching
+    // over-captured). The broad anchor match survives ONLY as a fallback
+    // for a page redesign, so a changed layout degrades instead of losing
+    // bookmarks.
+    val strict = Regex(
+        """<a [^>]*href="https://ncode\.syosetu\.com/(n[0-9a-z]+)/?"[^>]*>\s*<span class="c-up-label[^"]*"[^>]*>[^<]*</span>(.*?)</a>""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    val broad = Regex(
+        """<a [^>]*href="https://ncode\.syosetu\.com/(n[0-9a-z]+)/?"[^>]*>(.*?)</a>""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    val matches = strict.findAll(html).toList().ifEmpty { broad.findAll(html).toList() }
     val out = mutableListOf<SyosetuBookmark>()
     // current category label if the page shows one (分類 links or selected tab)
     val cat = Regex("""分類[：:]?\s*</[^>]+>\s*<a[^>]*>([^<]+)</a>""").find(html)?.groupValues?.get(1)
         ?: Regex("""class="[^"]*current[^"]*"[^>]*>([^<]{2,20})<""").find(html)?.groupValues?.get(1)
         ?: ""
-    // Verified live (2026-10-12): bookmark rows are
-    //   <a href="https://ncode.syosetu.com/nXXXX/"><span class="c-up-label
-    //   c-up-label--novel-long">連載</span>&nbsp;Title</a>
-    // — the anchor content STARTS with a tag (serial/short label span), so
-    // capture inner HTML and strip tags; the trailing /?" skips episode
-    // links (ncode/1/).
-    Regex("""<a [^>]*href="https://ncode\.syosetu\.com/(n[0-9a-z]+)/?"[^>]*>(.*?)</a>""",
-        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        .findAll(html)
-        .forEach { m ->
-            val ncode = m.groupValues[1].uppercase()
-            if (out.any { it.ncode == ncode }) return@forEach
-            var title = m.groupValues[2]
-                .replace(Regex("<[^>]*>"), " ")          // label span etc.
-                .replace("&nbsp;", " ").replace("&amp;", "&")
-                .replace(Regex("[[:space:]]+"), " ").trim()
-            // drop the leading 連載/短編 label the span contributes
-            title = title.removePrefix("連載 ").removePrefix("短編 ").trim()
-            val idx = m.range.first
-            val window = html.substring(idx, minOf(idx + 800, html.length))
-            val upd = Regex("""(\d{4}/\d{2}/\d{2} \d{2}:\d{2})""").find(window)?.groupValues?.get(1) ?: ""
-            out.add(SyosetuBookmark(ncode, title, cat, upd))
-        }
+    matches.forEach { m ->
+        val ncode = m.groupValues[1].uppercase()
+        if (out.any { it.ncode == ncode }) return@forEach
+        var title = m.groupValues[2]
+            .replace(Regex("<[^>]*>"), " ")          // label span etc.
+            .replace("&nbsp;", " ").replace("&amp;", "&")
+            // \s (raw string) — NOT [[:space:]]: java.util.regex lacks POSIX
+            // classes and parsed that as a char-class over {e,s,p,a,c,:...},
+            // silently eating ASCII runs from titles ("Re:" → "R ")
+            .replace(Regex("""\s+"""), " ").trim()
+        // drop the leading 連載/短編 label the span contributes
+        title = title.removePrefix("連載 ").removePrefix("短編 ").trim()
+        if (title.isBlank()) return@forEach
+        val idx = m.range.first
+        val window = html.substring(idx, minOf(idx + 800, html.length))
+        val upd = Regex("""(\d{4}/\d{2}/\d{2} \d{2}:\d{2})""").find(window)?.groupValues?.get(1) ?: ""
+        out.add(SyosetuBookmark(ncode, title, cat, upd))
+    }
     return out
 }
 

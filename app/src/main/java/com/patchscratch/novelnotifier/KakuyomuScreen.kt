@@ -51,7 +51,8 @@ fun KakuyomuHome(
     onOpenSettings: () -> Unit,
     onOpenWork: (KakuyomuWork) -> Unit,
     r18Enabled: Boolean = false,
-    bookmarks: List<KakuyomuWork> = emptyList()
+    bookmarks: List<KakuyomuWork> = emptyList(),
+    onOpenBookmarks: () -> Unit = {}
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -87,22 +88,16 @@ fun KakuyomuHome(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                     )
                 } else {
-                    bookmarks.forEach { work ->
-                        NavigationDrawerItem(
-                            label = {
-                                Text(
-                                    (if (work.isSexual) "R18 · " else "") + work.title,
-                                    maxLines = 1,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            },
-                            selected = false,
-                            onClick = {
-                                scope.launch { drawerState.close() }
-                                onOpenWork(work)
-                            }
-                        )
-                    }
+                    // The library screen (grid/list with covers) holds the
+                    // list; the drawer just opens it.
+                    NavigationDrawerItem(
+                        label = { Text(t("Bookmarks", "ブックマーク") + " (${bookmarks.size}) ▦") },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onOpenBookmarks()
+                        }
+                    )
                 }
                 Text(
                     t("Kakuyomu's site also offers follows (フォロー) when logged in — an in-app login may arrive later. No account is needed to browse and read.",

@@ -170,6 +170,10 @@ fun NovelApp(
     var kakuyomuWork by remember { mutableStateOf<KakuyomuWork?>(null) }
     var kakuyomuR18 by remember { mutableStateOf(prefs.getBoolean("kakuyomu_r18", false)) }
     var kakuyomuBookmarks by remember { mutableStateOf(loadKakuyomuBookmarks(prefs)) }
+    // Bookmark library screens: Syosetu category ("" = all, null = closed);
+    // Kakuyomu boolean.
+    var syosetuBookmarkCat by remember { mutableStateOf<String?>(null) }
+    var showKakuyomuBookmarks by remember { mutableStateOf(false) }
     var showSyosetuLogin by remember { mutableStateOf(false) }
     var syosetuLoggedIn by remember {
         mutableStateOf(prefs.getBoolean("syosetu_logged_in", false))
@@ -295,6 +299,21 @@ fun NovelApp(
     LaunchedEffect(syosetuLoggedIn) {
         if (syosetuLoggedIn) {
             syosetuBookmarks = withContext(Dispatchers.IO) { loadSyosetuBookmarks(context) }
+            // Quiet self-heal: one page fetch re-syncs bookmarks so a stale
+            // or junk cache (e.g. a parse that over-captured on an older
+            // build) converges to the account's truth on every app open.
+            // Failure keeps the cache — the visible Sync button reports.
+            try {
+                val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
+                val fresh = parseSyosetuBookmarks(html)
+                if (fresh.isNotEmpty() && fresh.map { it.ncode } != syosetuBookmarks.map { it.ncode }) {
+                    withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, fresh) }
+                    DebugLog.log("SYOSETU", "startup bookmark refresh: ${fresh.size} rows (was ${syosetuBookmarks.size})")
+                    syosetuBookmarks = fresh
+                }
+            } catch (e: Exception) {
+                DebugLog.log("SYOSETU", "startup bookmark refresh skipped", e)
+            }
         }
     }
 
@@ -452,12 +471,15 @@ fun NovelApp(
     // Login overlays Settings, so close it the way its Cancel button does.
     BackHandler(
         enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding ||
-            selectedNovel != null || syosetuNovel != null || kakuyomuWork != null
+            selectedNovel != null || syosetuNovel != null || kakuyomuWork != null ||
+            syosetuBookmarkCat != null || showKakuyomuBookmarks
     ) {
         when {
             readerTarget != null -> readerTarget = null
             syosetuNovel != null -> syosetuNovel = null
             kakuyomuWork != null -> kakuyomuWork = null
+            syosetuBookmarkCat != null -> syosetuBookmarkCat = null
+            showKakuyomuBookmarks -> showKakuyomuBookmarks = false
             showLoginWeb -> {
                 showLoginWeb = false
                 showSettings = true
@@ -607,6 +629,8 @@ fun NovelApp(
             },
             onBack = { showDiscover = false }
         )
+        // Bookmark library screens live BELOW the novel branches so opening
+        // a work keeps the library underneath — back returns to it.
         kakuyomuWork != null -> KakuyomuDetailScreen(
             work = kakuyomuWork!!,
             bookmarked = kakuyomuBookmarks.any { it.id == kakuyomuWork!!.id },
@@ -641,6 +665,20 @@ fun NovelApp(
                 )
             }
         )
+        // Bookmark library screens (grid/list with covers), site-flavored —
+        // after the novel branches so a work opened from the library keeps
+        // the library underneath (back returns to it, not to Discover).
+        syosetuBookmarkCat != null -> SyosetuBookmarksScreen(
+            bookmarks = syosetuBookmarks,
+            category = syosetuBookmarkCat!!,
+            onOpenNovel = { novel -> syosetuNovel = novel },
+            onBack = { syosetuBookmarkCat = null }
+        )
+        showKakuyomuBookmarks -> KakuyomuBookmarksScreen(
+            bookmarks = kakuyomuBookmarks,
+            onOpenWork = { work -> kakuyomuWork = work },
+            onBack = { showKakuyomuBookmarks = false }
+        )
         showSyosetuLogin -> SyosetuLoginScreen(
             onLoggedIn = { onSyosetuLoggedIn() },
             onCancel = { showSyosetuLogin = false }
@@ -657,7 +695,8 @@ fun NovelApp(
             loggedIn = syosetuLoggedIn,
             bookmarks = syosetuBookmarks,
             r18Enabled = syosetuR18,
-            enabledSubsites = syosetuSubsites
+            enabledSubsites = syosetuSubsites,
+            onOpenBookmarks = { cat -> syosetuBookmarkCat = cat }
         )
         // Kakuyomu workspace home; NU home falls through.
         activeSite == "kakuyomu" && selectedWithCover == null -> KakuyomuHome(
@@ -669,7 +708,8 @@ fun NovelApp(
             },
             onOpenWork = { work -> kakuyomuWork = work },
             r18Enabled = kakuyomuR18,
-            bookmarks = kakuyomuBookmarks
+            bookmarks = kakuyomuBookmarks,
+            onOpenBookmarks = { showKakuyomuBookmarks = true }
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {

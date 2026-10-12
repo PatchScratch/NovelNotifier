@@ -621,4 +621,35 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertTrue(parseKakuyomuBookmarks("not json").isEmpty())
         assertTrue(parseKakuyomuBookmarks("""[{"id":""}]""").isEmpty())
     }
+
+    @Test
+    fun syosetuBookmarks_strictRowsKeepSidebarJunkOut() {
+        // Real row shape (verified live): anchor starts with the c-up-label
+        // span. Sidebar/ranking links are plain-text ncode anchors and must
+        // NOT become bookmarks (user report: long junk list vs 3 real).
+        val html = """
+            <div class="bookmark-list">
+            <a href="https://ncode.syosetu.com/n2267be/"><span class="c-up-label c-up-label--novel-long">連載</span>&nbsp;Re:ゼロから始める異世界生活</a>
+            <a href="https://ncode.syosetu.com/n9669bk/"><span class="c-up-label">短編</span>&nbsp;無職転生</a>
+            </div>
+            <div class="ranking-sidebar">
+            <a href="https://ncode.syosetu.com/n1234ab/">ランキング作品A</a>
+            <a href="https://ncode.syosetu.com/n5678cd/">ランキング作品B</a>
+            </div>
+        """.trimIndent()
+        val rows = parseSyosetuBookmarks(html)
+        assertEquals(listOf("N2267BE", "N9669BK"), rows.map { it.ncode })
+        assertEquals("Re:ゼロから始める異世界生活", rows[0].title)
+        assertEquals("無職転生", rows[1].title)
+    }
+
+    @Test
+    fun syosetuBookmarks_broadFallbackWhenSignatureAbsent() {
+        // A redesigned page without the label span still yields the plain
+        // anchors (degrade, don't lose bookmarks).
+        val html = """<a href="https://ncode.syosetu.com/n2267be/">Re:ゼロから始める異世界生活</a>"""
+        val rows = parseSyosetuBookmarks(html)
+        assertEquals(1, rows.size)
+        assertEquals("N2267BE", rows[0].ncode)
+    }
 }
