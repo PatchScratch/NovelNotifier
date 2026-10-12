@@ -58,6 +58,8 @@ fun SettingsScreen(
     onSyosetuSync: () -> Unit = {},
     syosetuR18: Boolean = false,
     onSyosetuR18: (Boolean) -> Unit = {},
+    syosetuSubsites: Set<Int> = setOf(1, 2, 3),
+    onSyosetuSubsites: (Set<Int>) -> Unit = {},
     syosetuLoggedIn: Boolean = false,
     syosetuStatus: String = "",
     onCheckNow: () -> Unit,
@@ -189,8 +191,41 @@ fun SettingsScreen(
                     checked = syosetuR18,
                     onCheckedChange = { on -> if (on) showAgeGate = true else onSyosetuR18(false) }
                 )
-                Text(t("Show R18 titles (novel18)", "R18作品を表示（novel18）"),
+                Text(t("R18 titles (novel18)", "R18作品（novel18）"),
                     modifier = Modifier.padding(start = 8.dp))
+            }
+            if (syosetuR18) {
+                Text(
+                    t("Sister sites — disable any you don't read to cut the noise:",
+                       "シスターサイト — 読まないサイトはオフにしてください："),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                listOf(
+                    1 to t("Nocturne (ノクターン)", "ノクターンノベルズ"),
+                    2 to t("Moonlight (ムーンライト)", "ムーンライトノベルズ"),
+                    3 to t("Moonlight Ladies (レディース)", "ムーンライトレディース")
+                ).forEach { (code, label) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val next = if (code in syosetuSubsites) syosetuSubsites - code else syosetuSubsites + code
+                                onSyosetuSubsites(next)
+                            }
+                            .padding(start = 12.dp)
+                    ) {
+                        Switch(
+                            checked = code in syosetuSubsites,
+                            onCheckedChange = { on ->
+                                val next = if (on) syosetuSubsites + code else syosetuSubsites - code
+                                onSyosetuSubsites(next)
+                            }
+                        )
+                        Text(label, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
             }
             if (syosetuLoggedIn) {
                 Button(

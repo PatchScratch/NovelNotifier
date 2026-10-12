@@ -37,8 +37,22 @@ data class SyosetuNovel(
     val episodeCount: Int,      // API general_all_no (shorts = 1)
     val lastUpdate: String,     // general_lastup "2015-04-03 23:00:00"
     val points: Int,            // yearly_point for ranking context
-    val isR18: Boolean = false  // from the novel18 sister site
+    val isR18: Boolean = false, // from the novel18 sister site
+    // Which sister (18api nocgenre): 1 ノクターン / 2 ムーンライト /
+    // 3 ムーンライトレディース; 0 = main Narou site.
+    val nocgenre: Int = 0
 ) {
+    /** Native sister name for display/ePub; main site = Narou. */
+    val subsiteName: String get() = when (nocgenre) {
+        1 -> t("Nocturne", "ノクターンノベルズ")
+        2 -> t("Moonlight", "ムーンライトノベルズ")
+        3 -> t("Moonlight Ladies", "ムーンライトレディース")
+        else -> t("Narou", "小説家になろう")
+    }
+    val subsiteNameNative: String get() = when (nocgenre) {
+        1 -> "ノクターンノベルズ"; 2 -> "ムーンライトノベルズ"
+        3 -> "ムーンライトレディース"; else -> "小説家になろう"
+    }
     // R18 novels are served by the novel18 sister host; the main ncode host
     // redirects there through Syosetu's own age-auth anyway.
     val url: String get() =
@@ -157,14 +171,19 @@ fun parseSyosetuApi(json: String, r18: Boolean = false): List<SyosetuNovel> = tr
             title = row.optString("title"),
             writer = row.optString("writer"),
             story = row.optString("story"),
-            genreCode = row.optInt("genre"),
+            // the 18api speaks a slightly different dialect: novel_type
+            // (underscore) and nocgenre for the sister; main API uses
+            // noveltype and genre
+            genreCode = row.optInt("genre", row.optInt("nocgenre")),
             keywords = row.optString("keyword"),
             isCompleted = row.optInt("end") == 1,
-            isShortStory = row.optInt("noveltype") == 2,
+            isShortStory = row.optInt("noveltype", row.optInt("novel_type")) == 2,
             episodeCount = row.optInt("general_all_no", 1).coerceAtLeast(1),
             lastUpdate = row.optString("general_lastup"),
-            points = row.optInt("yearly_point", row.optInt("daily_point")),
-            isR18 = r18
+            points = row.optInt("yearly_point",
+                row.optInt("global_point", row.optInt("daily_point"))),
+            isR18 = r18,
+            nocgenre = row.optInt("nocgenre")
         )
     }
 } catch (e: Exception) {
@@ -211,8 +230,12 @@ fun syosetuGenreNameNative(code: Int): String = when (code) {
     else -> "ジャンル $code"
 }
 
-/** Genre code → display name, bilingual (EN toggle shows English). UI only. */
+/** Genre code → display name, bilingual (EN toggle shows English). UI only.
+ *  R18 rows carry nocgenre (1-3) in genreCode from the dialect parser — map
+ *  those to the sister name so rows don't show a bare "Genre 1". */
 fun syosetuGenreName(code: Int): String = when (code) {
+    1, 2, 3 -> t(listOf("Nocturne", "Moonlight", "Moonlight Ladies")[code - 1],
+                  listOf("ノクターン", "ムーンライト", "ムーンライトレディース")[code - 1])
     101 -> t("Isekai Romance", "異世界〔恋愛〕")
     102 -> t("Modern Romance", "現実世界〔恋愛〕")
     201 -> t("High Fantasy", "ハイファンタジー")
@@ -254,7 +277,7 @@ fun SyosetuNovel.toBookMeta(): EpubStore.BookMeta = EpubStore.BookMeta(
     author = writer,
     year = lastUpdate.take(4),
     completelyTranslated = if (isCompleted) "完結" else "連載中",
-    originalPublisher = if (isR18) "novel18.syosetu.com" else "小説家になろう"
+    originalPublisher = subsiteNameNative
 )
 
 // --- bookmark library (slice 2) ---------------------------------------------

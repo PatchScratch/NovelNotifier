@@ -61,7 +61,8 @@ fun SyosetuHome(
     onOpenNovel: (SyosetuNovel) -> Unit,
     loggedIn: Boolean = false,
     bookmarks: List<SyosetuBookmark> = emptyList(),
-    r18Enabled: Boolean = false
+    r18Enabled: Boolean = false,
+    enabledSubsites: Set<Int> = setOf(1, 2, 3)
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -130,7 +131,8 @@ fun SyosetuHome(
         SyosetuDiscoverBody(
             onOpenNovel = onOpenNovel,
             openDrawer = { scope.launch { drawerState.open() } },
-            r18Enabled = r18Enabled
+            r18Enabled = r18Enabled,
+            enabledSubsites = enabledSubsites
         )
     }
 }
@@ -139,10 +141,25 @@ fun SyosetuHome(
 fun SyosetuDiscoverBody(
     onOpenNovel: (SyosetuNovel) -> Unit,
     openDrawer: () -> Unit = {},
-    r18Enabled: Boolean = false
+    r18Enabled: Boolean = false,
+    enabledSubsites: Set<Int> = setOf(1, 2, 3)
 ) {
     var tab by remember { mutableIntStateOf(0) }
+    // 0 = Narou (all-ages); 1/2/3 = the enabled sister in the cycle
     var r18Mode by remember { mutableStateOf(false) }
+    var r18Subsite by remember { mutableIntStateOf(1) }
+    // Cycle order uses only ENABLED sisters; skip disabled ones.
+    fun nextSubsite(current: Int): Int {
+        var n = current
+        repeat(3) {
+            n = if (n >= 3) 1 else n + 1
+            if (n in enabledSubsites) return n
+        }
+        return current
+    }
+    val activeSubsite: Int =
+        if (r18Mode && r18Subsite in enabledSubsites) r18Subsite
+        else enabledSubsites.firstOrNull() ?: 1
     var searchParams by remember { mutableStateOf(SyosetuSearchParams()) }
     var results by remember { mutableStateOf<List<SyosetuNovel>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -154,14 +171,13 @@ fun SyosetuDiscoverBody(
             loading = true
             error = ""
             results = try {
-                // R18 mode queries the sister endpoint and drops the
-                // all-ages pin (everything there is 18+ by definition).
+                // R18 mode queries the sister endpoint filtered to the
+                // CYCLED subsite (nocgenre) and drops the all-ages pin.
+                val extra = if (r18Mode) mapOf("nocgenre" to activeSubsite.toString()) else mapOf("ga" to "none")
                 val params = if (tab < SYOSETU_ORDERS.size) {
-                    if (r18Mode) mapOf("order" to SYOSETU_ORDERS[tab].first, "lim" to "30")
-                    else mapOf("order" to SYOSETU_ORDERS[tab].first, "lim" to "30", "ga" to "none")
+                    mapOf("order" to SYOSETU_ORDERS[tab].first, "lim" to "30") + extra
                 } else {
-                    val base = searchParams.copy(ga = if (r18Mode) "" else "none")
-                    base.toApiParams()
+                    searchParams.copy(ga = if (r18Mode) "" else "none").toApiParams() + extra
                 }
                 syosetuApiQuery(params, r18 = r18Mode && r18Enabled)
             } catch (e: Exception) {
@@ -183,12 +199,24 @@ fun SyosetuDiscoverBody(
                 t("Syosetu Discover", "なろう Discover"),
                 style = MaterialTheme.typography.headlineSmall
             )
-            if (r18Enabled) {
+            if (r18Enabled && enabledSubsites.isNotEmpty()) {
                 Spacer(modifier = Modifier.weight(1f))
                 FilterChip(
                     selected = r18Mode,
-                    onClick = { r18Mode = !r18Mode; load() },
-                    label = { Text("R18") }
+                    onClick = {
+                        if (!r18Mode) r18Mode = true
+                        else if (enabledSubsites.size == 1) r18Mode = false
+                        else r18Subsite = nextSubsite(r18Subsite)
+                        load()
+                    },
+                    label = {
+                        val sister = when (activeSubsite) {
+                            1 -> t("Nocturne", "ノクターン")
+                            2 -> t("Moonlight", "ムーンライト")
+                            else -> t("Ladies", "レディース")
+                        }
+                        Text(if (r18Mode) "R18 · $sister" else "R18")
+                    }
                 )
             }
         }
@@ -211,8 +239,8 @@ fun SyosetuDiscoverBody(
         if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
         if (r18Mode && results.isNotEmpty()) {
             Text(
-                t("18+ (novel18). First chapter open shows Syosetu's age check — confirm it once.",
-                   "18禁（novel18）。最初に開くと年齢確認が表示されます — 一度だけ承認してください。"),
+                t("18+ (novel18). Tap the chip again to cycle sister sites; first chapter open shows Syosetu's age check — confirm once.",
+                   "18禁（novel18）。チップを再度タップするとシスターサイトを切り替えます。最初に開くと年齢確認が表示されます — 一度だけ承認してください。"),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(horizontal = 16.dp)
             )

@@ -176,6 +176,10 @@ fun NovelApp(
     var syosetuR18 by remember {
         mutableStateOf(prefs.getBoolean("syosetu_r18", false))
     }
+    // Which R18 sisters are visible (nocgenre 1/2/3); all on by default.
+    var syosetuSubsites by remember {
+        mutableStateOf(prefs.getStringSet("syosetu_subsites", setOf("1", "2", "3"))?.mapNotNull { it.toIntOrNull() }?.toSet() ?: setOf(1, 2, 3))
+    }
     var loginState by remember {
         mutableStateOf(
             if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
@@ -532,6 +536,11 @@ fun NovelApp(
                 syosetuR18 = on
                 prefs.edit { putBoolean("syosetu_r18", on) }
             },
+            syosetuSubsites = syosetuSubsites,
+            onSyosetuSubsites = { set ->
+                syosetuSubsites = set
+                prefs.edit { putStringSet("syosetu_subsites", set.map { it.toString() }.toSet()) }
+            },
             currentHours = checkHours,
             loginState = loginState,
             syncStatus = syncStatus,
@@ -617,7 +626,8 @@ fun NovelApp(
             onOpenNovel = { novel -> syosetuNovel = novel },
             loggedIn = syosetuLoggedIn,
             bookmarks = syosetuBookmarks,
-            r18Enabled = syosetuR18
+            r18Enabled = syosetuR18,
+            enabledSubsites = syosetuSubsites
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {
