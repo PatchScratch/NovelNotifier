@@ -146,7 +146,9 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Button(onClick = onStartLogin, modifier = Modifier.fillMaxWidth()) {
-            Text("Log in on Novel Updates")
+            // When a session exists the login screen auto-closes on sight of
+            // the cookie — label it for what it does in that state.
+            Text(if (loginState.startsWith("Logged in")) "Switch / re-login on Novel Updates" else "Log in on Novel Updates")
         }
         TextButton(onClick = onLoggedOut, modifier = Modifier.fillMaxWidth()) {
             Text("Log out")
