@@ -160,6 +160,10 @@ fun NovelApp(
     var showSearch by remember { mutableStateOf(false) }
     var showDiscover by remember { mutableStateOf(false) }
     var readerTarget by remember { mutableStateOf<ReaderTarget?>(null) } // in-app reader (Phase 3.1)
+    // --- Syosetu provider (slice 1) ---
+    var activeSite by remember { mutableStateOf(prefs.getString("active_site", "nu") ?: "nu") }
+    var showSyosetuDiscover by remember { mutableStateOf(false) }
+    var syosetuNovel by remember { mutableStateOf<SyosetuNovel?>(null) }
     var loginState by remember {
         mutableStateOf(
             if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
@@ -378,6 +382,11 @@ fun NovelApp(
         scheduleUpdateChecks(context, checkHours)
     }
 
+    fun switchSite(site: String) {
+        activeSite = site
+        prefs.edit { putString("active_site", site) }
+    }
+
     fun onLoggedIn(cookieHeader: String) {
         loginState = "Logged in to Novel Updates"
         prefs.edit { putString("nu_cookies", cookieHeader) }
@@ -410,10 +419,13 @@ fun NovelApp(
     // System back returns to the previous screen instead of leaving the app.
     // Login overlays Settings, so close it the way its Cancel button does.
     BackHandler(
-        enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding || selectedNovel != null
+        enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding ||
+            selectedNovel != null || syosetuNovel != null || showSyosetuDiscover
     ) {
         when {
             readerTarget != null -> readerTarget = null
+            syosetuNovel != null -> syosetuNovel = null
+            showSyosetuDiscover -> showSyosetuDiscover = false
             showLoginWeb -> {
                 showLoginWeb = false
                 showSettings = true
@@ -500,6 +512,23 @@ fun NovelApp(
             },
             onBack = { showDiscover = false }
         )
+        syosetuNovel != null -> SyosetuDetailScreen(
+            novel = syosetuNovel!!,
+            onOpenReader = { chapters, startAt ->
+                readerTarget = ReaderTarget(
+                    seriesTitle = syosetuNovel!!.title,
+                    seriesUrl = syosetuNovel!!.url,
+                    chapters = chapters,
+                    startIndex = startAt.coerceAtLeast(0),
+                    meta = syosetuNovel!!.toBookMeta()
+                )
+            }
+        )
+        showSyosetuDiscover -> SyosetuScreen(
+            onOpenNovel = { novel ->
+                syosetuNovel = novel
+            }
+        )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {
                 SeriesChapterFetcher(
@@ -536,6 +565,9 @@ fun NovelApp(
                 },
                 onOpenSearch = { showSearch = true },
                 onOpenDiscover = { showDiscover = true },
+                activeSite = activeSite,
+                onSwitchSite = { switchSite(it) },
+                onOpenSyosetu = { showSyosetuDiscover = true },
                 onOpenSettings = { showSettings = true },
                 onEditLists = { showEditLists = true },
                 onSaveListOptions = { newNotifyOff, newUpdateOff ->

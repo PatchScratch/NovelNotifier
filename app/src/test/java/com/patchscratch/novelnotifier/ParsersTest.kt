@@ -1,6 +1,8 @@
 package com.patchscratch.novelnotifier
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -411,5 +413,67 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
     fun parseTocHarvest_badInputIsEmpty() {
         assertEquals(0, parseTocHarvest("\"not json\"").size)
         assertEquals(0, parseTocHarvest("").size)
+    }
+
+    // --- Syosetu provider (slice 1) ---
+
+    @Test
+    fun syosetuApi_parsesRowsAndSkipsAllcount() {
+        val json = """[
+            {"allcount": 2},
+            {"title": "無職転生", "ncode": "N9669BK", "writer": "理不尽な孫の手", "genre": 201,
+             "keyword": "R15 異世界転生", "end": 1, "noveltype": 1, "general_all_no": 286,
+             "general_lastup": "2015-04-03 23:00:00", "yearly_point": 84410},
+            {"title": "プロローグのみ", "ncode": "N0001AA", "writer": "誰か", "genre": 101,
+             "keyword": "", "end": 0, "noveltype": 2, "general_all_no": 1,
+             "general_lastup": "2026-01-01 00:00:00", "daily_point": 5}
+        ]"""
+        val novels = parseSyosetuApi(json)
+        assertEquals(2, novels.size)
+        assertEquals("N9669BK", novels[0].ncode)
+        assertTrue(novels[0].isCompleted)
+        assertEquals(286, novels[0].episodeCount)
+        assertEquals(84410, novels[0].points)
+        assertTrue(novels[1].isShortStory)
+        assertFalse(novels[1].isCompleted)
+        // episode URL is deterministic from the ncode
+        assertEquals("https://ncode.syosetu.com/n9669bk/", novels[0].url)
+    }
+
+    @Test
+    fun syosetuToc_parsesLiveFixture() {
+        val html = java.io.File(
+            System.getProperty("user.dir") + "/src/test/resources/fixture-syosetu-toc.html"
+        ).readText()
+        val toc = parseSyosetuToc(html)
+        assertEquals("Ｒｅ：ゼロから始める異世界生活", toc.title)
+        assertEquals("鼠色猫/長月達平", toc.author)
+        assertEquals(100, toc.episodes.size)   // page 1 of a 105-episode novel
+        assertEquals(1, toc.episodes.first().number)
+        assertEquals(100, toc.episodes.last().number)
+        assertTrue(toc.episodes.first().title.contains("プロローグ"))
+    }
+
+    @Test
+    fun syosetuToc_emptyHtmlIsHarmless() {
+        val toc = parseSyosetuToc("<html><body>error</body></html>")
+        assertEquals(0, toc.episodes.size)
+        assertFalse(toc.hasMorePages)
+    }
+
+    @Test
+    fun syosetuBookMeta_mapsFields() {
+        val novel = SyosetuNovel(
+            ncode = "N9669BK", title = "無職転生", writer = "理不尽な孫の手", story = "あらすじ",
+            genreCode = 201, keywords = "R15 異世界転生", isCompleted = true, isShortStory = false,
+            episodeCount = 286, lastUpdate = "2015-04-03 23:00:00", points = 0
+        )
+        val meta = novel.toBookMeta()
+        assertEquals("無職転生", meta.title)
+        assertEquals("理不尽な孫の手", meta.author)
+        assertEquals("ハイファンタジー", meta.genres)
+        assertEquals("完結", meta.completelyTranslated)
+        assertEquals("小説家になろう", meta.originalPublisher)
+        assertEquals("2015", meta.year)
     }
 }

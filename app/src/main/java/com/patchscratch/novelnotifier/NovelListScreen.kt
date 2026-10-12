@@ -117,6 +117,9 @@ fun NovelListScreen(
     onReadFeedFound: (String) -> Unit = {},
     onOpenSearch: () -> Unit = {},
     onOpenDiscover: () -> Unit = {},
+    activeSite: String = "nu",
+    onSwitchSite: (String) -> Unit = {},
+    onOpenSyosetu: () -> Unit = {},
     onOpenSettings: () -> Unit,
     onEditLists: () -> Unit,
     onSaveListOptions: (Set<String>, Set<String>) -> Unit,
@@ -297,7 +300,39 @@ fun NovelListScreen(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(16.dp)
                 )
+                // Site switcher: providers are segregated workspaces — the
+                // drawer below shows the ACTIVE site's lists and entries.
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    androidx.compose.material3.FilterChip(
+                        selected = activeSite == "nu",
+                        onClick = { onSwitchSite("nu") },
+                        label = { Text("Novel Updates") },
+                        modifier = Modifier.weight(1f).padding(end = 4.dp)
+                    )
+                    androidx.compose.material3.FilterChip(
+                        selected = activeSite == "syosetu",
+                        onClick = { onSwitchSite("syosetu") },
+                        label = { Text("なろう") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
                 HorizontalDivider()
+                if (activeSite == "syosetu") {
+                    NavigationDrawerItem(
+                        label = { Text("なろう Discover  ★") },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onOpenSyosetu()
+                        }
+                    )
+                    Text(
+                        "Bookmark categories sync arrives with the login slice.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                    HorizontalDivider()
+                } else {
                 NavigationDrawerItem(
                     label = { Text("Search Novel Updates  ⌕") },
                     selected = false,
@@ -314,6 +349,7 @@ fun NovelListScreen(
                         onOpenDiscover()
                     }
                 )
+                }
                 NavigationDrawerItem(
                     label = { Text("Edit Lists  ⚙") },
                     selected = false,
