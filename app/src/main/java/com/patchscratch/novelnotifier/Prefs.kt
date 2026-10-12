@@ -286,3 +286,16 @@ fun applySavedCookies(prefs: android.content.SharedPreferences) {
     }
     manager.flush()
 }
+
+// --- per-series translation-group filter (3.3, user request 2026-10-12) ---
+// Excluded groups hide their rows in RELEASES and are skipped by bulk
+// download / reading order. Keyed per series; blank-group rows never hide.
+
+fun groupFilterKey(seriesUrl: String) = "group_off_" + seriesUrl.hashCode().toUInt().toString()
+
+fun loadGroupOff(prefs: android.content.SharedPreferences, seriesUrl: String): Set<String> =
+    prefs.getStringSet(groupFilterKey(seriesUrl), emptySet()) ?: emptySet()
+
+fun saveGroupOff(prefs: android.content.SharedPreferences, seriesUrl: String, off: Set<String>) {
+    prefs.edit { putStringSet(groupFilterKey(seriesUrl), off) }
+}

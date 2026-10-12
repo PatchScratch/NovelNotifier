@@ -36,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -137,6 +138,18 @@ fun NovelDetailScreen(
     var hideRead by remember { mutableStateOf(false) }
     var descExpanded by remember { mutableStateOf(false) }
     var showOrder by remember { mutableStateOf(false) }
+    // Per-series translation-group filter: excluded groups hide from RELEASES
+    // and are skipped by the reader/bulk (reading order is filtered too, so
+    // ‹ Prev / Next › and "Download all" only cover the chosen groups).
+    var groupOff by remember(novel.seriesUrl) {
+        mutableStateOf(loadGroupOff(context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE), novel.seriesUrl))
+    }
+    var showGroups by remember { mutableStateOf(false) }
+    fun toggleGroup(name: String) {
+        val next = if (name in groupOff) groupOff - name else groupOff + name
+        groupOff = next
+        saveGroupOff(context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE), novel.seriesUrl, next)
+    }
     var showChangeList by remember { mutableStateOf(false) }
     var pendingMoveId by remember { mutableStateOf<String?>(null) } // "listId:::listName" for CHANGE LIST JS
     var pendingReadRid by remember { mutableStateOf<String?>(null) } // checkbox id for the read-marker JS ("0" = clear)
@@ -269,8 +282,12 @@ fun NovelDetailScreen(
     }
 
     // The reader walks the book oldest → newest; hand it the full list in
-    // reading order plus the tapped row's index.
-    val readingOrder = remember(page.releases) { sortedReleases(page.releases, newestFirst = false) }
+    // reading order plus the tapped row's index. Groups the user filtered
+    // out are excluded — reading order, the reader, and bulk download all
+    // cover only the chosen groups.
+    val readingOrder = remember(page.releases, groupOff) {
+        sortedReleases(page.releases, newestFirst = false).filter { it.group.isBlank() || it.group !in groupOff }
+    }
     // Title-page metadata rides along once the series page has been scraped
     // (blank fields simply drop rows); until then the reader keeps book meta.
     val bookMeta = remember(page.title, page.author, page.genres, page.tags, page.associatedNames) {
@@ -574,11 +591,72 @@ fun NovelDetailScreen(
                 }
             } else {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    TextButton(
-                        onClick = { showOrder = true },
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text(if (newestFirst) "Newest First ▼" else "Oldest First ▼")
+                    Row(modifier = Modifier.align(Alignment.End)) {
+                        val allGroups = page.releases.map { it.group.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
+                        if (groupOff.isNotEmpty()) {
+                            TextButton(onClick = { showGroups = true }) {
+                                Text("Groups: ${allGroups.size - allGroups.count { it in groupOff }}/${allGroups.size} ⛭")
+                            }
+                        }
+                        TextButton(
+                            onClick = { showGroups = true },
+                            enabled = allGroups.isNotEmpty()
+                        ) {
+                            if (groupOff.isEmpty()) Text("All groups ⛭") else Text("Filter ⛭")
+                        }
+                        TextButton(onClick = { showOrder = true }) {
+                            Text(if (newestFirst) "Newest First ▼" else "Oldest First ▼")
+                        }
+                    }
+                    if (showGroups) {
+                        AlertDialog(
+                            onDismissRequest = { showGroups = false },
+                            title = { Text("Translation groups") },
+                            text = {
+                                Column {
+                                    Text(
+                                        "Hidden groups disappear from RELEASES and are skipped by the reader and bulk download.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(bottom = 8.dp)
+                                    )
+                                    val allGroups = page.releases.map { it.group.trim() }
+                                        .filter { it.isNotEmpty() }
+                                        .groupBy { it }
+                                        .entries
+                                        .sortedBy { it.key.lowercase() }
+                                    allGroups.forEach { (name, rows) ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { toggleGroup(name) }
+                                        ) {
+                                            Switch(
+                                                checked = name !in groupOff,
+                                                onCheckedChange = { toggleGroup(name) }
+                                            )
+                                            Text(
+                                                "$name (${rows.size})",
+                                                modifier = Modifier.padding(start = 8.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    groupOff = emptySet()
+                                    saveGroupOff(
+                                        context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
+                                        novel.seriesUrl, emptySet()
+                                    )
+                                    showGroups = false
+                                }) { Text("Show all") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showGroups = false }) { Text("Done") }
+                            }
+                        )
                     }
                     if (showOrder) {
                         Card(
