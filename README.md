@@ -118,9 +118,36 @@ The on-screen contrast tip: the status bar icon color follows whichever scheme i
 
 Settings → **Back up library** writes one zip via the file picker — save it to Google Drive, OneDrive, a USB drive, anywhere. On the new device: install, **Restore from backup**, log in. Your library and covers appear instantly; the sync engine tops up anything stale. Backups deliberately exclude credentials and feed tokens — a restored device does a fresh login and re-captures its own feed links automatically.
 
+## Translation costs (planned: OpenAI-compatible API)
+
+Planned feature: chapter translation through any OpenAI-compatible endpoint
+(OpenRouter, OpenAI, a local server) — you bring your own key. Translations
+are stored in the offline ePub library alongside the original text, so they
+carry between devices in backups and exports like any other book.
+
+Approximate per-chapter cost for a typical web-novel chapter (~3,000 Japanese
+characters in ≈ ~2,500–3,000 input tokens, ~2,000–2,500 output tokens for a
+quality English translation, plus ~500 tokens of prompt overhead). Prices are
+per **million tokens**, input/output, from [OpenRouter](https://openrouter.ai/models)
+and [AICostNest](https://www.aicostnest.com)'s 2026 pricing guide — check live
+prices before relying on these:
+
+| Tier | Model examples (in/out $/M) | Per chapter | 300-chapter novel |
+|---|---|---|---|
+| Budget | Gemini 2.5 Flash-Lite ($0.10/$0.40), GPT-4o-mini ($0.15/$0.60), DeepSeek V3 (~$0.28/$0.42) | ~$0.001–0.003 | ~$0.30–0.90 |
+| **Quality (recommended)** | **GPT-4.1-mini ($0.40/$1.60)**, Gemini 2.5 Flash ($0.30/$2.50), Claude Haiku 4.5 ($1.00/$5.00) | ~$0.004–0.015 | ~$1.20–4.50 |
+| Premium | Claude Sonnet 4.5 ($3/$15), GPT-4.1 ($2/$8) | ~$0.03–0.05 | ~$9–15 |
+
+Rules of thumb: a **quality-tier** model translates a chapter for about half a
+cent — a full 600-chapter epic runs roughly **$3–8**. Budget models are ~10×
+cheaper but need more editing for literary prose; premium models are for
+favorite passages, not whole libraries. Glossaries (character/term sheets
+kept in the prompt) improve name consistency at ~500 extra input tokens per
+chapter.
+
 ## Roadmap
 
-Ideas in rough order: reader mode (extracted, themed chapter text — browser mode shipped), and — only after the reader exists — **offline reading**, since storing chapters for offline use has nothing to attach to until the app can display them. Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction must filter by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
+Planned next: Kakuyomu provider (Pixiv's webnovel platform), chapter **translation via OpenAI-compatible APIs** (OpenAI-compatible endpoint + your own key; translations stored in the ePub library), then the wider Japanese webnovel sites. Reader mode (extracted, themed chapter text — browser mode shipped), and — only after the reader exists — **offline reading**, since storing chapters for offline use has nothing to attach to until the app can display them. Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction must filter by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
 
 ## Acknowledgements
 

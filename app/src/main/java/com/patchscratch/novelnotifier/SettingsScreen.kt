@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +56,8 @@ fun SettingsScreen(
     onSyosetuLogin: () -> Unit = {},
     onSyosetuLogout: () -> Unit = {},
     onSyosetuSync: () -> Unit = {},
+    syosetuR18: Boolean = false,
+    onSyosetuR18: (Boolean) -> Unit = {},
     syosetuLoggedIn: Boolean = false,
     syosetuStatus: String = "",
     onCheckNow: () -> Unit,
@@ -152,6 +155,42 @@ fun SettingsScreen(
             Text(text = "Syosetu なろう", style = MaterialTheme.typography.titleMedium)
             if (syosetuStatus.isNotBlank()) {
                 Text(syosetuStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            var showAgeGate by remember { mutableStateOf(false) }
+            if (showAgeGate) {
+                AlertDialog(
+                    onDismissRequest = { showAgeGate = false },
+                    title = { Text(t("Adult content (18+)", "成人コンテンツ（18禁）")) },
+                    text = {
+                        Text(t(
+                            "novel18.syosetu.com hosts R18 works (Nocturne, Moonlight, Moonlight Ladies). Enabling shows an R18 chip in Discover and routes those novels to the sister site, which shows Syosetu's own age check on first open. You confirm you are 18 or older.",
+                            "novel18.syosetu.com はR18作品（ノクターン・ムーンライト・ムーンライトレディース）を配信しています。有効にするとDiscoverにR18チップが表示され、該当作品はシスターサイト経由で開きます（初回はSyosetu独自の年齢確認が表示されます）。あなたは18歳以上であることを確認してください。"))
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showAgeGate = false; onSyosetuR18(true) }) {
+                            Text(t("I am 18 or older — enable", "18歳以上 — 有効にする"))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showAgeGate = false }) { Text(t("Cancel", "キャンセル")) }
+                    }
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (!syosetuR18) showAgeGate = true else onSyosetuR18(false)
+                    }
+                    .padding(vertical = 4.dp)
+            ) {
+                Switch(
+                    checked = syosetuR18,
+                    onCheckedChange = { on -> if (on) showAgeGate = true else onSyosetuR18(false) }
+                )
+                Text(t("Show R18 titles (novel18)", "R18作品を表示（novel18）"),
+                    modifier = Modifier.padding(start = 8.dp))
             }
             if (syosetuLoggedIn) {
                 Button(

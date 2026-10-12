@@ -8,6 +8,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -59,7 +60,8 @@ fun SyosetuHome(
     onOpenSettings: () -> Unit,
     onOpenNovel: (SyosetuNovel) -> Unit,
     loggedIn: Boolean = false,
-    bookmarks: List<SyosetuBookmark> = emptyList()
+    bookmarks: List<SyosetuBookmark> = emptyList(),
+    r18Enabled: Boolean = false
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -127,7 +129,8 @@ fun SyosetuHome(
     ) {
         SyosetuDiscoverBody(
             onOpenNovel = onOpenNovel,
-            openDrawer = { scope.launch { drawerState.open() } }
+            openDrawer = { scope.launch { drawerState.open() } },
+            r18Enabled = r18Enabled
         )
     }
 }
@@ -135,9 +138,11 @@ fun SyosetuHome(
 @Composable
 fun SyosetuDiscoverBody(
     onOpenNovel: (SyosetuNovel) -> Unit,
-    openDrawer: () -> Unit = {}
+    openDrawer: () -> Unit = {},
+    r18Enabled: Boolean = false
 ) {
     var tab by remember { mutableIntStateOf(0) }
+    var r18Mode by remember { mutableStateOf(false) }
     var searchParams by remember { mutableStateOf(SyosetuSearchParams()) }
     var results by remember { mutableStateOf<List<SyosetuNovel>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -149,13 +154,16 @@ fun SyosetuDiscoverBody(
             loading = true
             error = ""
             results = try {
+                // R18 mode queries the sister endpoint and drops the
+                // all-ages pin (everything there is 18+ by definition).
                 val params = if (tab < SYOSETU_ORDERS.size) {
-                    // ranking-equivalent: order by points, all ages only
-                    mapOf("order" to SYOSETU_ORDERS[tab].first, "lim" to "30", "ga" to "none")
+                    if (r18Mode) mapOf("order" to SYOSETU_ORDERS[tab].first, "lim" to "30")
+                    else mapOf("order" to SYOSETU_ORDERS[tab].first, "lim" to "30", "ga" to "none")
                 } else {
-                    searchParams.copy(ga = "none").toApiParams()
+                    val base = searchParams.copy(ga = if (r18Mode) "" else "none")
+                    base.toApiParams()
                 }
-                syosetuApiQuery(params)
+                syosetuApiQuery(params, r18 = r18Mode && r18Enabled)
             } catch (e: Exception) {
                 error = "読み込めませんでした: ${e.message}"
                 emptyList()
@@ -175,6 +183,14 @@ fun SyosetuDiscoverBody(
                 t("Syosetu Discover", "なろう Discover"),
                 style = MaterialTheme.typography.headlineSmall
             )
+            if (r18Enabled) {
+                Spacer(modifier = Modifier.weight(1f))
+                FilterChip(
+                    selected = r18Mode,
+                    onClick = { r18Mode = !r18Mode; load() },
+                    label = { Text("R18") }
+                )
+            }
         }
         ScrollableTabRow(selectedTabIndex = tab) {
             SYOSETU_ORDERS.forEachIndexed { i, (_, labels) ->
@@ -193,6 +209,14 @@ fun SyosetuDiscoverBody(
             CircularProgressIndicator(modifier = Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
         }
         if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+        if (r18Mode && results.isNotEmpty()) {
+            Text(
+                t("18+ (novel18). First chapter open shows Syosetu's age check — confirm it once.",
+                   "18禁（novel18）。最初に開くと年齢確認が表示されます — 一度だけ承認してください。"),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
         LazyColumn {
             items(results, key = { it.ncode }) { novel ->
                 Card(

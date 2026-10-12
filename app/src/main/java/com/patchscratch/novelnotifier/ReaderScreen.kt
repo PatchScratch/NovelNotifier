@@ -602,6 +602,12 @@ fun ReaderScreen(
 
                             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                                 loadFailed = false
+                                // Syosetu's R18 age check redirects through
+                                // nl.syosetu.com/redirect/ageauth — confirm
+                                // once and the cookie persists.
+                                if (url != null && url.contains("/ageauth/")) {
+                                    DebugLog.log("READER", "Syosetu age check shown — confirm once")
+                                }
                                 super.onPageStarted(view, url, favicon)
                             }
 

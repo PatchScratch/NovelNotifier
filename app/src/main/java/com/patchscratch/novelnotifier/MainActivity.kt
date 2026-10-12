@@ -173,6 +173,9 @@ fun NovelApp(
     }
     var syosetuBookmarks by remember { mutableStateOf<List<SyosetuBookmark>>(emptyList()) }
     var syosetuStatus by remember { mutableStateOf("") }
+    var syosetuR18 by remember {
+        mutableStateOf(prefs.getBoolean("syosetu_r18", false))
+    }
     var loginState by remember {
         mutableStateOf(
             if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
@@ -524,6 +527,11 @@ fun NovelApp(
             },
             syosetuLoggedIn = syosetuLoggedIn,
             syosetuStatus = syosetuStatus,
+            syosetuR18 = syosetuR18,
+            onSyosetuR18 = { on ->
+                syosetuR18 = on
+                prefs.edit { putBoolean("syosetu_r18", on) }
+            },
             currentHours = checkHours,
             loginState = loginState,
             syncStatus = syncStatus,
@@ -608,7 +616,8 @@ fun NovelApp(
             },
             onOpenNovel = { novel -> syosetuNovel = novel },
             loggedIn = syosetuLoggedIn,
-            bookmarks = syosetuBookmarks
+            bookmarks = syosetuBookmarks,
+            r18Enabled = syosetuR18
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {

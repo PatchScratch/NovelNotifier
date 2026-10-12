@@ -36,9 +36,14 @@ data class SyosetuNovel(
     val isShortStory: Boolean,  // API "noveltype": 1=連載 2=短編
     val episodeCount: Int,      // API general_all_no (shorts = 1)
     val lastUpdate: String,     // general_lastup "2015-04-03 23:00:00"
-    val points: Int             // yearly_point for ranking context
+    val points: Int,            // yearly_point for ranking context
+    val isR18: Boolean = false  // from the novel18 sister site
 ) {
-    val url: String get() = "https://ncode.syosetu.com/${ncode.lowercase()}/"
+    // R18 novels are served by the novel18 sister host; the main ncode host
+    // redirects there through Syosetu's own age-auth anyway.
+    val url: String get() =
+        if (isR18) "https://novel18.syosetu.com/${ncode.lowercase()}/"
+        else "https://ncode.syosetu.com/${ncode.lowercase()}/"
 }
 
 /** One episode row from a novel's ToC page. */
@@ -65,7 +70,7 @@ val SYOSETU_ORDERS = listOf(
     "favnovelcnt" to ("Bookmarks" to "ブックマーク数")
 )
 
-suspend fun syosetuApiQuery(params: Map<String, String>): List<SyosetuNovel> =
+suspend fun syosetuApiQuery(params: Map<String, String>, r18: Boolean = false): List<SyosetuNovel> =
     withContext(Dispatchers.IO) {
         val query = params.entries.joinToString("&") { (k, v) ->
             "$k=" + URLEncoder.encode(v, "UTF-8")
@@ -75,7 +80,9 @@ suspend fun syosetuApiQuery(params: Map<String, String>): List<SyosetuNovel> =
             // wrong tokens silently return missing keys, which made every
             // novel look like a 1-episode serial)
             "&of=t-n-w-s-g-k-e-nt-ga-gl-p"
-        val connection = URL("https://api.syosetu.com/novelapi/api/?$query").openConnection()
+        // R18 lives on a parallel endpoint (novel18api) serving the same shape
+        val base = if (r18) "https://api.syosetu.com/novel18api/api/" else "https://api.syosetu.com/novelapi/api/"
+        val connection = URL("$base$query").openConnection()
         connection.connectTimeout = 15_000
         connection.readTimeout = 20_000
         // Syosetu asks API consumers for an identifiable User-Agent.
@@ -139,7 +146,7 @@ suspend fun fetchSyosetuHtml(url: String): String = withContext(Dispatchers.IO) 
 }
 
 /** API JSON → novels; row 0 is the allcount header. Tolerant of field gaps. */
-fun parseSyosetuApi(json: String): List<SyosetuNovel> = try {
+fun parseSyosetuApi(json: String, r18: Boolean = false): List<SyosetuNovel> = try {
     val arr = JSONArray(json)
     (1 until arr.length()).mapNotNull { i ->
         val row = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -156,7 +163,8 @@ fun parseSyosetuApi(json: String): List<SyosetuNovel> = try {
             isShortStory = row.optInt("noveltype") == 2,
             episodeCount = row.optInt("general_all_no", 1).coerceAtLeast(1),
             lastUpdate = row.optString("general_lastup"),
-            points = row.optInt("yearly_point", row.optInt("daily_point"))
+            points = row.optInt("yearly_point", row.optInt("daily_point")),
+            isR18 = r18
         )
     }
 } catch (e: Exception) {
@@ -246,7 +254,7 @@ fun SyosetuNovel.toBookMeta(): EpubStore.BookMeta = EpubStore.BookMeta(
     author = writer,
     year = lastUpdate.take(4),
     completelyTranslated = if (isCompleted) "完結" else "連載中",
-    originalPublisher = "小説家になろう"
+    originalPublisher = if (isR18) "novel18.syosetu.com" else "小説家になろう"
 )
 
 // --- bookmark library (slice 2) ---------------------------------------------
