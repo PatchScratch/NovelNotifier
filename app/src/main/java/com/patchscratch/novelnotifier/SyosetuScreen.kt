@@ -77,20 +77,7 @@ fun SyosetuHome(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(16.dp)
                 )
-                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    androidx.compose.material3.FilterChip(
-                        selected = activeSite == "nu",
-                        onClick = { onSwitchSite("nu") },
-                        label = { Text(t("Novel Updates", "ノベルアップデーツ")) },
-                        modifier = Modifier.weight(1f).padding(end = 4.dp)
-                    )
-                    androidx.compose.material3.FilterChip(
-                        selected = activeSite == "syosetu",
-                        onClick = { onSwitchSite("syosetu") },
-                        label = { Text(t("Syosetu", "なろう")) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                SiteSwitcherChips(activeSite, onSwitchSite)
                 HorizontalDivider()
                 NavigationDrawerItem(
                     label = { Text(t("Discover  ★", "なろう Discover  ★")) },

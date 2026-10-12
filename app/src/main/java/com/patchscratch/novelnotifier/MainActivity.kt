@@ -167,6 +167,7 @@ fun NovelApp(
     var activeSite by remember { mutableStateOf(prefs.getString("active_site", "nu") ?: "nu") }
     var settingsSite by remember { mutableStateOf("nu") } // which site's settings section to show
     var syosetuNovel by remember { mutableStateOf<SyosetuNovel?>(null) }
+    var kakuyomuWork by remember { mutableStateOf<KakuyomuWork?>(null) }
     var showSyosetuLogin by remember { mutableStateOf(false) }
     var syosetuLoggedIn by remember {
         mutableStateOf(prefs.getBoolean("syosetu_logged_in", false))
@@ -449,11 +450,12 @@ fun NovelApp(
     // Login overlays Settings, so close it the way its Cancel button does.
     BackHandler(
         enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding ||
-            selectedNovel != null || syosetuNovel != null
+            selectedNovel != null || syosetuNovel != null || kakuyomuWork != null
     ) {
         when {
             readerTarget != null -> readerTarget = null
             syosetuNovel != null -> syosetuNovel = null
+            kakuyomuWork != null -> kakuyomuWork = null
             showLoginWeb -> {
                 showLoginWeb = false
                 showSettings = true
@@ -598,6 +600,19 @@ fun NovelApp(
             },
             onBack = { showDiscover = false }
         )
+        kakuyomuWork != null -> KakuyomuDetailScreen(
+            work = kakuyomuWork!!,
+            onBack = { kakuyomuWork = null },
+            onOpenReader = { chapters, startAt ->
+                readerTarget = ReaderTarget(
+                    seriesTitle = kakuyomuWork!!.title,
+                    seriesUrl = kakuyomuWork!!.url,
+                    chapters = chapters,
+                    startIndex = startAt.coerceAtLeast(0),
+                    meta = kakuyomuWork!!.toBookMeta()
+                )
+            }
+        )
         syosetuNovel != null -> SyosetuDetailScreen(
             novel = syosetuNovel!!,
             onBack = { syosetuNovel = null },
@@ -628,6 +643,16 @@ fun NovelApp(
             bookmarks = syosetuBookmarks,
             r18Enabled = syosetuR18,
             enabledSubsites = syosetuSubsites
+        )
+        // Kakuyomu workspace home; NU home falls through.
+        activeSite == "kakuyomu" && selectedWithCover == null -> KakuyomuHome(
+            activeSite = activeSite,
+            onSwitchSite = { switchSite(it) },
+            onOpenSettings = {
+                settingsSite = "kakuyomu"
+                showSettings = true
+            },
+            onOpenWork = { work -> kakuyomuWork = work }
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {

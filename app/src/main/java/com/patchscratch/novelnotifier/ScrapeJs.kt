@@ -571,7 +571,7 @@ fun chapterExtractJs(): String = """
     // paragraph text, start there; scoring stays the fallback for everything
     // else. Selectors verified per platform reports 2026-10-11; validate any
     // new host before adding to this list.
-    var KNOWN_SELECTORS = ['div.chapter-inner', '.cha-words', '.novel-content',
+    var KNOWN_SELECTORS = ['div.js-episode-body', 'div.chapter-inner', '.cha-words', '.novel-content',
       '#chr-content', '.chapter-content', '#chapter-c', '.post-content',
       '.entry-content', 'article'];
     var best = null;

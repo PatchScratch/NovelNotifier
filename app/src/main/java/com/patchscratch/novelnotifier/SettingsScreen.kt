@@ -153,7 +153,20 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        if (site == "syosetu") {
+        if (site == "kakuyomu") {
+            Text(text = "Kakuyomu カクヨム", style = MaterialTheme.typography.titleMedium)
+            Text(
+                t("Kakuyomu needs no account — search, rankings and reading work right away. Discovery goes through the site's own open GraphQL endpoint; episode text flows through the shared reader.",
+                    "カクヨムはアカウント不要です — 検索・ランキング・閲覧がすぐ使えます。Discoverはカクヨム公式のGraphQLエンドポイント経由、本文は共有リーダーで表示します。"),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            Text(
+                t("Offline ePubs and bulk download work the same as the other sites (per-series, 100-episode part files). R18 works are not surfaced in this slice.",
+                    "オフラインePubと一括ダウンロードは他のサイトと同様（作品ごと、100話パート分割）です。このスライスではR18作品は表示されません。"),
+                style = MaterialTheme.typography.bodySmall
+            )
+        } else if (site == "syosetu") {
             Text(text = "Syosetu なろう", style = MaterialTheme.typography.titleMedium)
             if (syosetuStatus.isNotBlank()) {
                 Text(syosetuStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))

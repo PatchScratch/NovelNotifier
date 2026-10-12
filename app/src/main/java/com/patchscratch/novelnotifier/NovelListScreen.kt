@@ -302,20 +302,7 @@ fun NovelListScreen(
                 )
                 // Site switcher: providers are segregated workspaces — the
                 // drawer below shows the ACTIVE site's lists and entries.
-                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    androidx.compose.material3.FilterChip(
-                        selected = activeSite == "nu",
-                        onClick = { onSwitchSite("nu") },
-                        label = { Text("Novel Updates") },
-                        modifier = Modifier.weight(1f).padding(end = 4.dp)
-                    )
-                    androidx.compose.material3.FilterChip(
-                        selected = activeSite == "syosetu",
-                        onClick = { onSwitchSite("syosetu") },
-                        label = { Text("なろう") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                SiteSwitcherChips(activeSite, onSwitchSite)
                 HorizontalDivider()
                 if (activeSite == "syosetu") {
                     NavigationDrawerItem(

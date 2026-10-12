@@ -476,4 +476,130 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertEquals("小説家になろう", meta.originalPublisher)
         assertEquals("2015", meta.year)
     }
+
+    // --- Kakuyomu -----------------------------------------------------------
+
+    /** A {data:…} searchWorks envelope shaped exactly like the live endpoint. */
+    private val kakuSearchJson = """{"data":{"searchWorks":{"totalCount":16463,"nodes":[
+        {"id":"1177354054891139802","title":"転移したら山の中だった。","catchphrase":"【書籍化】勇者には極力近づきません！",
+         "genre":"FANTASY","serialStatus":"RUNNING","publicEpisodeCount":763,"totalReviewPoint":73819,
+         "totalCharacterCount":1597523,"publishedAt":"2019-10-12T11:36:32Z","lastEpisodePublishedAt":"2026-10-11T04:16:59Z",
+         "adminCoverImageUrl":"https://cdn-ak.f.st-hatena.com/images/fotolife/k/kadokawa-toko/20200603/20200603182952.jpg",
+         "author":{"activityName":"じゃがバター"}},
+        {"id":"16818093087479543721","title":"極悪貴族、謙虚堅実に無双する","catchphrase":"才能に恵まれ過ぎた極悪貴族が",
+         "genre":"FANTASY","serialStatus":"COMPLETED","publicEpisodeCount":174,"totalReviewPoint":99246,
+         "totalCharacterCount":831302,"publishedAt":"2024-10-27T03:04:11Z","lastEpisodePublishedAt":"2026-09-07T14:59:08Z",
+         "adminCoverImageUrl":"","author":{"activityName":"誰か"}},
+        {"id":"","title":"blank id row","genre":"FANTASY","author":{}}
+        ]}}}"""
+
+    @Test
+    fun kakuyomuSearch_parsesRowsTotalAndSkipsBlankIds() {
+        val res = parseKakuyomuSearchJson(kakuSearchJson)
+        assertEquals(2, res.works.size)
+        assertEquals(16463, res.totalCount)
+        assertEquals("じゃがバター", res.works[0].author)
+        assertEquals(763, res.works[0].episodeCount)
+        assertFalse(res.works[0].isCompleted)
+        assertTrue(res.works[1].isCompleted)
+        assertEquals("https://kakuyomu.jp/works/1177354054891139802", res.works[0].url)
+    }
+
+    /** Work page __NEXT_DATA__ Apollo cache, minimal but structurally real:
+     *  ROOT_QUERY names the work, tableOfContentsV2 chains through chapters
+     *  (one WITH a heading, one without) to episode refs. */
+    private fun kakuWorkPage(withToc: Boolean = true): String {
+        val workExtra = if (withToc)
+            """"tableOfContentsV2":[{"__ref":"TableOfContentsChapter:1"},{"__ref":"TableOfContentsChapter:2"}],"""
+        else ""
+        return """<html><body><script id="__NEXT_DATA__" type="application/json">{
+          "props":{"pageProps":{"__APOLLO_STATE__":{
+            "ROOT_QUERY":{
+              "visitor":null,
+              "work({\"id\":\"1177354054891139802\"})":{"__ref":"Work:1177354054891139802"}
+            },
+            "Work:1177354054891139802":{
+              "__typename":"Work","id":"1177354054891139802",
+              "title":"転移したら山の中だった。","catchphrase":"PRコピー","introduction":"あらすじ本文。",
+              "genre":"FANTASY","serialStatus":"COMPLETED","publicEpisodeCount":4,
+              "totalReviewPoint":73819,"totalCharacterCount":8000,
+              "publishedAt":"2019-10-12T11:36:32Z","lastEpisodePublishedAt":"2020-01-02T03:04:05Z",
+              "adminCoverImageUrl":"https://example.jp/cover.jpg",
+              "tagLabels":["異世界転移","スローライフ"],
+              "author":{"__ref":"UserAccount:1"},
+              $workExtra
+              "editedAt":"x"
+            },
+            "UserAccount:1":{"__typename":"UserAccount","id":"1","activityName":"じゃがバター"},
+            "TableOfContentsChapter:1":{
+              "__typename":"TableOfContentsChapter","id":"1",
+              "chapter":{"__ref":"Chapter:9"},
+              "episodeUnions":[{"__ref":"Episode:101"},{"__ref":"Episode:102"}]
+            },
+            "Chapter:9":{"__typename":"Chapter","id":"9","title":"第一章"},
+            "TableOfContentsChapter:2":{
+              "__typename":"TableOfContentsChapter","id":"2","chapter":null,
+              "episodeUnions":[{"__ref":"Episode:103"},{"__ref":"Episode:104"}]
+            },
+            "Episode:101":{"__typename":"Episode","id":"101","title":"第1話　山の中","publishedAt":"2019-10-12T11:36:32.000Z"},
+            "Episode:102":{"__typename":"Episode","id":"102","title":"第2話","publishedAt":"2019-10-13T11:36:32.000Z"},
+            "Episode:103":{"__typename":"Episode","id":"103","title":"第3話","publishedAt":"2019-10-14T11:36:32.000Z"},
+            "Episode:104":{"__typename":"Episode","id":"104","title":"第4話","publishedAt":"2019-10-15T11:36:32.000Z"}
+          }}}
+        }</script></body></html>"""
+    }
+
+    @Test
+    fun kakuyomuWorkPage_parsesMetaTagsAndOrderedToc() {
+        val d = parseKakuyomuWorkPage(kakuWorkPage())!!
+        assertEquals("転移したら山の中だった。", d.work.title)
+        assertEquals("じゃがバター", d.work.author)
+        assertTrue(d.work.isCompleted)
+        assertEquals("あらすじ本文。", d.work.introduction)
+        assertEquals("異世界転移 スローライフ", d.work.tags)
+        // ToC order follows tableOfContentsV2, not publishedAt or id sort
+        assertEquals(listOf("101", "102", "103", "104"), d.episodes.map { it.id })
+        assertEquals("第一章", d.episodes[0].chapterTitle)
+        assertEquals("", d.episodes[2].chapterTitle)
+        assertEquals("https://kakuyomu.jp/works/1177354054891139802/episodes/103", d.episodes[2].url(d.work.id))
+    }
+
+    @Test
+    fun kakuyomuWorkPage_fallsBackToPublishOrderWithoutTocChain() {
+        val d = parseKakuyomuWorkPage(kakuWorkPage(withToc = false))!!
+        // fallback sorts by publishedAt — ids are chronological here
+        assertEquals(listOf("101", "102", "103", "104"), d.episodes.map { it.id })
+    }
+
+    @Test
+    fun kakuyomuWorkPage_rejectsPagesWithoutNextData() {
+        assertNull(parseKakuyomuWorkPage("<html>404</html>"))
+    }
+
+    @Test
+    fun kakuyomuEpisode_extractsTitleAndParagraphs() {
+        val html = """<html><body>
+          <header><p class="widget-episodeTitle js-vertical-composition-item">第1話　山の中</p></header>
+          <div class="widget-episode js-episode-body-container"><div class="widget-episode-inner">
+          <div class="widget-episodeBody js-episode-body" data-viewer-history-path="/x">
+          <p id="p1"> 意味がわからない。</p>
+          <p id="p2" class="blank"><br /></p>
+          <p id="p3"> 振り返ったら見慣れない風景</p>
+          </div></div></div>
+          </body></html>"""
+        val (title, paras) = parseKakuyomuEpisode(html)
+        assertEquals("第1話　山の中", title)
+        assertEquals(listOf("意味がわからない。", "振り返ったら見慣れない風景"), paras)
+    }
+
+    @Test
+    fun kakuyomuBookMeta_mapsFieldsNatively() {
+        val work = parseKakuyomuSearchJson(kakuSearchJson).works[0]
+        val meta = work.toBookMeta()
+        assertEquals("カクヨム", meta.originalPublisher)
+        assertEquals("ファンタジー", meta.genres)      // site term, never the toggle
+        assertEquals("じゃがバター", meta.author)
+        assertEquals("2019", meta.year)
+        assertEquals("連載中", meta.completelyTranslated)
+    }
 }
