@@ -60,6 +60,7 @@ fun SyosetuLoginScreen(
                 modifier = Modifier.weight(1f).padding(start = 8.dp),
                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall
             )
+            TextButton(onClick = onLoggedIn) { Text("Done") }
             TextButton(onClick = onCancel) { Text("Cancel") }
         }
         AndroidView(
@@ -72,13 +73,16 @@ fun SyosetuLoginScreen(
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
-                            if (url == null || url.contains("/login/")) return
-                            // landed somewhere only a session reaches — verify
-                            view?.evaluateJavascript("(document.body.innerText||'').indexOf('ログアウト') !== -1") { res ->
-                                if (res == "true") {
-                                    DebugLog.log("SYOSETU", "login detected at $url")
-                                    android.os.Handler(android.os.Looper.getMainLooper()).post { onLoggedIn() }
-                                }
+                            if (url == null) return
+                            DebugLog.log("SYOSETU", "login page finished: $url")
+                            // Success = redirected AWAY from /login/. A failed
+                            // sign-in re-shows the form at /login/input/; only a
+                            // valid POST lands elsewhere (redirectlink target,
+                            // mypage, top). Requiring a literal ログアウト link
+                            // here was too strict — the landing page's header
+                            // doesn't always carry it, and the screen sat open.
+                            if (url.contains("syosetu.com") && !url.contains("/login")) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post { onLoggedIn() }
                             }
                         }
                     }
