@@ -81,7 +81,9 @@ val SYOSETU_ORDERS = listOf(
     "weeklypoint" to ("Weekly points" to "週別ポイント"),
     "monthlypoint" to ("Monthly points" to "月別ポイント"),
     "yearlypoint" to ("Yearly points" to "年間ポイント"),
-    "favnovelcnt" to ("Bookmarks" to "ブックマーク数")
+    // Ranking by sitewide bookmark COUNT — "Most bookmarked" so it can't be
+    // mistaken for the reader's own bookmark library (drawer ▦).
+    "favnovelcnt" to ("Most bookmarked" to "ブックマーク数")
 )
 
 suspend fun syosetuApiQuery(params: Map<String, String>, r18: Boolean = false): List<SyosetuNovel> =
@@ -411,7 +413,7 @@ val SYOSETU_SEARCH_ORDERS = listOf(
     "monthlypoint" to ("Monthly points" to "月間ポイント"),
     "quarterpoint" to ("Quarterly points" to "四半期ポイント"),
     "yearlypoint" to ("Yearly points" to "年間ポイント"),
-    "favnovelcnt" to ("Bookmarks" to "ブックマーク数"),
+    "favnovelcnt" to ("Most bookmarked" to "ブックマーク数"),
     "reviewcnt" to ("Reviews" to "レビュー数"),
     "hyokacnt" to ("Raters" to "評価者数"),
     "lengthdesc" to ("Longest" to "文字数"),
