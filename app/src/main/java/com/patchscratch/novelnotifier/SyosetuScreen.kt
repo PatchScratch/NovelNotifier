@@ -120,13 +120,17 @@ fun SyosetuHome(
             }
         }
     ) {
-        SyosetuDiscoverBody(onOpenNovel = onOpenNovel)
+        SyosetuDiscoverBody(
+            onOpenNovel = onOpenNovel,
+            openDrawer = { scope.launch { drawerState.open() } }
+        )
     }
 }
 
 @Composable
 fun SyosetuDiscoverBody(
-    onOpenNovel: (SyosetuNovel) -> Unit
+    onOpenNovel: (SyosetuNovel) -> Unit,
+    openDrawer: () -> Unit = {}
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
@@ -158,11 +162,15 @@ fun SyosetuDiscoverBody(
     LaunchedEffect(tab) { if (tab < SYOSETU_ORDERS.size) load() }
 
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
-        Text(
-            "なろう Discover",
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = openDrawer) {
+                Text("☰", style = MaterialTheme.typography.headlineSmall)
+            }
+            Text(
+                "なろう Discover",
+                style = MaterialTheme.typography.headlineSmall
+            )
+        }
         ScrollableTabRow(selectedTabIndex = tab) {
             SYOSETU_ORDERS.forEachIndexed { i, (_, label) ->
                 Tab(selected = tab == i, onClick = { tab = i }, text = { Text(label) })
