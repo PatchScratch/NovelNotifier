@@ -187,7 +187,23 @@ fun parseSyosetuToc(html: String): SyosetuToc {
     return SyosetuToc(title = title, author = author, episodes = episodes, hasMorePages = hasMore)
 }
 
-/** Genre code → display name, bilingual (EN toggle shows English). */
+/**
+ * Genre names. NATIVE is the site's own label — used for anything that leaves
+ * the UI layer (ePub metadata records what the SITE says, never the reader's
+ * language toggle; API traffic carries only numeric codes). syosetuGenreName
+ * is the user-facing bilingual display form.
+ */
+fun syosetuGenreNameNative(code: Int): String = when (code) {
+    101 -> "異世界〔恋愛〕"; 102 -> "現実世界〔恋愛〕"
+    201 -> "ハイファンタジー"; 202 -> "ローファンタジー"
+    301 -> "純文学"; 302 -> "ヒューマンドラマ"; 303 -> "歴史"; 304 -> "推理"
+    305 -> "ホラー"; 306 -> "アクション"; 307 -> "コメディー"
+    401 -> "VRゲーム〔SF〕"; 402 -> "宇宙〔SF〕"; 403 -> "空想科学〔SF〕"; 404 -> "パニック"
+    9801 -> "ノンジャンル"; 9999 -> "その他"
+    else -> "ジャンル $code"
+}
+
+/** Genre code → display name, bilingual (EN toggle shows English). UI only. */
 fun syosetuGenreName(code: Int): String = when (code) {
     101 -> t("Isekai Romance", "異世界〔恋愛〕")
     102 -> t("Modern Romance", "現実世界〔恋愛〕")
@@ -225,7 +241,7 @@ fun SyosetuNovel.toBookMeta(): EpubStore.BookMeta = EpubStore.BookMeta(
     title = title,
     description = story,
     type = "Web Novel (JP)・${if (isShortStory) "短編" else "連載"}",
-    genres = syosetuGenreName(genreCode),
+    genres = syosetuGenreNameNative(genreCode),
     tags = keywords,
     author = writer,
     year = lastUpdate.take(4),

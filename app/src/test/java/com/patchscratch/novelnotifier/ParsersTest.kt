@@ -471,7 +471,7 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         val meta = novel.toBookMeta()
         assertEquals("無職転生", meta.title)
         assertEquals("理不尽な孫の手", meta.author)
-        assertEquals(syosetuGenreName(201), meta.genres)  // follows the UI toggle
+        assertEquals(syosetuGenreNameNative(201), meta.genres)  // epub records the SITE term, toggle never leaks
         assertEquals("完結", meta.completelyTranslated)
         assertEquals("小説家になろう", meta.originalPublisher)
         assertEquals("2015", meta.year)
