@@ -97,11 +97,11 @@ fun SyosetuHome(
                 if (loggedIn && bookmarks.isNotEmpty()) {
                     HorizontalDivider()
                     Text(
-                        "ブックマーク",
+                        t("Bookmarks", "ブックマーク"),
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
-                    TextButton(onClick = { scope.launch { drawerState.close() } }) { Text("すべて (${bookmarks.size})") }
+                    TextButton(onClick = { scope.launch { drawerState.close() } }) { Text(t("All", "すべて") + " (${bookmarks.size})") }
                     bookmarks.map { it.category }.filter { it.isNotBlank() }.distinct().forEach { cat ->
                         TextButton(onClick = { scope.launch { drawerState.close() } }) {
                             Text("$cat (${bookmarks.count { it.category == cat }})")
@@ -205,8 +205,9 @@ fun SyosetuDiscoverBody(
                         Text(novel.title, style = MaterialTheme.typography.titleMedium)
                         Text(
                             "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
-                                (if (novel.isShortStory) "短編" else "${novel.episodeCount}話") +
-                                (if (novel.isCompleted) " ・ 完結" else " ・ 連載中"),
+                                (if (novel.isShortStory) syosetuTypeLabel(true)
+                                else syosetuEpisodeLabel(novel.episodeCount)) +
+                                " ・ " + syosetuStatusLabel(novel.isCompleted),
                             style = MaterialTheme.typography.bodySmall
                         )
                         if (novel.story.isNotBlank()) {
@@ -291,8 +292,8 @@ fun SyosetuDetailScreen(
         )
         Text(
             "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
-                "${novel.episodeCount}話 ・ ${if (novel.isCompleted) "完結" else "連載中"} ・ " +
-                "最終更新 ${novel.lastUpdate.take(10)}",
+                syosetuEpisodeLabel(novel.episodeCount) + " ・ " + syosetuStatusLabel(novel.isCompleted) + " ・ " +
+                t("Updated", "最終更新") + " ${novel.lastUpdate.take(10)}",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
@@ -327,7 +328,7 @@ fun SyosetuDetailScreen(
                     }
                 },
                 enabled = toc?.episodes?.isNotEmpty() == true
-            ) { Text(t("Download all", "全部ダウンロード") + " (${novel.episodeCount}話)") }
+            ) { Text(t("Download all", "全部ダウンロード") + " (" + syosetuEpisodeLabel(novel.episodeCount) + ")") }
         }
         if (loading) {
             CircularProgressIndicator(modifier = Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
@@ -490,11 +491,11 @@ fun SyosetuAdvancedSearch(
             Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
                 val elems: List<Triple<String, ElementFilter, (ElementFilter) -> SyosetuSearchParams>> = listOf(
                     Triple("R15", params.r15) { f -> params.copy(r15 = f) },
-                    Triple("R15残酷", params.zankoku) { f -> params.copy(zankoku = f) },
+                    Triple(t("Gore", "残酷な描写"), params.zankoku) { f -> params.copy(zankoku = f) },
                     Triple("BL", params.bl) { f -> params.copy(bl = f) },
                     Triple("GL", params.gl) { f -> params.copy(gl = f) },
-                    Triple("転生", params.tensei) { f -> params.copy(tensei = f) },
-                    Triple("転移", params.tenni) { f -> params.copy(tenni = f) }
+                    Triple(t("Reincarnation", "転生"), params.tensei) { f -> params.copy(tensei = f) },
+                    Triple(t("Transmigration", "転移"), params.tenni) { f -> params.copy(tenni = f) }
                 )
                 elems.forEach { (label, value, setter) ->
                     FilterChip(
@@ -559,7 +560,7 @@ fun SyosetuAdvancedSearch(
                                         onUpdate(params.copy(genres = next, page = 1))
                                     }
                                 )
-                                Text(name)
+                                Text(t(syosetuGenreName(code), name))
                             }
                         }
                     }

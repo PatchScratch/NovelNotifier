@@ -187,21 +187,38 @@ fun parseSyosetuToc(html: String): SyosetuToc {
     return SyosetuToc(title = title, author = author, episodes = episodes, hasMorePages = hasMore)
 }
 
-/** Genre code → display name (subset; unmapped codes show the number). */
+/** Genre code → display name, bilingual (EN toggle shows English). */
 fun syosetuGenreName(code: Int): String = when (code) {
-    101 -> "異世界〔転生〕"
-    102 -> "異世界〔転移〕"
-    201 -> "ハイファンタジー"
-    202 -> "ローファンタジー"
-    301 -> "純文学"
-    302 -> "ヒューマンドラマ"
-    303 -> "歴史"
-    304 -> "推理"
-    305 -> "ホラー"
-    306 -> "アクション"
-    307 -> "コメディ"
-    else -> "ジャンル $code"
+    101 -> t("Isekai Romance", "異世界〔恋愛〕")
+    102 -> t("Modern Romance", "現実世界〔恋愛〕")
+    201 -> t("High Fantasy", "ハイファンタジー")
+    202 -> t("Low Fantasy", "ローファンタジー")
+    301 -> t("Literature", "純文学")
+    302 -> t("Human Drama", "ヒューマンドラマ")
+    303 -> t("History", "歴史")
+    304 -> t("Mystery", "推理")
+    305 -> t("Horror", "ホラー")
+    306 -> t("Action", "アクション")
+    307 -> t("Comedy", "コメディー")
+    401 -> t("VR Games", "VRゲーム〔SF〕")
+    402 -> t("Space", "宇宙〔SF〕")
+    403 -> t("Science Fantasy", "空想科学〔SF〕")
+    404 -> t("Panic", "パニック")
+    9801 -> t("No Genre", "ノンジャンル")
+    9999 -> t("Other", "その他")
+    else -> t("Genre", "ジャンル") + " $code"
 }
+
+/** Type + status fragment for rows/subtitles, following the language toggle. */
+fun syosetuTypeLabel(isShortStory: Boolean): String =
+    if (isShortStory) t("Short story", "短編") else t("Serial", "連載")
+
+fun syosetuStatusLabel(isCompleted: Boolean): String =
+    if (isCompleted) t("Completed", "完結") else t("Ongoing", "連載中")
+
+/** "N episodes" following the toggle. */
+fun syosetuEpisodeLabel(count: Int): String =
+    t("$count episodes", "${count}話")
 
 /** Map a Syosetu novel to the offline-ePub title-page metadata. */
 fun SyosetuNovel.toBookMeta(): EpubStore.BookMeta = EpubStore.BookMeta(
