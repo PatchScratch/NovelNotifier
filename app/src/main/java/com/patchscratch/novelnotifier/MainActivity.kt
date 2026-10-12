@@ -174,6 +174,9 @@ fun NovelApp(
     // Kakuyomu boolean.
     var syosetuBookmarkCat by remember { mutableStateOf<String?>(null) }
     var showKakuyomuBookmarks by remember { mutableStateOf(false) }
+    var showKakuyomuLogin by remember { mutableStateOf(false) }
+    var kakuyomuLoggedIn by remember { mutableStateOf(prefs.getBoolean("kakuyomu_logged_in", false)) }
+    var kakuyomuStatus by remember { mutableStateOf("") }
     var showSyosetuLogin by remember { mutableStateOf(false) }
     var syosetuLoggedIn by remember {
         mutableStateOf(prefs.getBoolean("syosetu_logged_in", false))
@@ -433,9 +436,56 @@ fun NovelApp(
         syosetuStatus = "Logged in to Syosetu"
     }
 
+    /**
+     * Kakuyomu bookmark sync, the user's NU model: bookmarks made in-app are
+     * ADDED to the site (push local-only follows), then the site's list is
+     * MASTER — it replaces local state. Site-side removals therefore win;
+     * in-app unfollows already removed both sides.
+     */
+    fun syncKakuyomuBookmarks(quiet: Boolean = false) {
+        scope.launch {
+            if (!quiet) kakuyomuStatus = t("Syncing bookmarks…", "ブックマークを同期中…")
+            try {
+                val visitor = fetchKakuyomuVisitor()
+                if (visitor == null) {
+                    kakuyomuLoggedIn = false
+                    prefs.edit { putBoolean("kakuyomu_logged_in", false) }
+                    kakuyomuStatus = t("Not logged in — session expired, log in again.", "ログインしていません — セッション失効、再ログインしてください。")
+                    return@launch
+                }
+                val site = fetchKakuyomuFollows(visitor.screenName)
+                val local = loadKakuyomuBookmarks(prefs)
+                val siteIds = site.map { it.id }.toSet()
+                val toPush = local.filter { it.id !in siteIds }
+                var pushed = 0
+                toPush.forEach { work ->
+                    if (kakuyomuFollow(work.id)) pushed++
+                    DebugLog.log("KAKUYOMU", "pushed follow ${work.id}")
+                }
+                val merged = mergeKakuyomuBookmarks(local, site, toPush.map { it.id }.toSet())
+                saveKakuyomuBookmarks(prefs, merged)
+                kakuyomuBookmarks = merged
+                kakuyomuStatus = t(
+                    "Synced ${merged.size} bookmarked works (${pushed} followed on Kakuyomu)",
+                    "${merged.size}作品を同期（${pushed}件をカクヨムでフォロー）"
+                )
+                DebugLog.log("KAKUYOMU", "bookmark sync: ${merged.size} works, pushed $pushed")
+            } catch (e: Exception) {
+                DebugLog.log("KAKUYOMU", "bookmark sync failed", e)
+                if (!quiet) kakuyomuStatus = t("Sync failed: ", "同期失敗: ") + (e.message ?: "")
+            }
+        }
+    }
+
     fun switchSite(site: String) {
         activeSite = site
         prefs.edit { putString("active_site", site) }
+    }
+
+    // Kakuyomu bookmark self-heal, one quiet sync per open when logged in:
+    // pushes bookmarks made offline to the site, pulls the site's master list.
+    LaunchedEffect(kakuyomuLoggedIn) {
+        if (kakuyomuLoggedIn) syncKakuyomuBookmarks(quiet = true)
     }
 
     fun onLoggedIn(cookieHeader: String) {
@@ -472,7 +522,7 @@ fun NovelApp(
     BackHandler(
         enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding ||
             selectedNovel != null || syosetuNovel != null || kakuyomuWork != null ||
-            syosetuBookmarkCat != null || showKakuyomuBookmarks
+            syosetuBookmarkCat != null || showKakuyomuBookmarks || showKakuyomuLogin
     ) {
         when {
             readerTarget != null -> readerTarget = null
@@ -480,6 +530,7 @@ fun NovelApp(
             kakuyomuWork != null -> kakuyomuWork = null
             syosetuBookmarkCat != null -> syosetuBookmarkCat = null
             showKakuyomuBookmarks -> showKakuyomuBookmarks = false
+            showKakuyomuLogin -> showKakuyomuLogin = false
             showLoginWeb -> {
                 showLoginWeb = false
                 showSettings = true
@@ -514,6 +565,20 @@ fun NovelApp(
                 kakuyomuR18 = on
                 prefs.edit { putBoolean("kakuyomu_r18", on) }
             },
+            kakuyomuLoggedIn = kakuyomuLoggedIn,
+            kakuyomuStatus = kakuyomuStatus,
+            onKakuyomuLogin = {
+                // Settings composes BEFORE the login branch in the when-block —
+                // close it first or it swallows the navigation.
+                showSettings = false
+                showKakuyomuLogin = true
+            },
+            onKakuyomuLogout = {
+                kakuyomuLoggedIn = false
+                prefs.edit { putBoolean("kakuyomu_logged_in", false) }
+                kakuyomuStatus = t("Logged out — bookmarks stay on this device.", "ログアウトしました — ブックマークは端末に残ります。")
+            },
+            onKakuyomuSync = { syncKakuyomuBookmarks() },
             currentUrl = rssUrl,
             onSyosetuLogin = {
                 // Settings composes BEFORE the login branch in the when-block —
@@ -636,10 +701,20 @@ fun NovelApp(
             bookmarked = kakuyomuBookmarks.any { it.id == kakuyomuWork!!.id },
             onToggleBookmark = {
                 val id = kakuyomuWork!!.id
+                val adding = kakuyomuBookmarks.none { it.id == id }
                 kakuyomuBookmarks =
-                    if (kakuyomuBookmarks.any { it.id == id }) kakuyomuBookmarks.filterNot { it.id == id }
-                    else listOf(kakuyomuWork!!) + kakuyomuBookmarks
+                    if (adding) listOf(kakuyomuWork!!) + kakuyomuBookmarks
+                    else kakuyomuBookmarks.filterNot { it.id == id }
                 saveKakuyomuBookmarks(prefs, kakuyomuBookmarks)
+                // Logged in, the site follows the bookmark: adding ⚑ follows
+                // on Kakuyomu, removing unfollows. Fire-and-forget with the
+                // outcome logged; the next sync reconciles any failure.
+                if (kakuyomuLoggedIn) {
+                    scope.launch {
+                        val ok = if (adding) kakuyomuFollow(id) else kakuyomuUnfollow(id)
+                        DebugLog.log("KAKUYOMU", "site ${if (adding) "follow" else "unfollow"} $id → $ok")
+                    }
+                }
             },
             onBack = { kakuyomuWork = null },
             onOpenReader = { chapters, startAt ->
@@ -682,6 +757,16 @@ fun NovelApp(
         showSyosetuLogin -> SyosetuLoginScreen(
             onLoggedIn = { onSyosetuLoggedIn() },
             onCancel = { showSyosetuLogin = false }
+        )
+        showKakuyomuLogin -> KakuyomuLoginScreen(
+            onLoggedIn = {
+                showKakuyomuLogin = false
+                kakuyomuLoggedIn = true
+                prefs.edit { putBoolean("kakuyomu_logged_in", true) }
+                kakuyomuStatus = t("Logged in to Kakuyomu", "カクヨムにログインしました")
+                syncKakuyomuBookmarks()
+            },
+            onCancel = { showKakuyomuLogin = false }
         )
         // Syosetu workspace home (its own drawer); NU home falls through.
         activeSite == "syosetu" && selectedWithCover == null -> SyosetuHome(

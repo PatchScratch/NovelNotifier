@@ -652,4 +652,45 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertEquals(1, rows.size)
         assertEquals("N2267BE", rows[0].ncode)
     }
+
+    // --- Kakuyomu follow sync (user model: in-app bookmarks push to the
+    //     site; the site list is master on conflict) -------------------------
+
+    private fun work(id: String, title: String = "t$id") = KakuyomuWork(
+        id = id, title = title, catchphrase = "", genre = "FANTASY", author = "a",
+        isCompleted = false, episodeCount = 1, points = 0, charCount = 0,
+        publishedAt = "", lastUpdate = "", coverUrl = ""
+    )
+
+    @Test
+    fun kakuyomuMerge_siteWinsConflicts_pushedLocalsSurvive() {
+        val local = listOf(work("A"), work("B", "local title"), work("C"))
+        val site = listOf(work("B", "site title"), work("D"))
+        // C was pushed during this sync, A was not (site removed it earlier)
+        val merged = mergeKakuyomuBookmarks(local, site, pushedIds = setOf("C"))
+        assertEquals(listOf("B", "D", "C"), merged.map { it.id })
+        assertEquals("site title", merged.first { it.id == "B" }.title)  // site row wins
+    }
+
+    @Test
+    fun kakuyomuMerge_unpushedLocalOnlyDrops_siteRemovalWins() {
+        val local = listOf(work("A"), work("B"))
+        val site = listOf(work("B"))
+        val merged = mergeKakuyomuBookmarks(local, site, pushedIds = emptySet())
+        assertEquals(listOf("B"), merged.map { it.id })
+    }
+
+    @Test
+    fun kakuyomuFollows_parsesUserByScreenNameNodes() {
+        val json = """{"data":{"userByScreenName":{"followingWorks":{"nodes":[
+            {"id":"1177354054891139802","title":"転移したら山の中だった。","catchphrase":"c","genre":"FANTASY",
+             "serialStatus":"RUNNING","publicEpisodeCount":763,"totalReviewPoint":73819,"totalCharacterCount":1,
+             "publishedAt":"2019-10-12T11:36:32Z","lastEpisodePublishedAt":"2026-10-11T04:16:59Z",
+             "adminCoverImageUrl":"","isSexual":false,"author":{"activityName":"じゃがバター"}}
+        ]}}}}"""
+        val rows = parseKakuyomuFollowsJson(json)
+        assertEquals(1, rows.size)
+        assertEquals("転移したら山の中だった。", rows[0].title)
+        assertEquals("じゃがバター", rows[0].author)
+    }
 }

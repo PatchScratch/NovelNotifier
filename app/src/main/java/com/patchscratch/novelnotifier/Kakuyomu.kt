@@ -443,3 +443,149 @@ fun loadKakuyomuBookmarks(prefs: android.content.SharedPreferences): List<Kakuyo
 fun saveKakuyomuBookmarks(prefs: android.content.SharedPreferences, works: List<KakuyomuWork>) {
     prefs.edit { putString("kakuyomu_bookmarks", kakuyomuBookmarksJson(works)) }
 }
+
+// --- Login + official bookmarks (フォロー) ------------------------------------
+
+/**
+ * Kakuyomu login features run on the same open GraphQL endpoint — no CSRF
+ * token, just the WebView session's cookies (verified in the site's own JS
+ * bundle: mutations POST with same-origin credentials only). All mutation
+ * and viewer query shapes below were extracted from that bundle, not
+ * invented.
+ */
+private const val KAKUYOMU_GQL_URL = "https://kakuyomu.jp/graphql"
+
+/** POST/GET to kakuyomu.jp with the WebView session's cookies attached,
+ *  following redirects MANUALLY (auto-follow drops custom Cookie headers —
+ *  the Syosetu lesson). Body != null → POST as GraphQL JSON. */
+internal suspend fun fetchKakuyomuWithSession(url: String, body: String? = null): String =
+    withContext(Dispatchers.IO) {
+        var current = url
+        for (hop in 0 until 5) {
+            val conn = URL(current).openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = false
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 20_000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0")
+            val cookies = android.webkit.CookieManager.getInstance().getCookie("https://kakuyomu.jp/").orEmpty()
+            if (cookies.isNotBlank()) conn.setRequestProperty("Cookie", cookies)
+            if (body != null) {
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                val bytes = body.toByteArray()
+                conn.setFixedLengthStreamingMode(bytes.size)
+                conn.outputStream.use { it.write(bytes) }
+            }
+            val status = conn.responseCode
+            if (status in 300..399) {
+                val location = conn.getHeaderField("Location") ?: break
+                current = URL(URL(current), location).toString()
+                conn.disconnect()
+                continue
+            }
+            val stream = if (status in 200..299) conn.inputStream else conn.errorStream
+            val raw = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            conn.disconnect()
+            if (status !in 200..299) {
+                throw java.io.IOException("kakuyomu HTTP $status: ${raw.take(200)}")
+            }
+            return@withContext raw
+        }
+        ""
+    }
+
+/** The signed-in user, or null when the session is absent/expired. */
+data class KakuyomuVisitor(val screenName: String, val name: String)
+
+suspend fun fetchKakuyomuVisitor(): KakuyomuVisitor? {
+    val raw = fetchKakuyomuWithSession(
+        KAKUYOMU_GQL_URL,
+        """{"query":"{ visitor { screenName name } }"}"""
+    )
+    val screenName = JSONObject(raw).optJSONObject("data")
+        ?.optJSONObject("visitor")?.optString("screenName").orEmpty()
+    if (screenName.isBlank() || screenName == "null") return null
+    val name = JSONObject(raw).optJSONObject("data")?.optJSONObject("visitor")?.optString("name").orEmpty()
+    return KakuyomuVisitor(screenName, name)
+}
+
+/** The user's followed works (フォローしている小説), offset-paginated. The
+ *  shape is the site's own /users/<name>/following_works page query. */
+internal fun parseKakuyomuFollowsJson(json: String): List<KakuyomuWork> = try {
+    JSONObject(json).getJSONObject("data").optJSONObject("userByScreenName")
+        ?.optJSONObject("followingWorks")?.optJSONArray("nodes")?.let { arr ->
+            (0 until arr.length()).mapNotNull { parseWorkNode(arr.optJSONObject(it) ?: return@mapNotNull null) }
+        } ?: emptyList()
+} catch (e: Exception) {
+    DebugLog.log("KAKUYOMU", "follows parse failed", e)
+    emptyList()
+}
+
+suspend fun fetchKakuyomuFollows(screenName: String): List<KakuyomuWork> {
+    val all = mutableListOf<KakuyomuWork>()
+    var offset = 0
+    while (true) {
+        val raw = fetchKakuyomuWithSession(
+            KAKUYOMU_GQL_URL,
+            JSONObject().apply {
+                put("query",
+                    "query(\$s: String! \$first: Int! \$offset: Int!) { userByScreenName(screenName: \$s) { " +
+                        "followingWorks(first: \$first offset: \$offset) { nodes { $KAKUYOMU_WORK_FIELDS } } } }")
+                put("variables", JSONObject().put("s", screenName).put("first", 50).put("offset", offset))
+            }.toString()
+        )
+        val page = parseKakuyomuFollowsJson(raw)
+        all += page
+        if (page.size < 50) break
+        offset += 50
+    }
+    return all.distinctBy { it.id }
+}
+
+/** Follow / unfollow a work with the session (site mutations, bundle-exact). */
+suspend fun kakuyomuFollow(workId: String): Boolean {
+    val raw = fetchKakuyomuWithSession(
+        KAKUYOMU_GQL_URL,
+        JSONObject().apply {
+            put("query",
+                "mutation(\$input: FollowWorkInput!) { followWork(input: \$input) { work { id " +
+                    "visitorWorkFollowing { id } } } }")
+            put("variables", JSONObject().put("input", JSONObject().put("workId", workId)))
+        }.toString()
+    )
+    return !raw.contains("\"errors\"")
+}
+
+suspend fun kakuyomuUnfollow(workId: String): Boolean {
+    val raw = fetchKakuyomuWithSession(
+        KAKUYOMU_GQL_URL,
+        JSONObject().apply {
+            put("query",
+                "mutation(\$input: UnfollowWorksInput!) { unfollowWorks(input: \$input) { works { id } } }")
+            put("variables", JSONObject().put("input", JSONObject().put("workIds", JSONArray(listOf(workId)))))
+        }.toString()
+    )
+    return !raw.contains("\"errors\"")
+}
+
+/**
+ * Merge local bookmarks with the site's follows, NU-style per the user's
+ * model: bookmarks MADE IN THE APP are added to the site (push local-only),
+ * and THE SITE IS MASTER on conflict — after pushing, the site list (plus
+ * just-pushed locals) replaces local state. Unfollowing in-app also
+ * unfollows on the site (toggle does both), so divergence only ever comes
+ * from site-side changes, which win. Pure except the follow-push callback,
+ * so the merge itself is unit-testable.
+ */
+internal fun mergeKakuyomuBookmarks(
+    local: List<KakuyomuWork>,
+    site: List<KakuyomuWork>,
+    pushedIds: Set<String> = emptySet()
+): List<KakuyomuWork> {
+    // site rows win for shared ids; local-only rows survive only if they
+    // were just pushed (otherwise the site's removal of them is the truth)
+    val ids = site.map { it.id }.toSet()
+    val survivors = local.filter { it.id !in ids && it.id in pushedIds }
+    return site + survivors
+}

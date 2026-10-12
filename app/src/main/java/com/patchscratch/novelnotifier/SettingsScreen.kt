@@ -64,6 +64,11 @@ fun SettingsScreen(
     onSyosetuSubsites: (Set<Int>) -> Unit = {},
     syosetuLoggedIn: Boolean = false,
     syosetuStatus: String = "",
+    kakuyomuLoggedIn: Boolean = false,
+    kakuyomuStatus: String = "",
+    onKakuyomuLogin: () -> Unit = {},
+    onKakuyomuLogout: () -> Unit = {},
+    onKakuyomuSync: () -> Unit = {},
     onCheckNow: () -> Unit,
     onSave: (String, Int) -> Unit,
     onStartLogin: () -> Unit,
@@ -157,6 +162,26 @@ fun SettingsScreen(
 
         if (site == "kakuyomu") {
             Text(text = "Kakuyomu カクヨム", style = MaterialTheme.typography.titleMedium)
+            if (kakuyomuStatus.isNotBlank()) {
+                Text(kakuyomuStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            if (kakuyomuLoggedIn) {
+                Button(
+                    onClick = onKakuyomuSync,
+                    modifier = Modifier.padding(top = 4.dp)
+                ) { Text(t("Sync bookmarks (follows)", "ブックマーク（フォロー）を同期")) }
+                TextButton(onClick = onKakuyomuLogout) {
+                    Text(t("Log out of Kakuyomu", "カクヨムからログアウト"))
+                }
+            } else {
+                Button(onClick = onKakuyomuLogin) { Text(t("Log in on Kakuyomu", "カクヨムにログイン")) }
+            }
+            Text(
+                t("Logged in, bookmarks follow the site: adding ⚑ follows the work on Kakuyomu, removing it unfollows, and syncing makes the site's list the master (in-app bookmarks made offline are pushed on sync).",
+                    "ログインするとブックマークはサイトと連動します：⚑でフォロー、解除でフォロー解除、同期ではサイトのリストがマスターです（オフライン中に追加したブックマークは同期時にサイトへ反映）。"),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
             Text(
                 t("Kakuyomu needs no account — search, rankings and reading work right away. Discovery goes through the site's own open GraphQL endpoint; episode text flows through the shared reader. Bookmarks (⚑ on a work) are stored on this device and carried in backups.",
                     "カクヨムはアカウント不要です — 検索・ランキング・閲覧がすぐ使えます。Discoverはカクヨム公式のGraphQLエンドポイント経由、本文は共有リーダーで表示します。ブックマーク（作品の⚑）は端末に保存され、バックアップに含まれます。"),
