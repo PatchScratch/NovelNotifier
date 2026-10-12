@@ -365,8 +365,8 @@ fun ReaderScreen(
                 DropdownMenuItem(
                     text = {
                         Text(
-                            if (viewMode == READER_VIEW_TEXT) "✓ Reader view (extracted text)"
-                            else "Reader view (extracted text)"
+                            if (viewMode == READER_VIEW_TEXT) "✓ " + t("Reader view (extracted text)", "リーダー表示（抽出テキスト）")
+                            else t("Reader view (extracted text)", "リーダー表示（抽出テキスト）")
                         )
                     },
                     onClick = { showMenu = false; pickView(READER_VIEW_TEXT) }
@@ -374,14 +374,14 @@ fun ReaderScreen(
                 DropdownMenuItem(
                     text = {
                         Text(
-                            if (viewMode == READER_VIEW_WEB) "✓ Web view (full page)"
-                            else "Web view (full page)"
+                            if (viewMode == READER_VIEW_WEB) "✓ " + t("Web view (full page)", "Web表示（フルページ）")
+                            else t("Web view (full page)", "Web表示（フルページ）")
                         )
                     },
                     onClick = { showMenu = false; pickView(READER_VIEW_WEB) }
                 )
                 DropdownMenuItem(
-                    text = { Text("Page theme: ${readerTheme.replaceFirstChar { it.uppercase() }}") },
+                    text = { Text(t("Page theme", "ページテーマ") + ": " + t(readerTheme.replaceFirstChar { it.uppercase() }, readerTheme)) },
                     onClick = {
                         readerTheme = when (readerTheme) {
                             "sepia" -> "dark"; "dark" -> "light"; else -> "sepia"
@@ -390,21 +390,21 @@ fun ReaderScreen(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Font: ${if (serif) "Serif" else "Sans"}") },
+                    text = { Text(t("Font", "フォント") + ": " + if (serif) t("Serif", "明朝") else t("Sans", "ゴシック")) },
                     onClick = {
                         serif = !serif
                         saveReaderSerif(prefs, serif)
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Text smaller (A−)") },
+                    text = { Text(t("Text smaller (A−)", "文字を小さく (A−)")) },
                     onClick = {
                         fontSize = (fontSize - 1).coerceIn(12, 28)
                         saveReaderFontSize(prefs, fontSize)
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("Text larger (A+)") },
+                    text = { Text(t("Text larger (A+)", "文字を大きく (A+)")) },
                     onClick = {
                         fontSize = (fontSize + 1).coerceIn(12, 28)
                         saveReaderFontSize(prefs, fontSize)
@@ -412,19 +412,19 @@ fun ReaderScreen(
                 )
                 DropdownMenuItem(
                     text = {
-                        Text(if (offlineEnabled) "Offline for this series: ON" else "Offline for this series: OFF")
+                        Text(if (offlineEnabled) t("Offline for this series: ON", "このシリーズのオフライン: ON") else t("Offline for this series: OFF", "このシリーズのオフライン: OFF"))
                     },
                     onClick = { showMenu = false; toggleOfflineForSeries() }
                 )
                 if (offlineEnabled && target.chapters.size > 0) {
                     if (EpubBulkService.running(context)) {
                         DropdownMenuItem(
-                            text = { Text("Stop background download") },
+                            text = { Text(t("Stop background download", "バックグラウンド取得を停止")) },
                             onClick = { showMenu = false; EpubBulkService.stop(context) }
                         )
                     } else {
                         DropdownMenuItem(
-                            text = { Text("Download all ${target.chapters.size} loaded chapters (background)") },
+                            text = { Text(t("Download all", "全話ダウンロード") + " (${target.chapters.size})") },
                             onClick = {
                                 showMenu = false
                                 if (android.os.Build.VERSION.SDK_INT >= 33 &&
@@ -445,25 +445,25 @@ fun ReaderScreen(
                 }
                 if (savedOffline) {
                     DropdownMenuItem(
-                        text = { Text("✓ Chapter saved offline ($epubCount in book)") },
+                        text = { Text("✓ " + t("Saved offline", "保存済み") + " ($epubCount)") },
                         onClick = { showMenu = false }
                     )
                 } else if (extractResult != null) {
                     DropdownMenuItem(
-                        text = { Text("Save this chapter offline") },
+                        text = { Text(t("Save this chapter offline", "この章をオフライン保存")) },
                         onClick = { showMenu = false; saveChapterOffline() }
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text(if (jsOn) "JavaScript: ON (tap to disable)" else "JavaScript: OFF (tap to enable)") },
+                    text = { Text(if (jsOn) t("JavaScript: ON (tap to disable)", "JavaScript: ON（タップで無効）") else t("JavaScript: OFF (tap to enable)", "JavaScript: OFF（タップで有効）")) },
                     onClick = { showMenu = false; toggleJs() }
                 )
                 DropdownMenuItem(
-                    text = { Text("Reload") },
+                    text = { Text(t("Reload", "再読み込み")) },
                     onClick = { showMenu = false; loadKey += 1 }
                 )
                 DropdownMenuItem(
-                    text = { Text("Open in browser") },
+                    text = { Text(t("Open in browser", "ブラウザで開く")) },
                     onClick = { showMenu = false; openExternally() }
                 )
                 if (epubCount > 0) {
@@ -471,7 +471,7 @@ fun ReaderScreen(
                         text = {
                             val bucket = EpubStore.chapterBucket(chapter.chapter)
                             val label = EpubStore.bookDisplayTitle("", bucket, emptySet())
-                            Text("Export ePub — ${label.replace(" — ", "")} ($epubCount in series)…")
+                            Text(t("Export ePub", "ePubを書き出す") + " — " + label.replace(" — ", "") + " ($epubCount)…")
                         },
                         onClick = {
                             showMenu = false
@@ -485,7 +485,7 @@ fun ReaderScreen(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Share ePub to another app") },
+                        text = { Text(t("Share ePub to another app", "ePubを他のアプリに共有")) },
                         onClick = {
                             showMenu = false
                             EpubStore.shareIntent(context, target.seriesUrl)?.let {
@@ -509,7 +509,7 @@ fun ReaderScreen(
         }
         if (offlineCopy) {
             Text(
-                "Offline copy — saved earlier, shown without the site",
+                t("Offline copy — saved earlier", "オフラインコピー — 保存済み"),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
             )
@@ -525,7 +525,7 @@ fun ReaderScreen(
             // Covers the extracting flag AND page loads that keep restarting
             // (a spinning challenge re-fires onPageFinished constantly).
             Text(
-                "Extracting chapter text…",
+                t("Extracting chapter text…", "章テキストを抽出中…"),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
             )
@@ -533,9 +533,9 @@ fun ReaderScreen(
         if (viewMode == READER_VIEW_TEXT && extractFailed) {
             Text(
                 text = if (imageChapter) {
-                    "This chapter is rendered as images — showing the website, which displays them"
+                    t("This chapter is images — showing the website", "この章は画像形式です — Web版を表示")
                 } else {
-                    "Couldn't extract this page — showing the website instead"
+                    t("Couldn't extract — showing the website", "抽出できません — Web版を表示")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
@@ -685,14 +685,14 @@ fun ReaderScreen(
                     .padding(horizontal = 8.dp)
             ) {
                 Text(
-                    "Page did not load (site down or blocked)",
+                    t("Page did not load (site down or blocked)", "ページを読み込めません（サイトダウンまたはブロック）"),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(onClick = {
                     loadFailed = false
                     loadKey += 1
-                }) { Text("Retry") }
+                }) { Text(t("Retry", "再試行")) }
             }
         }
 
@@ -706,7 +706,7 @@ fun ReaderScreen(
             TextButton(
                 onClick = { if (index > 0) index -= 1 },
                 enabled = index > 0
-            ) { Text("‹ Prev") }
+            ) { Text("‹ " + t("Prev", "前へ")) }
             Text(
                 text = "${index + 1} / ${target.chapters.size}",
                 style = MaterialTheme.typography.bodySmall,
@@ -716,7 +716,7 @@ fun ReaderScreen(
             TextButton(
                 onClick = { if (index < target.chapters.lastIndex) index += 1 },
                 enabled = index < target.chapters.lastIndex
-            ) { Text("Next ›") }
+            ) { Text(t("Next", "次へ") + " ›") }
         }
     }
 }

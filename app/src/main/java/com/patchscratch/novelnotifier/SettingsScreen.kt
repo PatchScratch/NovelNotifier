@@ -157,18 +157,18 @@ fun SettingsScreen(
                 Button(
                     onClick = onSyosetuSync,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Sync bookmark library") }
+                ) { Text(t("Sync bookmark library", "ブックマークを同期")) }
                 TextButton(onClick = onSyosetuLogout, modifier = Modifier.fillMaxWidth()) {
-                    Text("Log out of Syosetu")
+                    Text(t("Log out of Syosetu", "Syosetuからログアウト"))
                 }
             } else {
                 Text(
-                    "Sign in to pull your bookmark categories into the app library. Credentials stay in the app's own session — nothing goes to the external browser.",
+                    t("Sign in to pull your bookmark categories into the app library. Credentials stay in the app's own session — nothing goes to the external browser.", "ログインするとブックマークの分類をアプリのライブラリに取り込みます。認証情報はアプリ内セッションのみに保存され、外部ブラウザには送られません。"),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
                 Button(onClick = onSyosetuLogin, modifier = Modifier.fillMaxWidth()) {
-                    Text("Log in on Syosetu")
+                    Text(t("Log in on Syosetu", "Syosetuにログイン"))
                 }
             }
         } else {
@@ -181,21 +181,21 @@ fun SettingsScreen(
         Button(onClick = onStartLogin, modifier = Modifier.fillMaxWidth()) {
             // When a session exists the login screen auto-closes on sight of
             // the cookie — label it for what it does in that state.
-            Text(if (loginState.startsWith("Logged in")) "Switch / re-login on Novel Updates" else "Log in on Novel Updates")
+            Text(if (loginState.startsWith("Logged in")) t("Switch / re-login on Novel Updates", "再ログイン / アカウント切替") else t("Log in on Novel Updates", "ノベルアップデーツにログイン"))
         }
         TextButton(onClick = onLoggedOut, modifier = Modifier.fillMaxWidth()) {
-            Text("Log out")
+            Text(t("Log out", "ログアウト"))
         }
         OutlinedTextField(
             value = url,
             onValueChange = { url = it },
-            label = { Text("RSS feed URL (optional)") },
+            label = { Text(t("RSS feed URL (optional)", "RSSフィードURL（任意）")) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp, bottom = 4.dp)
         )
         Text(
-            text = "Optional. With a feed URL chapter checks are one cheap request. Without one, the app checks your reading lists directly in the background — nothing to configure. Existing feed URLs travel with backups.",
+            text = t("Optional. With a feed URL chapter checks are one cheap request. Without one, the app checks your reading lists directly in the background — nothing to configure. Existing feed URLs travel with backups.", "任意です。フィードURLがあれば更新チェックは1リクエストで済みます。なければアプリがバックグラウンドでリストを直接確認します — 設定不要。フィードURLはバックアップに含まれます。"),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
@@ -204,7 +204,7 @@ fun SettingsScreen(
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         Text(text = t("Display", "表示"), style = MaterialTheme.typography.titleMedium)
         Text(
-            text = "Home layout. Grid columns follow screen width (3 on a phone, more on a tablet).",
+            text = t("Home layout. Grid columns follow screen width (3 on a phone, more on a tablet).", "ホームレイアウト。グリッドの列数は画面幅に応じます（スマホで3列、タブレットでは更多）。"),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
@@ -219,7 +219,7 @@ fun SettingsScreen(
                 layoutMode = LAYOUT_LIST
                 saveLayoutMode(prefs, LAYOUT_LIST)
             })
-            Text("Single column")
+            Text(t("Single column", "リスト表示"))
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -232,11 +232,11 @@ fun SettingsScreen(
                 layoutMode = LAYOUT_GRID
                 saveLayoutMode(prefs, LAYOUT_GRID)
             })
-            Text("Dynamic grid")
+            Text(t("Dynamic grid", "グリッド表示"))
         }
 
         Text(
-            text = "Theme. Green is the Novel Updates house style; AMOLED black saves battery on OLED screens; wallpaper colors follow Material You.",
+            text = t("Theme. Green is the Novel Updates house style; AMOLED black saves battery on OLED screens; wallpaper colors follow Material You.", "テーマ。グリーンはノベルアップデーツの house style、AMOLED black は有機ELでバッテリーを節約、wallpaper colors は Material You に従います。"),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 12.dp, bottom = 8.dp)
         )
@@ -264,11 +264,11 @@ fun SettingsScreen(
                 themeImportLauncher.launch(arrayOf("application/json", "text/*", "application/octet-stream"))
             },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Import theme file (JSON)…") }
+        ) { Text(t("Import theme file (JSON)…", "テーマファイルを読み込む (JSON)…")) }
         TextButton(
             onClick = { themeTemplateLauncher.launch("novelnotifier-theme.json") },
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Save a theme template to edit") }
+        ) { Text(t("Save a theme template to edit", "テーマテンプレートを保存して編集")) }
         if (themeMessage.isNotBlank()) {
             Text(
                 text = themeMessage,
@@ -285,21 +285,21 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Text(
-            text = "Downloads missing covers for every list, paced against the site. Progress shows in a notification.",
+            text = t("Downloads missing covers for every list, paced against the site. Progress shows in a notification.", "全リストの不足カバーをサイトに負担しないペースで取得します。進捗は通知に表示されます。"),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
         Button(onClick = onStartCoverSync, modifier = Modifier.fillMaxWidth()) {
-            Text("Prefetch missing covers")
+            Text(t("Prefetch missing covers", "不足カバーを先行取得"))
         }
         TextButton(onClick = onStopCoverSync, modifier = Modifier.fillMaxWidth()) {
-            Text("Stop sync")
+            Text(t("Stop sync", "同期を停止"))
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         Text(text = t("Backup & restore", "バックアップ"), style = MaterialTheme.typography.titleMedium)
         Text(
-            text = "One zip with your lists, chapter caches and cover images. Save it anywhere your file picker reaches — Google Drive, OneDrive, USB. Backups never contain your password, login, or feed links — a restored device asks for a fresh login and picks the rest up automatically.",
+            text = t("One zip with your lists, chapter caches and cover images. Save it anywhere your file picker reaches — Google Drive, OneDrive, USB. Backups never contain your password, login, or feed links — a restored device asks for a fresh login and picks the rest up automatically.", "リスト・章キャッシュ・カバー画像を1つのZIPに。ファイルピッカーが届く場所ならどこでも保存できます — Google Drive、OneDrive、USB。バックアップにパスワード・ログイン・フィードリンクは決して含まれません — 復元端末は再ログインだけで残りを自動で取得します。"),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
@@ -370,12 +370,12 @@ fun SettingsScreen(
                 }
             )
             Text(
-                "Stack chapter alerts into one banner",
+                t("Stack chapter alerts into one banner", "章通知を1つのバナーにまとめる"),
                 modifier = Modifier.padding(start = 8.dp)
             )
         }
         Text(
-            text = "Off posts one notification per series. Un-read alerts survive reboots either way.",
+            text = t("Off posts one notification per series. Un-read alerts survive reboots either way.", "オフは各シリーズ個別に通知。未読通知はどちらでも再起動後も保持されます。"),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
@@ -383,7 +383,7 @@ fun SettingsScreen(
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         Text(text = t("Checks", "更新チェック"), style = MaterialTheme.typography.titleMedium)
         Text(
-            text = "Check for updates every",
+            text = t("Check for updates every", "更新チェックの間隔"),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
@@ -395,7 +395,7 @@ fun SettingsScreen(
                     .clickable { hours = option }
             ) {
                 RadioButton(selected = hours == option, onClick = { hours = option })
-                Text("$option hour" + if (option == 1) "" else "s")
+                Text(t("${option} hr", "${option}時間"))
             }
         }
         Button(
@@ -409,7 +409,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .padding(top = 16.dp)
                 .fillMaxWidth()
-        ) { Text("Save") }
-        TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+        ) { Text(t("Save", "保存")) }
+        TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text(t("Cancel", "キャンセル")) }
     }
 }

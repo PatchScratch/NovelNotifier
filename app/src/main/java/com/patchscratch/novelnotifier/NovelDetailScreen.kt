@@ -385,14 +385,14 @@ fun NovelDetailScreen(
                         onDismissRequest = { showPageMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Open on Novel Updates") },
+                            text = { Text(t("Open on Novel Updates", "ノベルアップデーツで開く")) },
                             onClick = {
                                 showPageMenu = false
                                 openUrl(novel.seriesUrl)
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Refresh") },
+                            text = { Text(t("Refresh", "更新")) },
                             onClick = {
                                 showPageMenu = false
                                 listStatus = "Refreshing..."
@@ -443,7 +443,7 @@ fun NovelDetailScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(top = 4.dp)
                     ) {
-                        Button(onClick = { showChangeList = true }) { Text("CHANGE LIST") }
+                        Button(onClick = { showChangeList = true }) { Text(t("CHANGE LIST", "リスト変更")) }
                         TextButton(onClick = onToggleNotify) {
                             Text(if (notifyOn) "🔔" else "🔕", fontSize = 32.sp)
                         }
@@ -460,7 +460,7 @@ fun NovelDetailScreen(
                         .padding(horizontal = 16.dp)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Change list", style = MaterialTheme.typography.titleMedium)
+                        Text(t("Change list", "リスト変更"), style = MaterialTheme.typography.titleMedium)
                         if (changeLists.isEmpty()) {
                             Text(
                                 "Open the hamburger menu once so lists can load, then try again.",
@@ -490,8 +490,8 @@ fun NovelDetailScreen(
                 }
             }
             TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("INFO") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("RELEASES") })
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text(t("INFO", "情報")) })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text(t("RELEASES", "各話")) })
             }
             if (tab == 0) {
                 Column(
@@ -502,7 +502,7 @@ fun NovelDetailScreen(
                 ) {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("Next Chapter", style = MaterialTheme.typography.titleMedium)
+                            Text(t("Next Chapter", "次の各話"), style = MaterialTheme.typography.titleMedium)
                             Text(
                                 text = when {
                                     nextUnread != null ->
@@ -517,7 +517,7 @@ fun NovelDetailScreen(
                                 TextButton(
                                     onClick = { nextUnread?.let(::openInReader) },
                                     enabled = nextUnread?.url?.isNotBlank() == true
-                                ) { Text("READ CHAPTER") }
+                                ) { Text(t("READ CHAPTER", "読む")) }
                                 TextButton(
                                     onClick = {
                                         nextUnread?.let {
@@ -533,7 +533,7 @@ fun NovelDetailScreen(
                                         onMarkRead()
                                     },
                                     enabled = nextUnread != null
-                                ) { Text("MARK AS READ") }
+                                ) { Text(t("MARK AS READ", "既読にする")) }
                             }
                         }
                     }
@@ -547,7 +547,7 @@ fun NovelDetailScreen(
                                 .padding(12.dp)
                                 .clickable { descExpanded = !descExpanded }
                         ) {
-                            Text("Description", style = MaterialTheme.typography.titleMedium)
+                            Text(t("Description", "あらすじ"), style = MaterialTheme.typography.titleMedium)
                             Text(
                                 text = page.description.ifBlank { "No description yet." },
                                 maxLines = if (descExpanded) Int.MAX_VALUE else 6,
@@ -574,7 +574,7 @@ fun NovelDetailScreen(
                             .padding(top = 12.dp)
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("Genres", style = MaterialTheme.typography.titleMedium)
+                            Text(t("Genres", "ジャンル"), style = MaterialTheme.typography.titleMedium)
                             Text(page.genres.ifBlank { "None listed" }, modifier = Modifier.padding(top = 8.dp))
                         }
                     }
@@ -584,7 +584,7 @@ fun NovelDetailScreen(
                             .padding(top = 12.dp)
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("Tags", style = MaterialTheme.typography.titleMedium)
+                            Text(t("Tags", "タグ"), style = MaterialTheme.typography.titleMedium)
                             Text(page.tags.ifBlank { "None listed" }, modifier = Modifier.padding(top = 8.dp))
                         }
                     }
@@ -665,7 +665,7 @@ fun NovelDetailScreen(
                                 .padding(horizontal = 16.dp)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text("Release Ordering", style = MaterialTheme.typography.titleLarge)
+                                Text(t("Release Ordering", "各話の並び順"), style = MaterialTheme.typography.titleLarge)
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
@@ -675,7 +675,7 @@ fun NovelDetailScreen(
                                 ) {
                                     RadioButton(selected = newestFirst, onClick = { newestFirst = true })
                                     Column {
-                                        Text("Newest First")
+                                        Text(t("Newest First", "新しい順"))
                                         Text(
                                             "Show releases in a descending order",
                                             style = MaterialTheme.typography.bodySmall
@@ -691,9 +691,9 @@ fun NovelDetailScreen(
                                 ) {
                                     RadioButton(selected = !newestFirst, onClick = { newestFirst = false })
                                     Column {
-                                        Text("Oldest First")
+                                        Text(t("Oldest First", "古い順"))
                                         Text(
-                                            "Show releases in an ascending order",
+                                            t("Show releases in an ascending order", "各話を昇順で表示"),
                                             style = MaterialTheme.typography.bodySmall
                                         )
                                     }
@@ -702,13 +702,13 @@ fun NovelDetailScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(top = 8.dp)
                                 ) {
-                                    Text("Hide read releases", modifier = Modifier.weight(1f))
+                                    Text(t("Hide read releases", "既読の各話を隠す"), modifier = Modifier.weight(1f))
                                     Switch(checked = hideRead, onCheckedChange = { hideRead = it })
                                 }
                                 TextButton(
                                     onClick = { applyOrder(newestFirst) },
                                     modifier = Modifier.align(Alignment.End)
-                                ) { Text("SAVE") }
+                                ) { Text(t("SAVE", "保存")) }
                             }
                         }
                     }

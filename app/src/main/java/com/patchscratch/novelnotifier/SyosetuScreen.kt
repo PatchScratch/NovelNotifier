@@ -104,7 +104,7 @@ fun SyosetuHome(
                     }
                 } else {
                     Text(
-                        "Log in from Settings to sync your bookmark library. / 設定からログインするとブックマークを同期します。",
+                        t("Log in from Settings to sync your bookmark library.", "設定からログインするとブックマークを同期します。"),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
