@@ -514,6 +514,7 @@ fun NovelApp(
         )
         syosetuNovel != null -> SyosetuDetailScreen(
             novel = syosetuNovel!!,
+            onBack = { syosetuNovel = null },
             onOpenReader = { chapters, startAt ->
                 readerTarget = ReaderTarget(
                     seriesTitle = syosetuNovel!!.title,
@@ -527,7 +528,8 @@ fun NovelApp(
         showSyosetuDiscover -> SyosetuScreen(
             onOpenNovel = { novel ->
                 syosetuNovel = novel
-            }
+            },
+            onBack = { showSyosetuDiscover = false }
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {

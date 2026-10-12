@@ -39,7 +39,8 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun SyosetuScreen(
-    onOpenNovel: (SyosetuNovel) -> Unit
+    onOpenNovel: (SyosetuNovel) -> Unit,
+    onBack: () -> Unit = {}
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
@@ -71,10 +72,13 @@ fun SyosetuScreen(
     LaunchedEffect(tab) { if (tab < SYOSETU_ORDERS.size) load() }
 
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹ Home ☰") }
+        }
         Text(
             "なろう Discover",
             style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
         ScrollableTabRow(selectedTabIndex = tab) {
             SYOSETU_ORDERS.forEachIndexed { i, (_, label) ->
@@ -140,7 +144,8 @@ fun SyosetuScreen(
 @Composable
 fun SyosetuDetailScreen(
     novel: SyosetuNovel,
-    onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit
+    onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit,
+    onBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var toc by remember { mutableStateOf<SyosetuToc?>(null) }
@@ -187,13 +192,14 @@ fun SyosetuDetailScreen(
         Release(chapter = "c${ep.number}", group = "", date = "", url = url)
     }
 
-    BackHandler { }
-
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹ Discover") }
+        }
         Text(
             novel.title,
             style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
         Text(
             "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
