@@ -164,6 +164,12 @@ fun NovelApp(
     var activeSite by remember { mutableStateOf(prefs.getString("active_site", "nu") ?: "nu") }
     var settingsSite by remember { mutableStateOf("nu") } // which site's settings section to show
     var syosetuNovel by remember { mutableStateOf<SyosetuNovel?>(null) }
+    var showSyosetuLogin by remember { mutableStateOf(false) }
+    var syosetuLoggedIn by remember {
+        mutableStateOf(prefs.getBoolean("syosetu_logged_in", false))
+    }
+    var syosetuBookmarks by remember { mutableStateOf<List<SyosetuBookmark>>(emptyList()) }
+    var syosetuStatus by remember { mutableStateOf("") }
     var loginState by remember {
         mutableStateOf(
             if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
@@ -271,6 +277,12 @@ fun NovelApp(
             seriesUrl = link.url,
             coverUrl = coverCache[link.title].orEmpty()
         )
+    }
+
+    LaunchedEffect(syosetuLoggedIn) {
+        if (syosetuLoggedIn) {
+            syosetuBookmarks = withContext(Dispatchers.IO) { loadSyosetuBookmarks(context) }
+        }
     }
 
     // Cold start first (volatile parked by onCreate), then live taps while running.
@@ -382,6 +394,13 @@ fun NovelApp(
         scheduleUpdateChecks(context, checkHours)
     }
 
+    fun onSyosetuLoggedIn() {
+        syosetuLoggedIn = true
+        showSyosetuLogin = false
+        prefs.edit { putBoolean("syosetu_logged_in", true) }
+        syosetuStatus = "Logged in to Syosetu"
+    }
+
     fun switchSite(site: String) {
         activeSite = site
         prefs.edit { putString("active_site", site) }
@@ -455,6 +474,42 @@ fun NovelApp(
         showSettings -> SettingsScreen(
             site = settingsSite,
             currentUrl = rssUrl,
+            onSyosetuLogin = { showSyosetuLogin = true },
+            onSyosetuLogout = {
+                syosetuLoggedIn = false
+                syosetuBookmarks = emptyList()
+                prefs.edit { putBoolean("syosetu_logged_in", false) }
+            },
+            onSyosetuSync = {
+                scope.launch {
+                    syosetuStatus = "Syncing bookmarks…"
+                    try {
+                        val html = withContext(Dispatchers.IO) {
+                            val url = java.net.URL("https://syosetu.com/favnovelmain/list/")
+                            val conn = url.openConnection() as java.net.HttpURLConnection
+                            val cookies = CookieManager.getInstance().getCookie("https://syosetu.com/").orEmpty()
+                            if (cookies.isNotBlank()) conn.setRequestProperty("Cookie", cookies)
+                            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0")
+                            conn.inputStream.bufferedReader().use { it.readText() }
+                        }
+                        val found = parseSyosetuBookmarks(html)
+                        if (found.isNotEmpty()) {
+                            withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, found) }
+                            syosetuBookmarks = found
+                            syosetuStatus = "Synced ${found.size} bookmarked novels"
+                            DebugLog.log("SYOSETU", "bookmark sync: ${found.size} rows")
+                        } else {
+                            syosetuStatus = "No bookmarks found — check you are logged in"
+                            DebugLog.log("SYOSETU", "sync 0 rows; html: " + html.take(300))
+                        }
+                    } catch (e: Exception) {
+                        syosetuStatus = "Sync failed: ${e.message}"
+                        DebugLog.log("SYOSETU", "bookmark sync failed", e)
+                    }
+                }
+            },
+            syosetuLoggedIn = syosetuLoggedIn,
+            syosetuStatus = syosetuStatus,
             currentHours = checkHours,
             loginState = loginState,
             syncStatus = syncStatus,
@@ -525,6 +580,10 @@ fun NovelApp(
                 )
             }
         )
+        showSyosetuLogin -> SyosetuLoginScreen(
+            onLoggedIn = { onSyosetuLoggedIn() },
+            onCancel = { showSyosetuLogin = false }
+        )
         // Syosetu workspace home (its own drawer); NU home falls through.
         activeSite == "syosetu" && selectedWithCover == null -> SyosetuHome(
             activeSite = activeSite,
@@ -533,7 +592,9 @@ fun NovelApp(
                 settingsSite = "syosetu"
                 showSettings = true
             },
-            onOpenNovel = { novel -> syosetuNovel = novel }
+            onOpenNovel = { novel -> syosetuNovel = novel },
+            loggedIn = syosetuLoggedIn,
+            bookmarks = syosetuBookmarks
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {

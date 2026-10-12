@@ -51,6 +51,11 @@ fun SettingsScreen(
     onCustomThemeReady: (CustomTheme?) -> Unit = {},
     onStartCoverSync: () -> Unit,
     onStopCoverSync: () -> Unit,
+    onSyosetuLogin: () -> Unit = {},
+    onSyosetuLogout: () -> Unit = {},
+    onSyosetuSync: () -> Unit = {},
+    syosetuLoggedIn: Boolean = false,
+    syosetuStatus: String = "",
     onCheckNow: () -> Unit,
     onSave: (String, Int) -> Unit,
     onStartLogin: () -> Unit,
@@ -144,19 +149,27 @@ fun SettingsScreen(
 
         if (site == "syosetu") {
             Text(text = "Syosetu なろう", style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = "Reading works without an account. Bookmark-category library sync, しおり read positions and update notifications arrive with the Syosetu login slice — this section will hold them.",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            TextButton(
-                onClick = {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse("https://yomou.syosetu.com/"))
-                    )
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Open yomou.syosetu.com") }
+            if (syosetuStatus.isNotBlank()) {
+                Text(syosetuStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            if (syosetuLoggedIn) {
+                Button(
+                    onClick = onSyosetuSync,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Sync bookmark library") }
+                TextButton(onClick = onSyosetuLogout, modifier = Modifier.fillMaxWidth()) {
+                    Text("Log out of Syosetu")
+                }
+            } else {
+                Text(
+                    "Sign in to pull your bookmark categories into the app library. Credentials stay in the app's own session — nothing goes to the external browser.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Button(onClick = onSyosetuLogin, modifier = Modifier.fillMaxWidth()) {
+                    Text("Log in on Syosetu")
+                }
+            }
         } else {
         Text(text = "Account", style = MaterialTheme.typography.titleMedium)
         Text(

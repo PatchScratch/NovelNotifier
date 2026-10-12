@@ -168,3 +168,88 @@ fun SyosetuNovel.toBookMeta(): EpubStore.BookMeta = EpubStore.BookMeta(
     completelyTranslated = if (isCompleted) "完結" else "連載中",
     originalPublisher = "小説家になろう"
 )
+
+// --- bookmark library (slice 2) ---------------------------------------------
+
+/** One bookmarked novel row from the favorites page. */
+data class SyosetuBookmark(
+    val ncode: String,
+    val title: String,
+    val category: String,
+    val updated: String
+) {
+    val url: String get() = "https://ncode.syosetu.com/${ncode.lowercase()}/"
+}
+
+/**
+ * Scrape the favorites list (favnovelmain) from the CURRENT page of a logged-
+ * in WebView. Structure map is defensive: Narou lists novels as links to
+ * ncode pages; category context comes from the 分類 selector/tabs. First run
+ * on a real account may need tuning — [raw] echoes a snippet for the log.
+ */
+fun parseSyosetuBookmarks(html: String): List<SyosetuBookmark> {
+    val out = mutableListOf<SyosetuBookmark>()
+    // current category label if the page shows one (分類 links or selected tab)
+    val cat = Regex("""分類[：:]?\s*</[^>]+>\s*<a[^>]*>([^<]+)</a>""").find(html)?.groupValues?.get(1)
+        ?: Regex("""class="[^"]*current[^"]*"[^>]*>([^<]{2,20})<""").find(html)?.groupValues?.get(1)
+        ?: ""
+    Regex("""<a href="https://ncode\.syosetu\.com/(n[0-9a-z]+)/?"[^>]*>([^<]+)</a>""")
+        .findAll(html)
+        .forEach { m ->
+            val ncode = m.groupValues[1].uppercase()
+            if (out.any { it.ncode == ncode }) return@forEach
+            // updated timestamp near the row, if present
+            val idx = m.range.first
+            val window = html.substring(idx, minOf(idx + 800, html.length))
+            val upd = Regex("""(\d{4}/\d{2}/\d{2} \d{2}:\d{2})""").find(window)?.groupValues?.get(1) ?: ""
+            out.add(SyosetuBookmark(ncode, m.groupValues[2].trim(), cat, upd))
+        }
+    return out
+}
+
+/** Bookmarks cache: filesDir/syosetu/bookmarks.json (URL-hash keyed store stays per-site by construction). */
+fun syosetuBookmarksFile(context: Context) =
+    context.filesDir.resolve("syosetu").apply { mkdirs() }.resolve("bookmarks.json")
+
+fun saveSyosetuBookmarks(context: Context, bookmarks: List<SyosetuBookmark>) {
+    val arr = JSONArray()
+    bookmarks.forEach {
+        arr.put(JSONObject().put("n", it.ncode).put("t", it.title).put("c", it.category).put("u", it.updated))
+    }
+    syosetuBookmarksFile(context).writeText(arr.toString())
+}
+
+fun loadSyosetuBookmarks(context: Context): List<SyosetuBookmark> = try {
+    val arr = JSONArray(syosetuBookmarksFile(context).readText())
+    (0 until arr.length()).mapNotNull { i ->
+        val row = arr.optJSONObject(i) ?: return@mapNotNull null
+        SyosetuBookmark(row.optString("n"), row.optString("t"), row.optString("c"), row.optString("u"))
+    }
+} catch (e: Exception) { emptyList() }
+
+/** JS payload: structure dump of the favorites page for scrape tuning. */
+fun syosetuBookmarksJs(): String = """
+(function() {
+  try {
+    var out = { cats: [], rows: [] };
+    document.querySelectorAll('a[href]').forEach(function(a) {
+      var h = a.href || '';
+      var t = (a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (h.indexOf('favnovelmain') !== -1 && t && t.length < 30 && out.cats.length < 20) {
+        out.cats.push(t + '|' + h.slice(-40));
+      }
+      if (h.indexOf('ncode.syosetu.com') !== -1 && t.length > 1 && out.rows.length < 500) {
+        out.rows.push({ u: h.slice(-24), t: t.slice(0, 50) });
+      }
+    });
+    var classes = {};
+    document.querySelectorAll('[class]').forEach(function(el) {
+      var c = String(el.className).split(' ')[0];
+      if (c) classes[c] = (classes[c] || 0) + 1;
+    });
+    var top = Object.entries(classes).sort(function(a,b){ return b[1]-a[1]; }).slice(0, 15)
+      .map(function(x){ return x[0] + ':' + x[1]; });
+    return JSON.stringify({ cats: out.cats, rowCount: out.rows.length, rows: out.rows.slice(0, 5), classes: top });
+  } catch (e) { return 'ERR ' + e; }
+})();
+""".trimIndent()

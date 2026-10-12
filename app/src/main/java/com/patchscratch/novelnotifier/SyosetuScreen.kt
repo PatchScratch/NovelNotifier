@@ -52,7 +52,9 @@ fun SyosetuHome(
     activeSite: String,
     onSwitchSite: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenNovel: (SyosetuNovel) -> Unit
+    onOpenNovel: (SyosetuNovel) -> Unit,
+    loggedIn: Boolean = false,
+    bookmarks: List<SyosetuBookmark> = emptyList()
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -87,6 +89,26 @@ fun SyosetuHome(
                     selected = false,
                     onClick = { scope.launch { drawerState.close() } }
                 )
+                if (loggedIn && bookmarks.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text(
+                        "ブックマーク",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                    )
+                    TextButton(onClick = { scope.launch { drawerState.close() } }) { Text("すべて (${bookmarks.size})") }
+                    bookmarks.map { it.category }.filter { it.isNotBlank() }.distinct().forEach { cat ->
+                        TextButton(onClick = { scope.launch { drawerState.close() } }) {
+                            Text("$cat (${bookmarks.count { it.category == cat }})")
+                        }
+                    }
+                } else {
+                    Text(
+                        "Log in from Settings to sync your bookmark library.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
                 NavigationDrawerItem(
                     label = { Text("Settings  ⚙") },
                     selected = false,
@@ -94,11 +116,6 @@ fun SyosetuHome(
                         scope.launch { drawerState.close() }
                         onOpenSettings()
                     }
-                )
-                Text(
-                    "Bookmark-category library sync arrives with the Syosetu login slice.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                 )
             }
         }
