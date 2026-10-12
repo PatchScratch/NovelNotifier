@@ -474,7 +474,12 @@ fun NovelApp(
         showSettings -> SettingsScreen(
             site = settingsSite,
             currentUrl = rssUrl,
-            onSyosetuLogin = { showSyosetuLogin = true },
+            onSyosetuLogin = {
+                // Settings composes BEFORE the login branch in the when-block —
+                // leaving it open swallows the navigation entirely.
+                showSettings = false
+                showSyosetuLogin = true
+            },
             onSyosetuLogout = {
                 syosetuLoggedIn = false
                 syosetuBookmarks = emptyList()
