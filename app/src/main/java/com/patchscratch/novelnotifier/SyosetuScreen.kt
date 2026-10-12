@@ -1,6 +1,10 @@
 package com.patchscratch.novelnotifier
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.HorizontalDivider
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,10 +41,75 @@ import kotlinx.coroutines.withContext
  * served by the official JSON API — no WebView involved. Tapping a novel
  * opens SyosetuDetailScreen.
  */
+/**
+ * Syosetu workspace home: its own drawer (site switcher, なろう Discover,
+ * Syosetu settings — bookmark categories arrive with the login slice) with
+ * Discover as the body. The NU home has its equivalent drawer; switching
+ * sites swaps the whole workspace.
+ */
 @Composable
-fun SyosetuScreen(
-    onOpenNovel: (SyosetuNovel) -> Unit,
-    onBack: () -> Unit = {}
+fun SyosetuHome(
+    activeSite: String,
+    onSwitchSite: (String) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenNovel: (SyosetuNovel) -> Unit
+) {
+    val drawerState = androidx.compose.material3.rememberDrawerState(
+        androidx.compose.material3.DrawerValue.Closed
+    )
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    androidx.compose.material3.ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Text(
+                    text = "なろう",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(16.dp)
+                )
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    androidx.compose.material3.FilterChip(
+                        selected = activeSite == "nu",
+                        onClick = { onSwitchSite("nu") },
+                        label = { Text("Novel Updates") },
+                        modifier = Modifier.weight(1f).padding(end = 4.dp)
+                    )
+                    androidx.compose.material3.FilterChip(
+                        selected = activeSite == "syosetu",
+                        onClick = { onSwitchSite("syosetu") },
+                        label = { Text("なろう") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                HorizontalDivider()
+                NavigationDrawerItem(
+                    label = { Text("なろう Discover  ★") },
+                    selected = false,
+                    onClick = { scope.launch { drawerState.close() } }
+                )
+                NavigationDrawerItem(
+                    label = { Text("Settings  ⚙") },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenSettings()
+                    }
+                )
+                Text(
+                    "Bookmark-category library sync arrives with the Syosetu login slice.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
+    ) {
+        SyosetuDiscoverBody(onOpenNovel = onOpenNovel)
+    }
+}
+
+@Composable
+fun SyosetuDiscoverBody(
+    onOpenNovel: (SyosetuNovel) -> Unit
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
@@ -72,13 +141,10 @@ fun SyosetuScreen(
     LaunchedEffect(tab) { if (tab < SYOSETU_ORDERS.size) load() }
 
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ Home ☰") }
-        }
         Text(
             "なろう Discover",
             style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(horizontal = 16.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
         )
         ScrollableTabRow(selectedTabIndex = tab) {
             SYOSETU_ORDERS.forEachIndexed { i, (_, label) ->

@@ -1,6 +1,8 @@
 package com.patchscratch.novelnotifier
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -40,6 +42,7 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun SettingsScreen(
+    site: String = "nu",
     currentUrl: String,
     currentHours: Int,
     loginState: String,
@@ -139,6 +142,22 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
+        if (site == "syosetu") {
+            Text(text = "Syosetu なろう", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Reading works without an account. Bookmark-category library sync, しおり read positions and update notifications arrive with the Syosetu login slice — this section will hold them.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://yomou.syosetu.com/"))
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Open yomou.syosetu.com") }
+        } else {
         Text(text = "Account", style = MaterialTheme.typography.titleMedium)
         Text(
             text = loginState,
@@ -166,6 +185,7 @@ fun SettingsScreen(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 8.dp)
         )
+        }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         Text(text = "Display", style = MaterialTheme.typography.titleMedium)

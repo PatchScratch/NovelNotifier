@@ -162,7 +162,7 @@ fun NovelApp(
     var readerTarget by remember { mutableStateOf<ReaderTarget?>(null) } // in-app reader (Phase 3.1)
     // --- Syosetu provider (slice 1) ---
     var activeSite by remember { mutableStateOf(prefs.getString("active_site", "nu") ?: "nu") }
-    var showSyosetuDiscover by remember { mutableStateOf(false) }
+    var settingsSite by remember { mutableStateOf("nu") } // which site's settings section to show
     var syosetuNovel by remember { mutableStateOf<SyosetuNovel?>(null) }
     var loginState by remember {
         mutableStateOf(
@@ -420,12 +420,11 @@ fun NovelApp(
     // Login overlays Settings, so close it the way its Cancel button does.
     BackHandler(
         enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding ||
-            selectedNovel != null || syosetuNovel != null || showSyosetuDiscover
+            selectedNovel != null || syosetuNovel != null
     ) {
         when {
             readerTarget != null -> readerTarget = null
             syosetuNovel != null -> syosetuNovel = null
-            showSyosetuDiscover -> showSyosetuDiscover = false
             showLoginWeb -> {
                 showLoginWeb = false
                 showSettings = true
@@ -454,6 +453,7 @@ fun NovelApp(
             }
         )
         showSettings -> SettingsScreen(
+            site = settingsSite,
             currentUrl = rssUrl,
             currentHours = checkHours,
             loginState = loginState,
@@ -525,11 +525,15 @@ fun NovelApp(
                 )
             }
         )
-        showSyosetuDiscover -> SyosetuScreen(
-            onOpenNovel = { novel ->
-                syosetuNovel = novel
+        // Syosetu workspace home (its own drawer); NU home falls through.
+        activeSite == "syosetu" && selectedWithCover == null -> SyosetuHome(
+            activeSite = activeSite,
+            onSwitchSite = { switchSite(it) },
+            onOpenSettings = {
+                settingsSite = "syosetu"
+                showSettings = true
             },
-            onBack = { showSyosetuDiscover = false }
+            onOpenNovel = { novel -> syosetuNovel = novel }
         )
         selectedWithCover == null -> {
             if (chapterFetchQueue.isNotEmpty()) {
@@ -569,8 +573,11 @@ fun NovelApp(
                 onOpenDiscover = { showDiscover = true },
                 activeSite = activeSite,
                 onSwitchSite = { switchSite(it) },
-                onOpenSyosetu = { showSyosetuDiscover = true },
-                onOpenSettings = { showSettings = true },
+
+                onOpenSettings = {
+                    settingsSite = "nu"
+                    showSettings = true
+                },
                 onEditLists = { showEditLists = true },
                 onSaveListOptions = { newNotifyOff, newUpdateOff ->
                     notifyOff = newNotifyOff
