@@ -489,14 +489,7 @@ fun NovelApp(
                 scope.launch {
                     syosetuStatus = "Syncing bookmarks…"
                     try {
-                        val html = withContext(Dispatchers.IO) {
-                            val url = java.net.URL("https://syosetu.com/favnovelmain/list/")
-                            val conn = url.openConnection() as java.net.HttpURLConnection
-                            val cookies = CookieManager.getInstance().getCookie("https://syosetu.com/").orEmpty()
-                            if (cookies.isNotBlank()) conn.setRequestProperty("Cookie", cookies)
-                            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0")
-                            conn.inputStream.bufferedReader().use { it.readText() }
-                        }
+                        val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
                         val found = parseSyosetuBookmarks(html)
                         if (found.isNotEmpty()) {
                             withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, found) }
@@ -505,7 +498,20 @@ fun NovelApp(
                             DebugLog.log("SYOSETU", "bookmark sync: ${found.size} rows")
                         } else {
                             syosetuStatus = "No bookmarks found — check you are logged in"
-                            DebugLog.log("SYOSETU", "sync 0 rows; html: " + html.take(300))
+                            // DebugLog strips non-ASCII (JP pages log empty) —
+                            // dump raw hrefs instead for scraper tuning.
+                            val hrefs = Regex("href=\"([^\"]{4,120})\"")
+                                .findAll(html).map { it.groupValues[1] }.toList()
+                            val ncodeHrefs = hrefs.filter { it.contains("ncode") }.take(12)
+                            val ncodeCount = hrefs.count { it.contains("ncode") }
+                            DebugLog.log("SYOSETU", "0 rows; total hrefs=${hrefs.size}, ncode=$ncodeCount")
+                            // exact markup around the first novel link, non-ASCII
+                            // folded to '.' so DebugLog keeps it
+                            val i = html.indexOf("ncode.syosetu.com")
+                            if (i >= 0) {
+                                val ctx = html.substring(maxOf(0, i - 150), minOf(i + 250, html.length))
+                                DebugLog.log("SYOSETU", "ctx: " + ctx.replace(Regex("[^\\x20-\\x7E]"), "."))
+                            }
                         }
                     } catch (e: Exception) {
                         syosetuStatus = "Sync failed: ${e.message}"

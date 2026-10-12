@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import android.webkit.CookieManager
 import java.net.URL
 import java.net.URLEncoder
 
@@ -82,6 +83,52 @@ suspend fun syosetuApiQuery(params: Map<String, String>): List<SyosetuNovel> =
         val raw = connection.getInputStream().bufferedReader().use { it.readText() }
         parseSyosetuApi(raw)
     }
+
+/**
+ * Fetch a logged-in syosetu.com page with the WebView session's cookies.
+ * Follows redirects MANUALLY, re-attaching cookies on every hop — the
+ * automatic redirect follower does not reliably re-send custom headers,
+ * and an unauthenticated hop 302s to /login/ with an empty body (the
+ * "no bookmarks" bug). Cookie NAMES are logged, never values.
+ */
+suspend fun fetchSyosetuWithSession(url: String): String = withContext(Dispatchers.IO) {
+    var current = url
+    for (hop in 0 until 5) {
+        val conn = java.net.URL(current).openConnection() as java.net.HttpURLConnection
+        conn.instanceFollowRedirects = false
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 20_000
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0")
+        val cookies = CookieManager.getInstance().getCookie("https://syosetu.com/").orEmpty()
+        if (cookies.isNotBlank()) {
+            conn.setRequestProperty("Cookie", cookies)
+            if (hop == 0) {
+                val names = cookies.split(";").map { it.substringBefore('=').trim() }.filter { it.isNotEmpty() }
+                DebugLog.log("SYOSETU", "session cookie names: $names")
+            }
+        } else if (hop == 0) {
+            DebugLog.log("SYOSETU", "NO session cookies for syosetu.com — login first")
+        }
+        val status = conn.responseCode
+        if (status in 300..399) {
+            val location = conn.getHeaderField("Location") ?: break
+            current = java.net.URL(java.net.URL(current), location).toString()
+            DebugLog.log("SYOSETU", "sync redirect $status → $current")
+            conn.disconnect()
+            continue
+        }
+        if (status != 200) {
+            DebugLog.log("SYOSETU", "sync HTTP $status at $current")
+            conn.disconnect()
+            return@withContext ""
+        }
+        val body = conn.inputStream.bufferedReader().use { it.readText() }
+        DebugLog.log("SYOSETU", "sync got ${body.length} bytes from $current")
+        conn.disconnect()
+        return@withContext body
+    }
+    ""
+}
 
 suspend fun fetchSyosetuHtml(url: String): String = withContext(Dispatchers.IO) {
     val connection = URL(url).openConnection()
@@ -193,16 +240,28 @@ fun parseSyosetuBookmarks(html: String): List<SyosetuBookmark> {
     val cat = Regex("""分類[：:]?\s*</[^>]+>\s*<a[^>]*>([^<]+)</a>""").find(html)?.groupValues?.get(1)
         ?: Regex("""class="[^"]*current[^"]*"[^>]*>([^<]{2,20})<""").find(html)?.groupValues?.get(1)
         ?: ""
-    Regex("""<a href="https://ncode\.syosetu\.com/(n[0-9a-z]+)/?"[^>]*>([^<]+)</a>""")
+    // Verified live (2026-10-12): bookmark rows are
+    //   <a href="https://ncode.syosetu.com/nXXXX/"><span class="c-up-label
+    //   c-up-label--novel-long">連載</span>&nbsp;Title</a>
+    // — the anchor content STARTS with a tag (serial/short label span), so
+    // capture inner HTML and strip tags; the trailing /?" skips episode
+    // links (ncode/1/).
+    Regex("""<a [^>]*href="https://ncode\.syosetu\.com/(n[0-9a-z]+)/?"[^>]*>(.*?)</a>""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         .findAll(html)
         .forEach { m ->
             val ncode = m.groupValues[1].uppercase()
             if (out.any { it.ncode == ncode }) return@forEach
-            // updated timestamp near the row, if present
+            var title = m.groupValues[2]
+                .replace(Regex("<[^>]*>"), " ")          // label span etc.
+                .replace("&nbsp;", " ").replace("&amp;", "&")
+                .replace(Regex("[[:space:]]+"), " ").trim()
+            // drop the leading 連載/短編 label the span contributes
+            title = title.removePrefix("連載 ").removePrefix("短編 ").trim()
             val idx = m.range.first
             val window = html.substring(idx, minOf(idx + 800, html.length))
             val upd = Regex("""(\d{4}/\d{2}/\d{2} \d{2}:\d{2})""").find(window)?.groupValues?.get(1) ?: ""
-            out.add(SyosetuBookmark(ncode, m.groupValues[2].trim(), cat, upd))
+            out.add(SyosetuBookmark(ncode, title, cat, upd))
         }
     return out
 }
