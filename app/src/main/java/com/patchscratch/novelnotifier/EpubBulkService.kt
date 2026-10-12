@@ -317,6 +317,9 @@ class EpubBulkService : Service() {
                     // real host; harvest its ToC so later siblings resolve.
                     status("NU first-touch · ${chapter.label}")
                     val extract = loadAndExtract(chapter.url)
+                    if (extract == null) {
+                        DebugLog.log("EPUB", "first-touch failed: ${chapter.label} at ${webView?.url}")
+                    }
                     if (extract != null) {
                         withContext(Dispatchers.IO) {
                             EpubStore.appendChapter(
