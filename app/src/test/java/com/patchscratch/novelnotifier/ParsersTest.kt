@@ -823,4 +823,14 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertNull(loadSyosetuSeriesFrom(dir, "n4180mw", novel.lastUpdate))
     }
 
+
+    // Contract lifted from the site's own novel_bookmarkmenu.js.
+    @Test
+    fun syosetuShioriForm_matchesSiteAjax() {
+        assertEquals(
+            "no=3&primary=3154074_3343846&token=eaa84eaa5e1f53223fa4db2ea46aa53d",
+            syosetuShioriForm(3, "3154074_3343846", "eaa84eaa5e1f53223fa4db2ea46aa53d")
+        )
+    }
+
 }

@@ -617,11 +617,44 @@ fun NovelApp(
             seriesTitle = readerTarget!!.seriesTitle,
             onBack = { showXlateFiles = false }
         )
-        readerTarget != null -> ReaderScreen(
-            target = readerTarget!!,
-            onBack = { readerTarget = null },
-            onOpenXlateFiles = { showXlateFiles = true }
-        )
+        readerTarget != null -> {
+            val shioriBm = syosetuBookmarks.firstOrNull { it.url == readerTarget!!.seriesUrl }
+            val shioriPos = shioriBm?.let { maxOf(it.shioriPos, 0) } ?: -1
+            ReaderScreen(
+                target = readerTarget!!,
+                onBack = { readerTarget = null },
+                onOpenXlateFiles = { showXlateFiles = true },
+                shioriPos = shioriPos,
+                onShioriAuto = { ep ->
+                    val bm = shioriBm ?: return@ReaderScreen
+                    if (bm.userfavId.isNotBlank()) scope.launch {
+                        val ok = syosetuUpdateShiori(bm.userfavId, ep)
+                        if (ok) {
+                            // keep the local mirror in step so re-composition
+                            // doesn't re-fire the same advance
+                            syosetuBookmarks = syosetuBookmarks.map {
+                                if (it.ncode == bm.ncode) it.copy(shioriPos = ep) else it
+                            }
+                            withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, syosetuBookmarks) }
+                        }
+                    }
+                },
+                onShioriManual = { ep ->
+                    val bm = shioriBm ?: return@ReaderScreen
+                    if (bm.userfavId.isNotBlank()) scope.launch {
+                        syosetuStatus = "Setting しおり…"
+                        val ok = syosetuUpdateShiori(bm.userfavId, ep)
+                        syosetuStatus = if (ok) "しおり set to episode " + ep else "Set failed — try again"
+                        if (ok) {
+                            syosetuBookmarks = syosetuBookmarks.map {
+                                if (it.ncode == bm.ncode) it.copy(shioriPos = ep) else it
+                            }
+                            withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, syosetuBookmarks) }
+                        }
+                    }
+                }
+            )
+        }
         showLoginWeb -> LoginWebScreen(
             onLoggedIn = { cookies -> onLoggedIn(cookies) },
             onCancel = {

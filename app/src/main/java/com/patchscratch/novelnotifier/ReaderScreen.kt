@@ -114,7 +114,14 @@ private val ReaderDark = ReaderPalette(Color(0xFF101418), Color(0xFFD8DBE2))
 fun ReaderScreen(
     target: ReaderTarget,
     onBack: () -> Unit,
-    onOpenXlateFiles: () -> Unit = {}
+    onOpenXlateFiles: () -> Unit = {},
+    // Syosetu しおり (reading position). -1 = not a bookmarked Syosetu
+    // serial (hooks idle). Auto fires when the current chapter's number is
+    // HIGHER than the saved position — the site's own open-an-episode
+    // rule, forward only; manual is the reader-menu set (may go backward).
+    shioriPos: Int = -1,
+    onShioriAuto: (Int) -> Unit = {},
+    onShioriManual: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
@@ -328,6 +335,10 @@ fun ReaderScreen(
         savedOffline = withContext(Dispatchers.IO) {
             EpubStore.readChapter(context, target.seriesUrl, chapter.url) != null
         }
+        // しおり auto-advance — mirrors the site: opening an episode past
+        // your saved position moves the marker there.
+        val ep = chapterNum(chapter.chapter)
+        if (shioriPos >= 0 && ep > shioriPos) onShioriAuto(ep)
     }
 
     // Auto-save — ONLY for series the user opted in, dedup by chapter URL.
@@ -606,6 +617,20 @@ fun ReaderScreen(
                         prefs.edit { putString("xlate_layout", next) }
                     }
                 )
+                if (shioriPos >= 0) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                t("Set しおり to this chapter (", "しおりをこの話に設定（") +
+                                    chapterNum(chapter.chapter) + t(")", "）")
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onShioriManual(chapterNum(chapter.chapter))
+                        }
+                    )
+                }
                 // Bulk twin of Download all: every STORED chapter through the
                 // translator, one at a time, auto-refining lock files as it
                 // goes. Unstored chapters need Download all first.

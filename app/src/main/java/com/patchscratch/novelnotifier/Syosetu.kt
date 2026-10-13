@@ -291,7 +291,11 @@ data class SyosetuBookmark(
     val title: String,
     val category: String,
     val updated: String,
-    val userfavId: String = ""
+    val userfavId: String = "",
+    // Local mirror of the site しおり (reading position, episode number).
+    // 0 = unknown/unset; the auto-advance rule compares against this so a
+    // recomposition never re-fires the same move.
+    val shioriPos: Int = 0
 ) {
     val url: String get() = "https://ncode.syosetu.com/${ncode.lowercase()}/"
 }
@@ -362,8 +366,44 @@ fun parseSyosetuBookmarkSettings(html: String): SyosetuBookmarkSettings? {
     return SyosetuBookmarkSettings(action, token, jyokyo, isnotice, names)
 }
 
-/** POST a form to syosetu.com with the WebView session's cookies. */
-private suspend fun postSyosetuForm(url: String, form: String): Boolean = withContext(Dispatchers.IO) {
+/** AJAX variant that returns the response body (shiori JSON verdict). */
+private suspend fun postSyosetuFormBody(url: String, form: String): String? =
+    withContext(Dispatchers.IO) {
+        try {
+            val conn = URL(url).openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 15_000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0")
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+            conn.setRequestProperty("X-Requested-With", "XMLHttpRequest")
+            conn.setRequestProperty("Origin", "https://ncode.syosetu.com")
+            conn.setRequestProperty("Referer", "https://ncode.syosetu.com/")
+            CookieManager.getInstance().getCookie("https://syosetu.com/")?.let {
+                conn.setRequestProperty("Cookie", it)
+            }
+            conn.outputStream.use { it.write(form.toByteArray()) }
+            val body = if (conn.responseCode in 200..299) conn.inputStream.bufferedReader().use { it.readText() } else null
+            conn.disconnect()
+            body
+        } catch (e: Exception) {
+            DebugLog.log("SYOSETU", "shiori POST failed", e)
+            null
+        }
+    }
+
+/**
+ * POST a form to syosetu.com with the WebView session's cookies. Classic
+ * same-origin form posts (settings changes) need nothing extra; the AJAX
+ * endpoints (shioriupdateapi) reject without jQuery's X-Requested-With and
+ * a matching Origin — the site's own cheap CSRF layer (403 otherwise,
+ * verified live).
+ */
+private suspend fun postSyosetuForm(
+    url: String,
+    form: String,
+    ajax: Boolean = false
+): Boolean = withContext(Dispatchers.IO) {
     try {
         val conn = URL(url).openConnection() as java.net.HttpURLConnection
         conn.requestMethod = "POST"
@@ -373,6 +413,11 @@ private suspend fun postSyosetuForm(url: String, form: String): Boolean = withCo
         conn.readTimeout = 20_000
         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0")
         conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+        if (ajax) {
+            conn.setRequestProperty("X-Requested-With", "XMLHttpRequest")
+            conn.setRequestProperty("Origin", "https://ncode.syosetu.com")
+            conn.setRequestProperty("Referer", "https://ncode.syosetu.com/")
+        }
         CookieManager.getInstance().getCookie("https://syosetu.com/")?.let {
             conn.setRequestProperty("Cookie", it)
         }
@@ -399,6 +444,34 @@ suspend fun syosetuMoveBookmarkCategory(userfavId: String, newCategoryId: Int): 
         "https://syosetu.com" + st.actionUrl,
         "jyokyo=" + st.jyokyo + notice + "&categoryid=" + newCategoryId
     )
+}
+
+/**
+ * Reading position (しおり), verified from the site's own novel_bookmarkmenu.js:
+ * opening episode N where N > the saved position silently POSTs
+ *   no=<N>&primary=<userid_favncode>&token=<csrf>
+ * to /favnovelmain/shioriupdateapi/ (JSON reply; error.code set = failure).
+ * The position only ever moves forward automatically — NU's never-untick
+ * rule in Syosetu form. A manual set may also move it backward.
+ */
+fun syosetuShioriForm(episodeNo: Int, primary: String, token: String): String =
+    "no=" + episodeNo + "&primary=" + primary + "&token=" + token
+
+suspend fun syosetuUpdateShiori(userfavId: String, episodeNo: Int): Boolean {
+    val page = fetchSyosetuWithSession(
+        "https://syosetu.com/favnovelmain/updateinput/useridfavncode/" + userfavId + "/"
+    )
+    val st = parseSyosetuBookmarkSettings(page) ?: return false
+    val body = postSyosetuFormBody(
+        "https://syosetu.com/favnovelmain/shioriupdateapi/",
+        syosetuShioriForm(episodeNo, userfavId, st.token)
+    )
+    // The API answers 200 even on logical errors — the JSON error.code is
+    // the real verdict (the site's own JS checks exactly this).
+    val errCode = body?.let { runCatching { JSONObject(it).optJSONObject("error")?.optInt("code") ?: 0 }.getOrDefault(1) } ?: 1
+    val ok = errCode == 0
+    DebugLog.log("SYOSETU", "shiori -> ep $episodeNo ok=" + ok + " body=" + (body?.take(120) ?: "null"))
+    return ok
 }
 
 /** Remove one bookmark (same form, plus the delete button's del field). */
@@ -562,7 +635,7 @@ fun syosetuBookmarksFile(context: Context) =
 fun saveSyosetuBookmarks(context: Context, bookmarks: List<SyosetuBookmark>) {
     val arr = JSONArray()
     bookmarks.forEach {
-        arr.put(JSONObject().put("n", it.ncode).put("t", it.title).put("c", it.category).put("u", it.updated).put("f", it.userfavId))
+        arr.put(JSONObject().put("n", it.ncode).put("t", it.title).put("c", it.category).put("u", it.updated).put("f", it.userfavId).put("s", it.shioriPos))
     }
     syosetuBookmarksFile(context).writeText(arr.toString())
 }
@@ -571,7 +644,7 @@ fun loadSyosetuBookmarks(context: Context): List<SyosetuBookmark> = try {
     val arr = JSONArray(syosetuBookmarksFile(context).readText())
     (0 until arr.length()).mapNotNull { i ->
         val row = arr.optJSONObject(i) ?: return@mapNotNull null
-        SyosetuBookmark(row.optString("n"), row.optString("t"), row.optString("c"), row.optString("u"), row.optString("f"))
+        SyosetuBookmark(row.optString("n"), row.optString("t"), row.optString("c"), row.optString("u"), row.optString("f"), row.optInt("s"))
     }
 } catch (e: Exception) { emptyList() }
 
