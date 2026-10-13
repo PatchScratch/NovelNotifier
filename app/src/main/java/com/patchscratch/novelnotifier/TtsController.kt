@@ -226,12 +226,16 @@ object TtsController {
     // --- engine: Android TTS -------------------------------------------------------------------
 
     private suspend fun playAndroid(text: String) {
+        // Wait for TTS init — can take 500-2000ms on first launch.
+        // Poll with generous timeout; speech quality is worth the wait.
+        var waited = 0
+        while (!ttsReady && waited < 5_000) {
+            delay(250)
+            waited += 250
+        }
         if (!ttsReady) {
-            delay(200) // brief wait for init
-            if (!ttsReady) {
-                DebugLog.log("TTS", "Android TTS not ready — falling back")
-                return
-            }
+            DebugLog.log("TTS", "Android TTS not ready after 5s — giving up")
+            return
         }
         val tts = androidTts ?: return
         val speed = _state.value.speed
