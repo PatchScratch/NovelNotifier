@@ -522,7 +522,6 @@ fun KakuyomuDetailScreen(
                 author = work.author,
                 genre = kakuyomuGenreName(work.genre),
                 synopsis = (detail?.work?.introduction ?: "").ifBlank { work.catchphrase },
-                hasCover = CoverStore.hasLocal(context, work.url),
                 onGenerated = {}
             )
         }

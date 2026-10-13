@@ -1,0 +1,15 @@
+AI translation suite and the long-press Japanese dictionary headline this release.
+
+New:
+- Chapter translation through your own OpenAI-compatible key (OpenRouter, OpenAI, local servers). English renders under each Japanese paragraph and is stored inside the offline ePub. Translate one chapter or the whole book at once; switch the reader between JP+EN, Japanese only, or English only from the reader menu.
+- novel-mill-style lock files (prompt / glossary / voices), editable per series, automatically refined after every translated chapter so names and voices stay consistent.
+- Long-press any word in the reader for an offline dictionary lookup: reading, part of speech, and JMdict senses (Kuromoji + a 499k-entry dictionary bundled in the app).
+- AI cover art for series without one — your own prompt, title and author rendered as cover typography. Covers travel in backups and a new covers-only zip moves them between devices.
+- Syosetu bookmarks grew up: renamed categories appear in the drawer, and you can move series between categories or remove them right from the app (written back to the site, like NU's change-list).
+- Update notifications for bookmarked Syosetu series via the authors' public Atom feeds.
+- Machine-translated titles and synopses across rankings, search and detail pages (free, on-device).
+
+Fixed:
+- Ranking translations no longer blank after switching tabs or scrolling fast.
+- Cover prefetch resumes instead of restarting; volume-aware chapter ordering and ScribbleHub suggestion rows stay out of your library.
+- Series pages cache locally — re-entering a series is instant.

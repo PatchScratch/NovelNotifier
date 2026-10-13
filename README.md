@@ -6,20 +6,47 @@ An Android app for reading web novels: follow your [Novel Updates](https://www.n
 
 This is a clean-room, from-scratch replacement for the abandoned *"Notifications for Novel Updates"* app (last released 2019, no longer functional). Novel Updates has no public API, so its side reads the site the way a logged-in browser does — through embedded WebViews with your own session — and writes changes back (mark-as-read, change list) exactly as the website does. The Japanese sites instead use their official/open APIs (Syosetu's documented JSON API; Kakuyomu's open GraphQL endpoint), so no scraping is involved there.
 
+## Install
+
+Grab the latest `NovelNotifier-v<version>.apk` from [Releases](https://github.com/PatchScratch/NovelNotifier/releases) and install it (allow "unknown sources" for your browser if asked). Updates install over the top — your library stays.
+
+**Via Obtainium** (recommended): add the app by this GitHub URL and updates arrive automatically. IzzyOnDroid is *not* an option for this app — it was declined under their AI-assistance policy.
+
+**First steps:** Settings → *Log in on Novel Updates* (onboarding takes over), and optionally paste an OpenAI-compatible API key under Settings → *Translation* to unlock AI features. The Japanese sites work without any account.
+
 ## Features
 
-- **Reading lists** — drawer of all your NU lists, grid or list layout, search, four sort modes, unread badges from last-read position.
-- **First-run onboarding** — after login the app reads your lists, then shows how large your library is and how long a full download takes (conservative estimates), and lets you mark 1–3 *priority lists* so their chapters arrive first. A live counter tracks the list download.
-- **Background library download** — covers first (visual, offline), then chapter lists, one paced request at a time with a progress notification (`Lists 3/15 · Covers 120/1419 · …`). The queue survives reboots and battery death and resumes where it stopped.
-- **Chapter notifications** — new chapters detected via your personal NU RSS feed (captured automatically from the reading-list page — no URL copying) or, without any feed, by paced background checks of your lists. Per-list and per-series mute switches.
-- **Cross-device read sync** — chapters you mark as read on one device appear read on your others via NU's read-activity feed.
-- **Series pages** — INFO + full RELEASES table (cached page by page), next-chapter card, mark-as-read and list changes written back to the site.
-- **In-app reader** — chapter rows and READ CHAPTER open inside the app; ‹ Prev / Next › walk the book.
-- **Offline library as ePub** — opt in per series from the reader's ⋮ menu, and chapters save into a standard ePub book for that series (cover embedded, real table of contents) as you read them — or bulk-download everything the chapter list has loaded. Saved chapters render when you're offline, and the book exports/shares to any other e-reader app. Nothing saves without your say-so; storage stays yours. Two views: **Reader view** (chapter text extracted and rendered natively — sepia/dark/light page themes, serif/sans, adjustable font size) and **Web view** (the full page). Extraction filters hidden decoy content by computed styles and falls back to the web view per page when a host defeats it. Per-novel JavaScript toggle; ad/tracker hosts blocked; pop-ups disabled; open-in-browser escape hatch.
-- **Backups & device transfer** — one zip with your lists, chapter caches, cover images, and settings; export/import through the system file picker (Google Drive, OneDrive, USB — anywhere it reaches). Backups never contain your password, login session, or feed tokens.
-- **Themes** — light/dark/AMOLED-black/Material You, plus **custom themes from a JSON file** (see below).
-- **Japanese sites: Syosetu (なろう) & Kakuyomu (カクヨム)** — each a segregated workspace with its own drawer (hamburger → site chips). **Syosetu**: official JSON API discovery (rankings, advanced search parity with yomou), in-app WebView login, bookmark library sync, and the R18 sister sites (Nocturne / Moonlight / Ladies) behind an 18+ gate with per-site toggles. **Kakuyomu**: discovery through the site's own open GraphQL endpoint (daily/weekly/monthly/all-time rankings × 12 genres × serial/short, word search with paging), work detail + full ordered table of contents from the work page's embedded data, no account needed; R18 works are hidden behind an 18+ gate with an R18-only browse chip; device-local bookmarks (⚑ on a work, carried in backups) with the site's own follow (フォロー) noted for a future login. Both read through the same in-app reader and save offline ePubs through the same pipeline as NU. Full EN/JP app-language toggle; anything stored or sent stays in the site's native terms.
-- **Debug log** — a rotating on-device log of every Cloudflare encounter, scrape outcome, and image failure, pullable via adb (see below).
+### Your NU library, kept in sync
+- **Reading lists** — a drawer of all your lists, grid or list layout, search, four sort modes, unread badges from your last-read position.
+- **Chapter alerts** — new chapters detected through your personal NU RSS feed (captured automatically — no URL copying) or paced background checks; per-list and per-series mute switches.
+- **Cross-device read sync** — chapters marked read on one device appear read on the others via NU's read-activity feed.
+- **Series pages** — INFO + full RELEASES table, next-chapter card; mark-as-read and change-list write back to the site exactly as the website does.
+- **First-run onboarding** — sizes your library, estimates the download, and lets you mark 1–3 priority lists so their chapters arrive first.
+
+### Japanese sites: Syosetu and Kakuyomu
+Each site is its own workspace (hamburger → site chips), served by official/open APIs — no scraping.
+- **Discover** — rankings, advanced search (full yomou parity on Syosetu), and the R18 sister sites behind an 18+ gate.
+- **Machine-translated browsing** — ranking titles, synopses and tags show a dimmed English line under the Japanese (free on-device ML Kit, cached forever; or via your own AI key).
+- **Bookmarks** — Syosetu login syncs your bookmark library with your renamed 分類 categories in the drawer; long-press any tile (or the series page) to **move it between categories or remove it** — written back to the site, NU-style. Kakuyomu login syncs follows (site is master).
+- **Update notifications** — bookmarked Syosetu series notify on new episodes via the authors' public Atom feeds, same pipeline as NU.
+- **Fast series pages** — synopsis and chapter list cache on-device; re-entering a series is instant, and refreshes only happen when a new episode actually lands.
+
+### Reading & offline
+- **In-app reader** — ‹ Prev / Next › through the book, sepia/dark/light themes, serif/sans, adjustable font size, per-novel JavaScript toggle, ad/tracker blocking, open-in-browser escape hatch. Extraction filters NU's hidden decoy content by computed styles and falls back to the full-page web view when a host defeats it.
+- **Offline library as standard ePubs** — opt in per series; chapters save as you read or bulk-download whole volumes (survives screen-off; the queue survives reboots). Books export/share to any e-reader. Storage stays yours — nothing saves without your say-so.
+- **Long-press Japanese dictionary** — tap-and-hold any word in the reader for its reading, part of speech and JMdict senses. Fully offline (built-in Kuromoji tokenizer + a 499k-entry JMdict; ~80MB unpacked once on first enable).
+
+### AI translation & covers (bring your own key)
+- **Chapter translation** through any OpenAI-compatible endpoint (OpenRouter, OpenAI, a local server): English renders under each Japanese paragraph and is stored inside the offline ePub. Translate one chapter, or **Translate all stored** for the whole book.
+- **Novel-Mill-style lock files** — `prompt.txt` / `glossary.txt` / `voices.txt`, editable per series, and **auto-refined after every chapter** (new names and voice notes are extracted and saved for the next chapter's context). Files from the desktop [novel-mill](https://github.com/PatchScratch/novel-mill) paste straight in.
+- **Reader layout switch** — JP+EN, Japanese only, or English only, cycled right from the reader menu; ePub exports follow the same choice.
+- **AI cover art** for series without one (all three sites) — generated from title, genre and synopsis with your own prompt; title and author render as cover typography in the artwork's style.
+- **Costs are yours to control** — the key lives only on the device, never in backups; typical translation runs ~half a cent per chapter, covers ~$0.01–0.02 (see the cost table below).
+
+### Backup, themes, and diagnostics
+- **One-zip backups** — lists, chapter caches, covers and settings through the system file picker; never contains your password, sessions, or feed tokens. **Share covers (zip)** moves cover art between your devices on its own.
+- **Themes** — light/dark/AMOLED-black/Material You, plus custom themes from a JSON file.
+- **On-device debug log** — every Cloudflare encounter, scrape outcome and image failure, pullable via adb.
 
 ## How it works
 
@@ -52,9 +79,19 @@ This is a clean-room, from-scratch replacement for the abandoned *"Notifications
 | `AlertReceivers.kt` | Dismissal bookkeeping + BOOT_COMPLETED / app-update re-posting of unseen alerts. |
 | `CustomTheme.kt` | Custom JSON themes: parser, strict validation, import, and the editable template. |
 | `SettingsScreen.kt`, `ListOptionsScreen.kt`, `LoginWebScreen.kt`, `EditListsScreen.kt` | Screens. |
-| `ReaderScreen.kt` | In-app chapter reader (browser mode): WebView, chapter nav, JS toggle, ad-block. |
+| `ReaderScreen.kt` | In-app reader: WebView + extracted-text views, chapter nav, translation controls, the long-press dictionary hookup. |
 | `SeriesSync.kt` | Per-series merge after a new chapter is detected. |
 | `DebugLog.kt` | Rotating file log for on-device diagnosis. |
+| `Syosetu.kt` | Syosetu provider: API client + parsers, bookmarks, the settings-form write-back (move/remove), series cache. |
+| `SyosetuFeeds.kt` | Update notifications via author Atom feeds (one fetch per author, paced, timeout-guarded). |
+| `Kakuyomu.kt` | Kakuyomu provider: open GraphQL client, work-page data extraction, follow/unfollow calls. |
+| `TranslationClient.kt` | Chapter translation: indexed-paragraph protocol, reply repair, chunking, retries. |
+| `XlateStack.kt` | novel-mill lock files (prompt/glossary/voices) + per-chapter auto-refinement. |
+| `TranslationQueue.kt` | Bulk "translate all stored chapters" runner with live progress. |
+| `MetadataTranslator.kt` | Free site-info translation (ML Kit) with a hash-keyed sidecar cache; serialized, retry-on-failure. |
+| `JaDict.kt` | Long-press dictionary: Kuromoji tokenizer + bundled JMdict, unpacked on first enable. |
+| `CoverGen.kt` | AI cover generation through OpenRouter's /images endpoint, prompt templating, the Generate/Regenerate button. |
+| `BookmarksScreen.kt`, `XlateFilesScreen.kt` | Bookmark library grid/list with long-press management; the lock-file editor. |
 
 ### Data flow
 
@@ -64,7 +101,7 @@ This is a clean-room, from-scratch replacement for the abandoned *"Notifications
 4. The read-activity feed merges marks from your other devices; local progress can never be rewound.
 5. Everything the engine does is checkpointed in `filesDir/sync_queue.json` and resumable.
 
-## Getting started
+## Building from source
 
 1. Open the project in Android Studio and let Gradle sync (JDK 25 comes with Studio's bundled JBR; CLI builds use `JAVA_HOME=<studio>/jbr`).
 2. Run on a device. First launch: Settings → **Log in on Novel Updates** → onboarding takes over.
@@ -123,6 +160,8 @@ The on-screen contrast tip: the status bar icon color follows whichever scheme i
 
 Settings → **Back up library** writes one zip via the file picker — save it to Google Drive, OneDrive, a USB drive, anywhere. On the new device: install, **Restore from backup**, log in. Your library and covers appear instantly; the sync engine tops up anything stale. Backups deliberately exclude credentials and feed tokens — a restored device does a fresh login and re-captures its own feed links automatically.
 
+To move just cover art between devices (including AI-generated covers, which have no site to re-download from), **Share covers (zip)** in the same section writes a covers-only zip; importing it on the other device merges, never deletes.
+
 ## AI translation & cover costs (bring your own key)
 
 Chapter translation and AI cover art run through any OpenAI-compatible
@@ -155,15 +194,18 @@ chapter.
 
 **AI covers:** series without a site cover offer a *Generate cover (AI)*
 button on their page (all three sites). Art is generated from the title,
-genre and synopsis in light-novel cover style, without text baked into the
-image, and stored exactly like a downloaded cover — grids, backups and
-transfers treat it identically. Typical image models run **~$0.01–0.02 per
-cover** (measured: Seedream 5 Flash, $0.018). Series info (synopses, tags)
-can also be translated for free on-device via ML Kit — see Settings.
+genre and synopsis in light-novel cover style — with the title and author
+rendered as cover typography that matches the artwork — and stored exactly
+like a downloaded cover, so grids, backups and transfers treat it
+identically. Typical image models run **~$0.01–0.02 per cover** (measured:
+Seedream 5 Flash, $0.018); the prompt is yours to customise. Series info
+(synopses, tags) translates for free on-device via ML Kit — see Settings.
 
 ## Roadmap
 
-Planned next: the rest of the Japanese webnovel sites, Syosetu bookmark categories and しおり sync, reading-history sync on Kakuyomu. Shipped already: chapter **translation via OpenAI-compatible APIs** and **AI-generated covers** (your own endpoint + key, e.g. OpenRouter — cost estimates above), free on-device synopsis translation via ML Kit, Kakuyomu login + follows with site-master sync, the in-app reader (browser + extracted views, anti-scrape font-substitution decoding), the full offline ePub library, and the three-site workspace. Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction filters by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
+Planned next: しおり (reading-position) sync on Syosetu, reading history on Kakuyomu, and then the wider Japanese webnovel sites. A nicety on the list: running translation chunks 2–3 at a time instead of one.
+
+Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction filters by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
 
 ## Acknowledgements
 

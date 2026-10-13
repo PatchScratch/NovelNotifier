@@ -493,7 +493,6 @@ fun SyosetuDetailScreen(
                 author = novel.writer,
                 genre = syosetuGenreName(novel.genreCode),
                 synopsis = novel.story,
-                hasCover = CoverStore.hasLocal(context, novel.url),
                 onGenerated = {}
             )
         }

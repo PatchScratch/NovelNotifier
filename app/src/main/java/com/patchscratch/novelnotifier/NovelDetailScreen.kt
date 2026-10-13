@@ -464,7 +464,6 @@ fun NovelDetailScreen(
                             author = page.author,
                             genre = page.genres,
                             synopsis = page.description,
-                            hasCover = CoverStore.hasLocal(context, novel.seriesUrl),
                             onGenerated = { coverState += 1 }
                         )
                     }

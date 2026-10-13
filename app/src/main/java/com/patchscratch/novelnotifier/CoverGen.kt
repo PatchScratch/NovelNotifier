@@ -189,7 +189,6 @@ fun GenerateCoverButton(
     author: String,
     genre: String,
     synopsis: String,
-    hasCover: Boolean,
     onGenerated: () -> Unit
 ) {
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
