@@ -10,7 +10,7 @@ This is a clean-room, from-scratch replacement for the abandoned *"Notifications
 
 Grab the latest `NovelNotifier-v<version>.apk` from [Releases](https://github.com/PatchScratch/NovelNotifier/releases) and install it (allow "unknown sources" for your browser if asked). Updates install over the top — your library stays.
 
-**Via Obtainium** (recommended): add the app by this GitHub URL and updates arrive automatically. IzzyOnDroid is *not* an option for this app — it was declined under their AI-assistance policy.
+**Via Obtainium** (recommended): add the app by this GitHub URL and updates arrive automatically.
 
 **First steps:** Settings → *Log in on Novel Updates* (onboarding takes over), and optionally paste an OpenAI-compatible API key under Settings → *Translation* to unlock AI features. The Japanese sites work without any account.
 

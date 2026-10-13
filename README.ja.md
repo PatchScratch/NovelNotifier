@@ -10,7 +10,7 @@
 
 [Releases](https://github.com/PatchScratch/NovelNotifier/releases) から最新の `NovelNotifier-v<バージョン>.apk` をダウンロードしてインストールしてください（必要に応じてブラウザに「不明なソース」のインストールを許可）。アップデートは上書きインストールで、ライブラリはそのまま残ります。
 
-**Obtainium経由**（推奨）：このGitHubのURLをアプリに登録すれば、アップデートが自動で届きます。IzzyOnDroidでの掲載はありません（AI支援ポリシーによりお断りされました）。
+**Obtainium経由**（推奨）：このGitHubのURLをアプリに登録すれば、アップデートが自動で届きます。
 
 **最初の一歩**：設定 → 「Novel Updates にログイン」（以降はオンボーディングが案内）。AI機能を使いたい場合は 設定 → 「翻訳」にOpenAI互換のAPIキーを貼り付け（任意）。日本のサイトはアカウントなしで利用できます。
 
