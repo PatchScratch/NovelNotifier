@@ -2,6 +2,7 @@ package com.patchscratch.novelnotifier
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -236,5 +237,28 @@ class EpubStoreTest {
         assertEquals("Star — Vol 2", EpubStore.bookDisplayTitle("Star", "v2", listOf("v1", "v2")))
         // p1 alongside volumes gets its part name too (it's a real split)
         assertEquals("Star — Part 1", EpubStore.bookDisplayTitle("Star", "p1", listOf("p1", "v2")))
+    }
+
+    @Test
+    fun translation_survivesBookRoundTrip() {
+        val book = tempBook("xlate")
+        EpubStore.writeBook(
+            book, "T", null, "image/jpeg",
+            EpubStore.orderDocs(listOf(
+                EpubStore.ChapterDoc("https://h/1", "c1", "One", listOf("元の文", "二番目"), listOf("The first line", "The second"))
+            ))
+        )
+        val back = EpubStore.readAllChapterDocs(book)
+        assertEquals(1, back.size)
+        assertEquals(listOf("The first line", "The second"), back[0].translation)
+        assertEquals(listOf("元の文", "二番目"), back[0].paragraphs)   // original untouched
+    }
+
+    @Test
+    fun translation_absentIsNull() {
+        val book = tempBook("noxlate")
+        EpubStore.writeBook(book, "T", null, "image/jpeg",
+            EpubStore.orderDocs(listOf(doc("https://h/1", "c1", "One", "p1"))))
+        assertNull(EpubStore.readAllChapterDocs(book)[0].translation)
     }
 }

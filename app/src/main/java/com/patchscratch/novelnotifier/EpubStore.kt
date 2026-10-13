@@ -134,7 +134,10 @@ object EpubStore {
         val url: String,        // source chapter URL — the dedupe key
         val label: String,      // e.g. "c673" (NU table label)
         val title: String,      // extracted chapter title (may be blank)
-        val paragraphs: List<String>
+        val paragraphs: List<String>,
+        /** Optional AI translation, paragraph-for-paragraph. Renders in our
+         *  reader (toggle); external e-readers ignore the embedded JSON. */
+        val translation: List<String>? = null
     )
 
     /** Index row for chapters.json (file + order metadata). */
@@ -270,7 +273,18 @@ object EpubStore {
             .map { xmlUnescape(it.groupValues[1]).trim() }
             .filter { it.isNotEmpty() }
             .toList()
-        return ChapterDoc(row.url, row.label, title.ifBlank { row.title }, paragraphs)
+        // Sidecar translation: a JSON array in a <script> block. External
+        // e-readers ignore it; our reader reads it back on re-parse.
+        val translation = Regex(
+            """<script type="application/json" id="nn-translation">(.*?)</script>""",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(html)?.groupValues?.get(1)?.let { json ->
+            try {
+                val arr = JSONArray(json)
+                (0 until arr.length()).map { arr.optString(it) }.takeIf { it.isNotEmpty() }
+            } catch (e: Exception) { null }
+        }
+        return ChapterDoc(row.url, row.label, title.ifBlank { row.title }, paragraphs, translation)
     }
 
     // --- document templates --------------------------------------------------
@@ -446,6 +460,7 @@ $navPoints  </navMap>
 <head><title>${xmlEscape(doc.label)}</title></head>
 <body>
 ${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${doc.paragraphs.joinToString("\n") { "<p>${xmlEscape(it)}</p>" }}
+${if (doc.translation != null) """<script type="application/json" id="nn-translation">${JSONArray(doc.translation)}</script>""" else ""}
 </body>
 </html>"""
 
@@ -592,6 +607,34 @@ ${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${doc
         val files = bookFiles(context, seriesUrl) +
             listOfNotNull(legacyBookFile(context, seriesUrl).takeIf { it.exists() })
         return files.flatMap { f -> readAllChapterDocs(f) }
+    }
+
+    /**
+     * Attach (or replace) the AI translation of one stored chapter. Rewrites
+     * the bucket book holding that chapter; original paragraphs are untouched.
+     * Returns false when the chapter isn't stored yet — translate-then-save
+     * flows store the original first.
+     */
+    fun setTranslation(
+        context: Context,
+        seriesTitle: String,
+        seriesUrl: String,
+        chapterUrl: String,
+        paragraphs: List<String>
+    ): Boolean {
+        val book = (bookFiles(context, seriesUrl) + listOfNotNull(
+            legacyBookFile(context, seriesUrl).takeIf { it.exists() }
+        )).firstOrNull { f -> readAllChapterDocs(f).any { it.url == chapterUrl } } ?: return false
+        val docs = readAllChapterDocs(book).map {
+            if (it.url == chapterUrl) it.copy(translation = paragraphs) else it
+        }
+        // Same rewrite inputs as appendChapter so cover/title page survive.
+        val bucket = chapterBucket(docs.first { it.url == chapterUrl }.label)
+        val displayTitle = bookDisplayTitle(seriesTitle, bucket, bucketsOf(context, seriesUrl))
+        val cover = CoverStore.localFile(context, seriesUrl)?.readBytes()
+            ?: existingCover(book)
+        writeBook(book, displayTitle, cover, "image/jpeg", orderDocs(docs), readBookMeta(book))
+        return true
     }
 
     fun storedCount(context: Context, seriesUrl: String): Int =
