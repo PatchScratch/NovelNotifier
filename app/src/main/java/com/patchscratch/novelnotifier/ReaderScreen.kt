@@ -165,6 +165,10 @@ fun ReaderScreen(
     var translation by remember(target) { mutableStateOf<List<String>?>(null) }
     var translating by remember(target) { mutableStateOf(false) }
     var showTranslation by remember { mutableStateOf(true) }
+    // Long-press Japanese dictionary (Settings toggle; first enable unpacks
+    // the JMdict asset — the toggle blocks until that finishes).
+    var jaDictOn by remember(target) { mutableStateOf(prefs.getBoolean("ja_dict_on", false)) }
+    var wordHit by remember(target) { mutableStateOf<JaDict.WordHit?>(null) }
     val chapter = target.chapters.getOrNull(index) ?: return
     LaunchedEffect(chapter.url, extractTick) {
         translation = withContext(Dispatchers.IO) {
@@ -350,6 +354,7 @@ fun ReaderScreen(
     // Edge-to-edge: without insets the top bar hides under the status bar and
     // the chapter nav under the gesture bar — taps there feed system UI.
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
+        wordHit?.let { hit -> WordSheet(hit) { wordHit = null } }
         // --- top bar: back · chapter · menu ---
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -791,13 +796,13 @@ fun ReaderScreen(
                         val en = translation?.getOrNull(i)
                         val showEn = en != null && en.isNotBlank() && showTranslation
                         if (layout != "en") {
-                            Text(
+                            JpParagraph(
                                 text = paragraph,
                                 color = palette.text,
-                                fontSize = fontSize.sp,
-                                lineHeight = (fontSize * 1.65).sp,
-                                fontFamily = if (serif) FontFamily.Serif else FontFamily.Default,
-                                modifier = Modifier.padding(bottom = 10.dp)
+                                fontSize = fontSize,
+                                serif = serif,
+                                dictOn = jaDictOn,
+                                onWord = { wordHit = it }
                             )
                         }
                         // AI translation renders directly under its source

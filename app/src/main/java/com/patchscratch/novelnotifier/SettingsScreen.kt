@@ -456,6 +456,8 @@ fun SettingsScreen(
         }
         var xlateLayout by remember { mutableStateOf(prefs.getString("xlate_layout", "both") ?: "both") }
         var autoRefine by remember { mutableStateOf(prefs.getBoolean("xlate_auto_refine", true)) }
+        var jaDictOn by remember { mutableStateOf(prefs.getBoolean("ja_dict_on", false)) }
+        var jaDictBusy by remember { mutableStateOf(false) }
         OutlinedTextField(
             value = coverModel,
             onValueChange = {
@@ -532,6 +534,41 @@ fun SettingsScreen(
             t("novel-mill lock files: prompt.txt / glossary.txt / voices.txt, editable per series from the reader's ⋮ menu. Auto-refine asks the model for new names and voice notes from each finished chapter and appends them to this series' files (a few hundred extra tokens).",
                 "novel-millロックファイル：prompt.txt / glossary.txt / voices.txt。リーダーの⋮メニューからシリーズごとに編集できます。自動精錬は翻訳済みの各話から新しい固有名詞・声のメモを模型に尋ね、このシリーズのファイルへ追記します（数百トークンの追加）。"),
             style = MaterialTheme.typography.bodySmall
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).clickable {
+                if (jaDictOn) {
+                    jaDictOn = false
+                    prefs.edit { putBoolean("ja_dict_on", false) }
+                } else if (!jaDictBusy) {
+                    jaDictBusy = true
+                    scope.launch {
+                        val ok = JaDict.ensureUnpacked(context)
+                        jaDictOn = ok
+                        jaDictBusy = false
+                        prefs.edit { putBoolean("ja_dict_on", ok) }
+                    }
+                }
+            }
+        ) {
+            Switch(
+                checked = jaDictOn,
+                enabled = !jaDictBusy,
+                onCheckedChange = null   // row handles it; keeps the switch non-cramped
+            )
+            Text(
+                if (jaDictBusy) t("Preparing dictionary…", "辞書を準備中…")
+                else t("Japanese dictionary — long-press a word in the reader", "日本語辞書 — リーダーで単語を長押し"),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+        Text(
+            t("Kuromoji + JMdict, fully offline. First enable unpacks an ~80MB dictionary (one time).",
+                "Kuromoji + JMdict、完全オフライン。初回有効化時に約80MBの辞書を一度だけ展開します。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 6.dp)
         )
         // Site-info engine: synopses, catchphrases, tags on the Japanese
         // sites — ML Kit on-device is the FREE default; the AI key is an

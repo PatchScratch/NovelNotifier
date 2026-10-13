@@ -4,6 +4,14 @@ plugins {
 }
 
 android {
+    packaging {
+        resources {
+            // kuromoji-ipadic and kuromoji-core ship duplicate META-INF docs
+            excludes += "META-INF/CONTRIBUTORS.md"
+            excludes += "META-INF/LICENSE.md"
+            excludes += "META-INF/NOTICE.md"
+        }
+    }
     namespace = "com.patchscratch.novelnotifier"
     compileSdk {
         version = release(37)
@@ -72,6 +80,8 @@ android {
 }
 
 dependencies {
+    // Japanese tokenizer for the long-press dictionary (embeds IPADIC)
+    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
