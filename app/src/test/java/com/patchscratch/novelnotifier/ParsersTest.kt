@@ -1,6 +1,7 @@
 package com.patchscratch.novelnotifier
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNotEquals
@@ -766,6 +767,60 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         """.trimIndent()
         val rows = parseSyosetuBookmarks(html)
         assertEquals("3154074_3256858", rows.first().userfavId)
+    }
+
+
+    // Captured live 2026-10-13 from api.syosetu.com/writernovel/<id>.Atom
+    @Test
+    fun parseSyosetuAtom_readsEpisodeLinks() {
+        val xml = """
+            <feed xmlns="http://www.w3.org/2005/Atom">
+            <entry>
+            <title type="html"><![CDATA[連載作品[異世界転生帰りの幼馴染が…-三話「解散」](エピソード3)]]></title>
+            <published>2026-10-13T18:00:00+09:00</published>
+            <link rel="alternate" type="text/html" href="https://ncode.syosetu.com/n4180mw/3/"/>
+            <id>https://ncode.syosetu.com/n4180mw/3/</id>
+            </entry>
+            <entry>
+            <published>2026-10-12T18:00:00+09:00</published>
+            <link rel="alternate" type="text/html" href="https://ncode.syosetu.com/n4180mw/2/"/>
+            </entry>
+            </feed>
+        """.trimIndent()
+        val entries = SyosetuFeeds.parseAtom(xml)
+        assertEquals(2, entries.size)
+        assertEquals("N4180MW", entries[0].ncode)
+        assertEquals(3, entries[0].episode)
+        assertEquals("2026-10-13T18:00:00+09:00", entries[0].published)
+        assertEquals(2, entries[1].episode)
+    }
+
+
+    @Test
+    fun syosetuSeriesCache_roundTripFreshnessAndUpdate() {
+        val dir = java.nio.file.Files.createTempDirectory("syo").toFile()
+        val novel = SyosetuNovel(
+            ncode = "N4180MW", title = "T", writer = "W", story = "S", genreCode = 101,
+            keywords = "k", isCompleted = false, isShortStory = false, episodeCount = 3,
+            lastUpdate = "2026-10-13 18:00:00", points = 0
+        )
+        val toc = SyosetuToc("T", "W", listOf(SyosetuEpisode(1, "a"), SyosetuEpisode(2, "b")), false)
+        saveSyosetuSeriesTo(dir, novel, toc)
+        // fresh + same lastUpdate → served
+        val hit = loadSyosetuSeriesFrom(dir, "n4180mw", novel.lastUpdate)
+        assertNotNull(hit)
+        assertEquals(2, hit!!.toc.episodes.size)
+        assertEquals("S", hit.novel.story)
+        // incoming row says a NEWER update → cache invalid
+        assertNull(loadSyosetuSeriesFrom(dir, "n4180mw", "2026-10-13 20:00:00"))
+        // stale cache (old fetchedAt) → invalid even with matching update
+        dir.resolve("series/N4180MW.json").writeText(
+            Regex(""""at":\d+""").replace(
+                dir.resolve("series/N4180MW.json").readText(),
+                "\"at\":" + (System.currentTimeMillis() - 13 * 3600_000L)
+            )
+        )
+        assertNull(loadSyosetuSeriesFrom(dir, "n4180mw", novel.lastUpdate))
     }
 
 }

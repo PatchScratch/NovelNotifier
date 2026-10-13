@@ -305,9 +305,23 @@ fun SyosetuDetailScreen(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    // Cache may carry a richer row than the list passed in (full synopsis
+    // after a bookmark-tile hydration) — render from it when present.
+    var meta by remember(novel.ncode) { mutableStateOf(novel) }
 
-    // Fetch ToC pages until we have every episode (100 per page).
+    // Instant render from the series cache when fresh; fetch only when
+    // stale (>12h) or the row's lastUpdate moved (new episodes published).
     LaunchedEffect(novel.ncode) {
+        val cached = withContext(Dispatchers.IO) {
+            loadSyosetuSeries(context, novel.ncode, novel.lastUpdate)
+        }
+        if (cached != null) {
+            DebugLog.log("SYOSETU", "detail served from cache: ${novel.ncode}")
+            if (cached.novel.story.length >= novel.story.length) meta = cached.novel
+            toc = cached.toc
+            loading = false
+            return@LaunchedEffect
+        }
         DebugLog.log("SYOSETU", "detail story len=${novel.story.length} for ${novel.ncode}")
         loading = true
         error = ""
@@ -333,6 +347,9 @@ fun SyosetuDetailScreen(
                 episodes = episodes,
                 hasMorePages = false
             )
+            if (episodes.isNotEmpty()) {
+                withContext(Dispatchers.IO) { saveSyosetuSeries(context, novel, toc!!) }
+            }
         } catch (e: Exception) {
             error = "ToC を読み込めませんでした: ${e.message}"
         }
@@ -366,25 +383,25 @@ fun SyosetuDetailScreen(
                     fullscreen = true
                 )
                 Column {
-                    Text(novel.title, style = MaterialTheme.typography.headlineSmall)
-                    TranslatedHint(text = novel.title, style = MaterialTheme.typography.bodySmall)
+                    Text(meta.title, style = MaterialTheme.typography.headlineSmall)
+                    TranslatedHint(text = meta.title, style = MaterialTheme.typography.bodySmall)
                     Text(
-                        "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
-                            syosetuEpisodeLabel(novel.episodeCount) + " ・ " + syosetuStatusLabel(novel.isCompleted),
+                        "${meta.writer} ・ ${syosetuGenreName(meta.genreCode)} ・ " +
+                            syosetuEpisodeLabel(meta.episodeCount) + " ・ " + syosetuStatusLabel(meta.isCompleted),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                     Text(
-                        t("Updated", "最終更新") + " ${novel.lastUpdate.take(10)}",
+                        t("Updated", "最終更新") + " ${meta.lastUpdate.take(10)}",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
         }
-        if (novel.story.isNotBlank()) {
+        if (meta.story.isNotBlank()) {
             item {
                 TranslatedInfoText(
-                    text = novel.story,
+                    text = meta.story,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(16.dp)
                 )

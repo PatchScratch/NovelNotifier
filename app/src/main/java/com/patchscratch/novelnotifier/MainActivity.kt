@@ -365,7 +365,22 @@ fun NovelApp(
     }
 
     LaunchedEffect(syosetuLoggedIn) {
-        if (syosetuLoggedIn) resyncSyosetuBookmarks()
+        if (syosetuLoggedIn) {
+            resyncSyosetuBookmarks()
+            // Author-Atom poll (NU parity): notify bookmarked series with
+            // new episodes. Runs after the bookmark refresh so baselines
+            // see fresh rows.
+            try {
+                ensureChapterChannel(context)
+                val updates = SyosetuFeeds.pollBookmarks(context, syosetuBookmarks)
+                if (updates.isNotEmpty()) {
+                    postChapterNotifications(context, updates)
+                    DebugLog.log("SYOSETU", "posted ${updates.size} update notifications")
+                }
+            } catch (e: Exception) {
+                DebugLog.log("SYOSETU", "feed poll skipped", e)
+            }
+        }
     }
 
     // Cold start first (volatile parked by onCreate), then live taps while running.

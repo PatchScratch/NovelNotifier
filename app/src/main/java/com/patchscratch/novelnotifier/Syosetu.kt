@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import java.io.File
 import org.json.JSONObject
 import android.webkit.CookieManager
 import java.net.URL
@@ -478,6 +479,81 @@ fun parseSyosetuBookmarks(html: String, categoryOverride: String? = null): List<
     }
     return out
 }
+
+/**
+ * Per-series detail cache: filesDir/syosetu/series/<NCODE>.json holds the
+ * hydrated novel metadata + full episode ToC. Re-entering a series renders
+ * instantly from this; the network refetch only happens when stale
+ * (>12h old, or the incoming row's lastUpdate moved — a new episode
+ * published). Keeps repeated visits off syosetu.com's ToC pages.
+ */
+data class SyosetuSeriesCache(
+    val novel: SyosetuNovel,
+    val toc: SyosetuToc,
+    val fetchedAt: Long
+)
+
+fun syosetuSeriesCacheFile(context: Context, ncode: String): File =
+    context.filesDir.resolve("syosetu/series").apply { mkdirs() }.resolve(ncode.uppercase() + ".json")
+
+private fun SyosetuNovel.toJson(): JSONObject = JSONObject()
+    .put("ncode", ncode).put("title", title).put("writer", writer)
+    .put("story", story).put("genre", genreCode).put("kw", keywords)
+    .put("end", isCompleted).put("short", isShortStory)
+    .put("eps", episodeCount).put("upd", lastUpdate).put("pts", points)
+    .put("r18", isR18).put("noc", nocgenre)
+
+private fun novelFromJson(o: JSONObject): SyosetuNovel = SyosetuNovel(
+    ncode = o.optString("ncode"), title = o.optString("title"),
+    writer = o.optString("writer"), story = o.optString("story"),
+    genreCode = o.optInt("genre"), keywords = o.optString("kw"),
+    isCompleted = o.optBoolean("end"), isShortStory = o.optBoolean("short"),
+    episodeCount = o.optInt("eps"), lastUpdate = o.optString("upd"),
+    points = o.optInt("pts"), isR18 = o.optBoolean("r18"), nocgenre = o.optInt("noc")
+)
+
+fun saveSyosetuSeries(context: Context, novel: SyosetuNovel, toc: SyosetuToc) =
+    saveSyosetuSeriesTo(context.filesDir.resolve("syosetu"), novel, toc)
+
+fun saveSyosetuSeriesTo(dir: File, novel: SyosetuNovel, toc: SyosetuToc) {
+    try {
+        val f = dir.resolve("series").apply { mkdirs() }.resolve(novel.ncode.uppercase() + ".json")
+        val eps = JSONArray()
+        toc.episodes.forEach { eps.put(JSONObject().put("n", it.number).put("t", it.title)) }
+        f.writeText(
+            JSONObject()
+                .put("novel", novel.toJson())
+                .put("episodes", eps)
+                .put("at", System.currentTimeMillis())
+                .toString()
+        )
+    } catch (e: Exception) {
+        DebugLog.log("SYOSETU", "series cache write failed", e)
+    }
+}
+
+/** Cache for [ncode] when it exists and is fresh relative to the incoming
+ *  row's lastUpdate ([incomingUpdate]; blank skips the check). */
+fun loadSyosetuSeries(context: Context, ncode: String, incomingUpdate: String): SyosetuSeriesCache? =
+    loadSyosetuSeriesFrom(context.filesDir.resolve("syosetu"), ncode, incomingUpdate)
+
+fun loadSyosetuSeriesFrom(dir: File, ncode: String, incomingUpdate: String): SyosetuSeriesCache? = try {
+    val f = dir.resolve("series").apply { mkdirs() }.resolve(ncode.uppercase() + ".json")
+    if (!f.isFile) null
+    else {
+        val o = JSONObject(f.readText())
+        val cached = novelFromJson(o.optJSONObject("novel") ?: return null)
+        val fresh = o.optLong("at") > System.currentTimeMillis() - 12 * 3600_000L
+        val sameUpdate = incomingUpdate.isBlank() || incomingUpdate == cached.lastUpdate
+        if (fresh && sameUpdate) {
+            val eps = (0 until o.optJSONArray("episodes").length()).map {
+                val e = o.optJSONArray("episodes").optJSONObject(it)!!
+                SyosetuEpisode(e.optInt("n"), e.optString("t"))
+            }
+            SyosetuSeriesCache(cached, SyosetuToc(cached.title, cached.writer, eps, false), o.optLong("at"))
+        } else null
+    }
+} catch (e: Exception) { null }
 
 /** Bookmarks cache: filesDir/syosetu/bookmarks.json (URL-hash keyed store stays per-site by construction). */
 fun syosetuBookmarksFile(context: Context) =
