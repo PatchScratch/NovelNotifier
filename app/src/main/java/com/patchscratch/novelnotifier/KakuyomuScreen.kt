@@ -209,6 +209,7 @@ fun KakuyomuDiscoverBody(
 
     fun load(reset: Boolean) {
         val gen = ++loadGen
+        DebugLog.log("KAKUYOMU", "discover load start gen=" + gen + " tab=" + tab)
         scope.launch {
             loading = true
             error = ""
@@ -238,6 +239,7 @@ fun KakuyomuDiscoverBody(
                 DebugLog.log("KAKUYOMU", "discover load failed", e)
                 if (gen == loadGen) error = "読み込めませんでした: ${e.message}"
             }
+            DebugLog.log("KAKUYOMU", "discover load done gen=" + gen + " latest=" + loadGen + (if (gen == loadGen) " APPLY" else " DROP"))
             if (gen == loadGen) loading = false
         }
     }
