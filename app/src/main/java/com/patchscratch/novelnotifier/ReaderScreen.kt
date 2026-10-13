@@ -12,6 +12,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +26,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
+import kotlin.math.abs
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -181,6 +185,30 @@ fun ReaderScreen(
     // Long-press Japanese dictionary (Settings toggle; first enable unpacks
     // the JMdict asset — the toggle blocks until that finishes).
     var jaDictOn by remember(target) { mutableStateOf(prefs.getBoolean("ja_dict_on", false)) }
+    // TTS: which paragraph is being spoken (-1 = idle); the spoken-text
+    // list follows the reader's layout choice (JP+EN / JP / EN).
+    val ttsState by TtsController.state.collectAsState()
+    val speakingPara = ttsState.paragraph
+
+    fun startSpeaking() {
+        val layout = prefs.getString("xlate_layout", "both") ?: "both"
+        val spoken = mutableListOf<String>()
+        extractResult?.paragraphs?.forEachIndexed { i, jp ->
+            val en = translation?.getOrNull(i)
+            when (layout) {
+                "jp" -> spoken.add(jp)
+                "en" -> if (!en.isNullOrBlank()) spoken.add(en)
+                else -> {
+                    spoken.add(jp)
+                    if (!en.isNullOrBlank()) spoken.add(en)
+                }
+            }
+        }
+        if (spoken.isNotEmpty()) {
+            TtsController.setContext(context)
+            TtsController.start(context, spoken, 0)
+        }
+    }
     var wordHit by remember(target) { mutableStateOf<JaDict.WordHit?>(null) }
     val chapter = target.chapters.getOrNull(index) ?: return
     LaunchedEffect(chapter.url, extractTick) {
@@ -651,6 +679,31 @@ fun ReaderScreen(
                         }
                     )
                 }
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            when (ttsState.state) {
+                                TtsController.State.PLAYING -> t("Stop speaking", "読み上げ停止")
+                                TtsController.State.PAUSED -> t("Resume speaking", "読み上げ再開")
+                                else -> t("Speak chapter", "この話を読み上げる")
+                            }
+                        )
+                    },
+                    onClick = {
+                        showMenu = false
+                        when (ttsState.state) {
+                            TtsController.State.PLAYING -> {
+                                TtsController.stop()
+                            }
+                            TtsController.State.PAUSED -> {
+                                TtsController.resume(context)
+                            }
+                            else -> {
+                                startSpeaking()
+                            }
+                        }
+                    }
+                )
                 // Bulk twin of Download all: every STORED chapter through the
                 // translator, one at a time, auto-refining lock files as it
                 // goes. Unstored chapters need Download all first.
@@ -884,15 +937,26 @@ fun ReaderScreen(
                         val layout = prefs.getString("xlate_layout", "both") ?: "both"
                         val en = translation?.getOrNull(i)
                         val showEn = en != null && en.isNotBlank() && showTranslation
+                        val isSpeaking = speakingPara == i
                         if (layout != "en") {
-                            JpParagraph(
-                                text = paragraph,
-                                color = palette.text,
-                                fontSize = fontSize,
-                                serif = serif,
-                                dictOn = jaDictOn,
-                                onWord = { wordHit = it }
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(
+                                        if (ttsState.state in listOf(TtsController.State.PLAYING, TtsController.State.PAUSED))
+                                            Modifier.clickable { TtsController.seekTo(context, i) }
+                                        else Modifier
+                                    )
+                            ) {
+                                JpParagraph(
+                                    text = paragraph,
+                                    color = if (isSpeaking) palette.text.copy(alpha = 0.5f) else palette.text,
+                                    fontSize = fontSize,
+                                    serif = serif,
+                                    dictOn = jaDictOn,
+                                    onWord = { wordHit = it }
+                                )
+                            }
                         }
                         // AI translation renders directly under its source
                         // paragraph (same order enforced by the JSON-array
@@ -918,6 +982,52 @@ fun ReaderScreen(
                             .padding(vertical = 20.dp)
                             .align(Alignment.CenterHorizontally)
                     )
+                }
+            }
+
+            // TTS control bar — Voice Aloud / Moon+ Reader style.
+            if (ttsState.state in listOf(TtsController.State.PLAYING, TtsController.State.PAUSED)) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    tonalElevation = 3.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        IconButton(onClick = { TtsController.prev(context) }, modifier = Modifier.size(40.dp)) {
+                            Text("⏮", fontSize = 18.sp)
+                        }
+                        IconButton(onClick = { TtsController.togglePlayPause(context) }, modifier = Modifier.size(44.dp)) {
+                            Text(
+                                if (ttsState.state == TtsController.State.PLAYING) "⏸" else "▶",
+                                fontSize = 24.sp
+                            )
+                        }
+                        IconButton(onClick = { TtsController.next(context) }, modifier = Modifier.size(40.dp)) {
+                            Text("⏭", fontSize = 18.sp)
+                        }
+                        Text(
+                            "${ttsState.paragraph + 1}/${ttsState.total}",
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        val speedPresets = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+                        TextButton(onClick = {
+                            val idx = speedPresets.indexOfFirst { kotlin.math.abs(it - ttsState.speed) < 0.01f }
+                            val nextSp = speedPresets[(idx + 1) % speedPresets.size]
+                            TtsController.setSpeed(context, nextSp)
+                        }) {
+                            Text("${ttsState.speed}x", style = MaterialTheme.typography.labelMedium)
+                        }
+                        IconButton(onClick = { TtsController.stop() }, modifier = Modifier.size(36.dp)) {
+                            Text("✕", fontSize = 16.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
             }
         }

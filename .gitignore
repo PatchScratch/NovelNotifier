@@ -16,3 +16,4 @@ local.properties
 /.idea/
 .zcodeignore
 .zcode/
+app/libs/*.aar

@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -570,6 +572,123 @@ fun SettingsScreen(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(bottom = 6.dp)
         )
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+        Text(text = t("Read aloud (TTS)", "読み上げ（TTS）"), style = MaterialTheme.typography.titleSmall)
+        Text(
+            t("Three engines: Android system TTS (instant, reads Japanese natively), Kokoro neural (offline, English, ~140MB), or your AI API (cloud, both languages, best quality).",
+                "3エンジン：AndroidシステムTTS（即時・日本語対応）、Kokoroニューラル（オフライン・英語・約140MB）、AI API（クラウド・両言語・最高品質）。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        // Engine picker
+        var ttsEngine by remember { mutableStateOf(prefs.getString("tts_engine", "ANDROID").orEmpty()) }
+        listOf(
+            "ANDROID" to (t("System TTS", "システムTTS") to t("instant, Japanese native", "即時・日本語ネイティブ")),
+            "KOKORO" to (t("Kokoro neural", "Kokoroニューラル") to t("offline, English", "オフライン・英語")),
+            "CLOUD" to (t("AI API (cloud)", "AI API（クラウド）") to t("best quality, ~$0.015/ch", "最高品質・約$0.015/話"))
+        ).forEach { (value, labelPair) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable {
+                    ttsEngine = value
+                    prefs.edit { putString("tts_engine", value) }
+                }
+            ) {
+                RadioButton(
+                    selected = ttsEngine == value,
+                    onClick = { ttsEngine = value; prefs.edit { putString("tts_engine", value) } }
+                )
+                Column {
+                    Text(labelPair.first, style = MaterialTheme.typography.bodySmall)
+                    Text(labelPair.second, style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                }
+            }
+        }
+
+        // Speed (all engines)
+        Text(t("Speed (0.5–3.0)", "速度（0.5–3.0）"), style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(top = 8.dp))
+        var ttsSpeed by remember { mutableStateOf(prefs.getString("tts_speed", "1.0").orEmpty()) }
+        OutlinedTextField(
+            value = ttsSpeed,
+            onValueChange = { raw ->
+                val cleaned = raw.replace(Regex("[^0-9.]"), "").take(4)
+                ttsSpeed = cleaned
+                cleaned.toFloatOrNull()?.let { sp ->
+                    if (sp in 0.5f..3.0f) prefs.edit { putString("tts_speed", cleaned) }
+                }
+            },
+            label = { Text("Speed") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+        )
+
+        // Kokoro: model download + voice picker
+        if (ttsEngine == "KOKORO") {
+            var ttsOn by remember { mutableStateOf(TtsEngine.isModelReady(context)) }
+            var ttsBusy by remember { mutableStateOf(false) }
+            var ttsProgress by remember { mutableStateOf(0) }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable {
+                    if (ttsOn) {
+                        TtsEngine.deleteModel(context)
+                        ttsOn = false
+                    } else if (!ttsBusy) {
+                        ttsBusy = true
+                        scope.launch {
+                            val ok = TtsEngine.ensureModel(context) { pct -> ttsProgress = pct }
+                            ttsOn = ok
+                            ttsBusy = false
+                        }
+                    }
+                }
+            ) {
+                Switch(checked = ttsOn, enabled = !ttsBusy, onCheckedChange = null)
+                Text(
+                    if (ttsBusy) t("Downloading… ", "DL中… ") + ttsProgress + "%"
+                    else if (ttsOn) "Model ready (" + TtsEngine.modelSizeMb(context) + "MB)"
+                    else t("Download model (~140MB)", "モデルDL（約140MB）"),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+            if (ttsOn) {
+                Text(t("Voice", "ボイス"), style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 6.dp))
+                val currentVoice = prefs.getInt("tts_voice", 0)
+                Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                    TtsEngine.VOICES.forEach { v ->
+                        FilterChip(
+                            selected = currentVoice == v.id,
+                            onClick = { prefs.edit { putInt("tts_voice", v.id) } },
+                            label = { Text(v.name, style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Cloud: model + voice
+        if (ttsEngine == "CLOUD") {
+            var cloudModel by remember { mutableStateOf(prefs.getString("tts_cloud_model", "tts-1").orEmpty()) }
+            OutlinedTextField(
+                value = cloudModel,
+                onValueChange = { cloudModel = it; prefs.edit { putString("tts_cloud_model", it) } },
+                label = { Text(t("TTS model", "TTSモデル")) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+            )
+            Text(
+                t("Uses your existing API key. OpenAI: tts-1 (quality) or tts-1-mini (faster). ~$0.015 per chapter.",
+                    "既存のAPIキーを使用。OpenAI: tts-1（品質）または tts-1-mini（高速）。約$0.015/話。"),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
         // Site-info engine: synopses, catchphrases, tags on the Japanese
         // sites — ML Kit on-device is the FREE default; the AI key is an
         // optional quality upgrade at negligible per-synopsis cost.
