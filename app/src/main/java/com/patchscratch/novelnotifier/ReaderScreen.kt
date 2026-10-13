@@ -433,6 +433,73 @@ fun ReaderScreen(
                 // AI translation: current chapter through the configured
                 // OpenAI-compatible endpoint. Needs the API key from Settings.
                 val xlateKey = prefs.getString("xlate_key", "").orEmpty()
+                // Shared by first translation and re-translate: runs the
+                // chapter through the endpoint, overwrites the stored one,
+                // then auto-refines the series lock files.
+                fun startTranslate() {
+                    val extract = extractResult ?: return
+                    if (extract.paragraphs.isEmpty() || xlateKey.isBlank()) return
+                    translating = true
+                    scope.launch {
+                        // Novel-Mill lock files: series prompt.txt overrides the
+                        // global one, which overrides the Settings prompt; glossary
+                        // and voices ride along as ## sections.
+                        val locks = XlateStack.load(context, target.seriesUrl)
+                        val result = try {
+                            TranslationClient.translate(
+                                endpointBase = prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
+                                apiKey = xlateKey,
+                                model = prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
+                                paragraphs = extract.paragraphs,
+                                customPrompt = locks.prompt.ifBlank {
+                                    prefs.getString("xlate_prompt", "").orEmpty()
+                                },
+                                glossary = locks.glossary,
+                                voices = locks.voices,
+                                temperature = prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
+                            )
+                        } catch (e: Exception) {
+                            DebugLog.log("XLATE", "chapter translate failed", e)
+                            null
+                        }
+                        translating = false
+                        if (result != null) {
+                            DebugLog.log("XLATE", "chapter translated OK: ${result.size} paragraphs")
+                            translation = result
+                            showTranslation = true
+                            // Persist alongside the original — store the
+                            // original first if it isn't in the book yet.
+                            withContext(Dispatchers.IO) {
+                                val stored = EpubStore.setTranslation(
+                                    context, target.seriesTitle, target.seriesUrl, chapter.url, result
+                                )
+                                if (!stored) {
+                                    EpubStore.appendChapter(
+                                        context, target.seriesTitle, target.seriesUrl,
+                                        chapter.url, chapter.chapter, extract, target.meta
+                                    )
+                                    EpubStore.setTranslation(
+                                        context, target.seriesTitle, target.seriesUrl, chapter.url, result
+                                    )
+                                }
+                                epubCount = EpubStore.storedCount(context, target.seriesUrl)
+                            }
+                            // Auto-refine the series lock files with this
+                            // chapter's context (novel-mill's missing piece).
+                            if (prefs.getBoolean("xlate_auto_refine", true)) {
+                                val refined = XlateStack.refineAfterChapter(
+                                    context, target.seriesUrl,
+                                    extract.paragraphs, result,
+                                    prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
+                                    xlateKey,
+                                    prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
+                                    prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
+                                )
+                                DebugLog.log("XLATE", "auto-refine ${if (refined) "saved" else "skipped/failed"}")
+                            }
+                        }
+                    }
+                }
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -453,70 +520,21 @@ fun ReaderScreen(
                             showTranslation = !showTranslation
                             return@DropdownMenuItem
                         }
-                        val extract = extractResult ?: return@DropdownMenuItem
-                        if (extract.paragraphs.isEmpty() || xlateKey.isBlank()) return@DropdownMenuItem
-                        translating = true
-                        scope.launch {
-                            // Novel-Mill lock files: series prompt.txt overrides the
-                            // global one, which overrides the Settings prompt; glossary
-                            // and voices ride along as ## sections.
-                            val locks = XlateStack.load(context, target.seriesUrl)
-                            val result = try {
-                                TranslationClient.translate(
-                                    endpointBase = prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
-                                    apiKey = xlateKey,
-                                    model = prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
-                                    paragraphs = extract.paragraphs,
-                                    customPrompt = locks.prompt.ifBlank {
-                                        prefs.getString("xlate_prompt", "").orEmpty()
-                                    },
-                                    glossary = locks.glossary,
-                                    voices = locks.voices,
-                                    temperature = prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
-                                )
-                            } catch (e: Exception) {
-                                DebugLog.log("XLATE", "chapter translate failed", e)
-                                null
-                            }
-                            translating = false
-                            if (result != null) {
-                                DebugLog.log("XLATE", "chapter translated OK: ${result.size} paragraphs")
-                                translation = result
-                                showTranslation = true
-                                // Persist alongside the original — store the
-                                // original first if it isn't in the book yet.
-                                withContext(Dispatchers.IO) {
-                                    val stored = EpubStore.setTranslation(
-                                        context, target.seriesTitle, target.seriesUrl, chapter.url, result
-                                    )
-                                    if (!stored) {
-                                        EpubStore.appendChapter(
-                                            context, target.seriesTitle, target.seriesUrl,
-                                            chapter.url, chapter.chapter, extract, target.meta
-                                        )
-                                        EpubStore.setTranslation(
-                                            context, target.seriesTitle, target.seriesUrl, chapter.url, result
-                                        )
-                                    }
-                                    epubCount = EpubStore.storedCount(context, target.seriesUrl)
-                                }
-                                // Auto-refine the series lock files with this
-                                // chapter's context (novel-mill's missing piece).
-                                if (prefs.getBoolean("xlate_auto_refine", true)) {
-                                    val refined = XlateStack.refineAfterChapter(
-                                        context, target.seriesUrl,
-                                        extract.paragraphs, result,
-                                        prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
-                                        xlateKey,
-                                        prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
-                                        prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
-                                    )
-                                    DebugLog.log("XLATE", "auto-refine ${if (refined) "saved" else "skipped/failed"}")
-                                }
-                            }
-                        }
+                        startTranslate()
                     }
                 )
+                if (translation != null && !translating && xlateKey.isNotBlank()) {
+                    DropdownMenuItem(
+                        text = { Text(t("Re-translate chapter", "この話を再翻訳")) },
+                        onClick = {
+                            showMenu = false
+                            // Drop the stored/loaded translation so the next
+                            // render can't show stale text mid-run, then redo.
+                            translation = null
+                            startTranslate()
+                        }
+                    )
+                }
                 if (offlineEnabled && target.chapters.size > 0) {
                     if (EpubBulkService.running(context)) {
                         DropdownMenuItem(
