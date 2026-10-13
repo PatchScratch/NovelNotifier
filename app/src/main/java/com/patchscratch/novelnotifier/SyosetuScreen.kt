@@ -354,6 +354,7 @@ fun SyosetuDetailScreen(
                 )
                 Column {
                     Text(novel.title, style = MaterialTheme.typography.headlineSmall)
+                    TranslatedHint(text = novel.title, style = MaterialTheme.typography.bodySmall)
                     Text(
                         "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
                             syosetuEpisodeLabel(novel.episodeCount) + " ・ " + syosetuStatusLabel(novel.isCompleted),

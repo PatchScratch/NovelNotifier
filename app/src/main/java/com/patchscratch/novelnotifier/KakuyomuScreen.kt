@@ -441,6 +441,7 @@ fun KakuyomuDetailScreen(
                         (if (work.isSexual) "R18 · " else "") + work.title,
                         style = MaterialTheme.typography.headlineSmall
                     )
+                    TranslatedHint(text = work.title, style = MaterialTheme.typography.bodySmall)
                     Text(
                         "${work.author} ・ ${kakuyomuGenreName(work.genre)} ・ " +
                             kakuyomuEpisodeLabel(work.episodeCount) + " ・ " + kakuyomuStatusLabel(work.isCompleted),
