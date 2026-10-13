@@ -121,7 +121,12 @@ fun ReaderScreen(
     // rule, forward only; manual is the reader-menu set (may go backward).
     shioriPos: Int = -1,
     onShioriAuto: (Int) -> Unit = {},
-    onShioriManual: (Int) -> Unit = {}
+    onShioriManual: (Int) -> Unit = {},
+    // Kakuyomu reading history (site-verified {episodeId, position} on
+    // episode view). True → record on open; the reader derives the episode
+    // id from the chapter URL itself.
+    kakuyomuHistory: Boolean = false,
+    onKakuyomuHistory: (episodeId: String, ordinal: Int, manual: Boolean) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
@@ -339,6 +344,10 @@ fun ReaderScreen(
         // your saved position moves the marker there.
         val ep = chapterNum(chapter.chapter)
         if (shioriPos >= 0 && ep > shioriPos) onShioriAuto(ep)
+        // Kakuyomu: the site records history on episode view — same on open.
+        if (kakuyomuHistory) {
+            kakuyomuEpisodeIdFromUrl(chapter.url)?.let { onKakuyomuHistory(it, ep, false) }
+        }
     }
 
     // Auto-save — ONLY for series the user opted in, dedup by chapter URL.
@@ -628,6 +637,17 @@ fun ReaderScreen(
                         onClick = {
                             showMenu = false
                             onShioriManual(chapterNum(chapter.chapter))
+                        }
+                    )
+                }
+                if (kakuyomuHistory && kakuyomuEpisodeIdFromUrl(chapter.url) != null) {
+                    DropdownMenuItem(
+                        text = { Text(t("Set reading position here", "ここまで読んだことにする")) },
+                        onClick = {
+                            showMenu = false
+                            kakuyomuEpisodeIdFromUrl(chapter.url)?.let {
+                                onKakuyomuHistory(it, chapterNum(chapter.chapter), true)
+                            }
                         }
                     )
                 }

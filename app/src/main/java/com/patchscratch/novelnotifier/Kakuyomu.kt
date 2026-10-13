@@ -277,6 +277,50 @@ suspend fun fetchKakuyomuRankings(
     return parseKakuyomuRankingsJson(raw)
 }
 
+// --- reading history (しおり equivalent) --------------------------------------
+
+/**
+ * Reading position, verified live 2026-10-13 against the account:
+ * the site records {episodeId, position: String} when a logged-in visitor
+ * opens an episode, and the work page then serves
+ * visitorReadingHistory { readAt, episodeUnion { id title } } from the
+ * Apollo cache (the 続きから読む affordance). position is a free string
+ * ("p1" accepted; the site's own client sends scroll anchors) — we send
+ * the episode ordinal so a manual set is meaningful even without pixels.
+ */
+fun kakuyomuEpisodeIdFromUrl(url: String): String? {
+    val m = Regex("""/episodes/(\d+)""").find(url) ?: return null
+    return m.groupValues[1]
+}
+
+suspend fun kakuyomuRecordReadingHistory(episodeId: String, position: String): Boolean {
+    val body = JSONObject()
+        .put("query", "mutation RecordReadingHistory(\$input: RecordReadingHistoryInput!) { recordReadingHistory(input: \$input) { clientMutationId __typename } }")
+        .put("variables", JSONObject().put("input", JSONObject().put("episodeId", episodeId).put("position", position)))
+        .toString()
+    return try {
+        val raw = fetchKakuyomuWithSession("https://kakuyomu.jp/graphql", body)
+        val ok = JSONObject(raw).optJSONObject("data")?.optJSONObject("recordReadingHistory") != null
+        DebugLog.log("KAKUYOMU", "history record ep=" + episodeId + " ok=" + ok + " " + raw.take(140))
+        ok
+    } catch (e: Exception) {
+        DebugLog.log("KAKUYOMU", "history record failed", e)
+        false
+    }
+}
+
+/**
+ * Work page → the logged-in visitor's reading position for that work:
+ * ReadingHistory:<userId>/<workId> ref resolving to readAt + episodeUnion.
+ * Null when not logged in or the work was never read.
+ */
+fun parseKakuyomuReadingHistory(html: String): Pair<String, String>? {
+    // Apollo cache: "ReadingHistory:<userId>/<workId>": { readAt, episodeUnion: {__ref: "Episode:<id>"} }
+    val m = Regex(""""ReadingHistory:[^"]*":\{[^}]*"readAt":"([^"]*)"[^}]*"episodeUnion":\{"__ref":"Episode:([^"]*)"""").find(html)
+        ?: return null
+    return m.groupValues[2] to m.groupValues[1]   // episodeId to readAt
+}
+
 // --- Detail + ToC (one GET of the work page; Apollo cache embedded) ----------
 
 /** Plain GET with a browser-ish UA (also used by tests via local fixtures). */

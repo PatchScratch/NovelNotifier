@@ -1,6 +1,7 @@
 package com.patchscratch.novelnotifier
 
 import android.Manifest
+import org.json.JSONObject
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -650,6 +651,16 @@ fun NovelApp(
                                 if (it.ncode == bm.ncode) it.copy(shioriPos = ep) else it
                             }
                             withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, syosetuBookmarks) }
+                        }
+                    }
+                },
+                kakuyomuHistory = prefs.getBoolean("kakuyomu_logged_in", false) &&
+                    readerTarget!!.seriesUrl.contains("kakuyomu.jp"),
+                onKakuyomuHistory = { episodeId, ordinal, manual ->
+                    scope.launch {
+                        val ok = kakuyomuRecordReadingHistory(episodeId, "p" + ordinal)
+                        if (manual) {
+                            kakuyomuStatus = if (ok) "Reading position set" else "Set failed — try again"
                         }
                     }
                 }
