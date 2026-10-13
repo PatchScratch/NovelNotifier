@@ -460,6 +460,7 @@ fun NovelDetailScreen(
                             context = context,
                             seriesUrl = novel.seriesUrl,
                             title = page.title.ifBlank { novel.title },
+                            author = page.author,
                             genre = page.genres,
                             synopsis = page.description,
                             hasCover = CoverStore.hasLocal(context, novel.seriesUrl),

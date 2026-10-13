@@ -510,6 +510,7 @@ fun KakuyomuDetailScreen(
                 context = context,
                 seriesUrl = work.url,
                 title = work.title,
+                author = work.author,
                 genre = kakuyomuGenreName(work.genre),
                 synopsis = (detail?.work?.introduction ?: "").ifBlank { work.catchphrase },
                 hasCover = CoverStore.hasLocal(context, work.url),

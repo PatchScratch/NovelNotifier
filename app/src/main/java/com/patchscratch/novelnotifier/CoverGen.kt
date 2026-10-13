@@ -42,21 +42,68 @@ object CoverGenClient {
 
     // --- request shaping (pure) -----------------------------------------------
 
-    /** Prompt from whatever metadata the site gave us. */
-    fun promptFor(title: String, genre: String, synopsis: String): String = buildString {
-        append("Book cover illustration for a light novel web serial")
-        if (title.isNotBlank()) append(" titled \"").append(title.replace("\"", "'")).append("\"")
-        if (genre.isNotBlank()) append(". Genre: ").append(genre)
-        if (synopsis.isNotBlank()) {
-            val s = synopsis.replace("\n", " ").replace(Regex("\\s+"), " ").trim()
-            append(". Premise: ").append(s.take(500))
-            if (s.length > 500) append("…")
+    /**
+     * Default cover prompt (displayed in the app's language). The
+     * {title}/{author}/{genre}/{synopsis} placeholders are substituted at
+     * request time. The title and author are rendered INTO the artwork as
+     * cover typography matched to the art style (user preference) — the
+     * no-text rule only bans extraneous text a custom prompt may re-scope.
+     */
+    fun defaultPrompt(): String = t(
+        "Book cover illustration for a light novel web serial titled \"{title}\" " +
+            "by {author}. Genre: {genre}. Premise: {synopsis}. Japanese light novel cover art " +
+            "style: expressive character or scene illustration, dramatic composition, rich " +
+            "color, vertical book-cover framing. Render the title \"{title}\" and the author " +
+            "name \"{author}\" as integrated cover typography whose lettering style, color and " +
+            "placement suit the artwork (skip the author line when empty). Absolutely NO other " +
+            "text, letters, logos or watermarks.",
+        "日本のライトノベル『{title}』（作者：{author}）の表紙イラスト。ジャンル：{genre}。" +
+            "あらすじ：{synopsis}。ライトノベル表紙の作風：表情豊かなキャラクターまたは情景のイラスト、" +
+            "ドラマチックな構図、豊かな色彩、縦長の書籍表紙構成。タイトル『{title}』と作者名「{author}」を、" +
+            "アートの作風に合う書体・色・配置の表紙タイポグラフィとして画像内に描き込むこと" +
+            "（作者名が空の場合は省略）。それ以外の文字・活字・ロゴ・透かしは絶対に入れないこと。"
+    )
+
+    /**
+     * Final prompt from metadata + the user's template ([custom]; blank =
+     * language-following default). Placeholders {title}/{author}/{genre}/
+     * {synopsis} substitute the metadata (synopsis capped at 500 chars).
+     * A template that uses NO placeholder still receives the metadata
+     * block appended — a style-only prompt must not lose the story it is
+     * illustrating.
+     */
+    fun promptFor(
+        title: String,
+        author: String,
+        genre: String,
+        synopsis: String,
+        custom: String = ""
+    ): String {
+        val template = custom.trim().ifBlank { defaultPrompt() }
+        val cleanTitle = title.replace("\"", "'").trim()
+        val cleanAuthor = author.replace("\"", "'").trim()
+        val cleanGenre = genre.trim()
+        val s = synopsis.replace("\n", " ").replace(Regex("\\s+"), " ").trim()
+        val cleanSynopsis = if (s.length > 500) s.take(500) + "…" else s
+
+        val substituted = template
+            .replace("{title}", cleanTitle)
+            .replace("{author}", cleanAuthor)
+            .replace("{genre}", cleanGenre)
+            .replace("{synopsis}", cleanSynopsis)
+        val hasPlaceholder = "{title}" in template || "{author}" in template ||
+            "{genre}" in template || "{synopsis}" in template
+        if (hasPlaceholder) return substituted
+
+        // No placeholders — append the metadata so context survives.
+        return buildString {
+            append(substituted)
+            append(" Subject: a light novel web serial")
+            if (cleanTitle.isNotBlank()) append(" titled \"").append(cleanTitle).append("\"")
+            if (cleanAuthor.isNotBlank()) append(" by \"").append(cleanAuthor).append("\"")
+            if (cleanGenre.isNotBlank()) append(". Genre: ").append(cleanGenre)
+            if (cleanSynopsis.isNotBlank()) append(". Premise: ").append(cleanSynopsis)
         }
-        append(
-            ". Japanese light novel cover art style: expressive character or scene " +
-                "illustration, dramatic composition, rich color, vertical book-cover framing. " +
-                "Absolutely NO text, letters, words, logos or watermarks in the image."
-        )
     }
 
     /** POST body for the /images endpoint. Covers want a modest portrait. */
@@ -139,6 +186,7 @@ fun GenerateCoverButton(
     context: Context,
     seriesUrl: String,
     title: String,
+    author: String,
     genre: String,
     synopsis: String,
     hasCover: Boolean,
@@ -162,7 +210,10 @@ fun GenerateCoverButton(
                     val result = CoverGenClient.generate(
                         prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
                         apiKey, model,
-                        CoverGenClient.promptFor(title, genre, synopsis)
+                        CoverGenClient.promptFor(
+                            title, author, genre, synopsis,
+                            prefs.getString("xlate_cover_prompt", "").orEmpty()
+                        )
                     )
                     busy = false
                     if (result == null) {

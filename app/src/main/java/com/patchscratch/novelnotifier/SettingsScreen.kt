@@ -459,6 +459,31 @@ fun SettingsScreen(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
         )
+        var coverPrompt by remember {
+            mutableStateOf(
+                prefs.getString("xlate_cover_prompt", "")?.ifBlank { null } ?: CoverGenClient.defaultPrompt()
+            )
+        }
+        OutlinedTextField(
+            value = coverPrompt,
+            onValueChange = {
+                coverPrompt = it
+                prefs.edit { putString("xlate_cover_prompt", it) }
+            },
+            label = { Text(t("Cover prompt", "カバー用プロンプト")) },
+            minLines = 3,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            t("{title}, {author}, {genre} and {synopsis} are replaced with the series' data; a prompt without them gets the data appended anyway. By default the title and author are drawn into the art as cover typography. The default follows the app language; Reset restores it.",
+                "{title}・{author}・{genre}・{synopsis} はシリーズのデータに置換されます。含まれないプロンプトにはデータが自動で追記されます。既定ではタイトルと作者名が表紙タイポグラフィとして画像内に描き込まれます。既定値はアプリの言語に従います。リセットで既定に戻ります。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+        )
+        TextButton(onClick = {
+            coverPrompt = CoverGenClient.defaultPrompt()
+            prefs.edit { putString("xlate_cover_prompt", "") }   // blank = follow app language
+        }) { Text(t("Reset to default", "既定に戻す")) }
         // Site-info engine: synopses, catchphrases, tags on the Japanese
         // sites — ML Kit on-device is the FREE default; the AI key is an
         // optional quality upgrade at negligible per-synopsis cost.

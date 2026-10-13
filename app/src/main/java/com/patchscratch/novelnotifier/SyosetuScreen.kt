@@ -407,6 +407,7 @@ fun SyosetuDetailScreen(
                 context = context,
                 seriesUrl = novel.url,
                 title = novel.title,
+                author = novel.writer,
                 genre = syosetuGenreName(novel.genreCode),
                 synopsis = novel.story,
                 hasCover = CoverStore.hasLocal(context, novel.url),
