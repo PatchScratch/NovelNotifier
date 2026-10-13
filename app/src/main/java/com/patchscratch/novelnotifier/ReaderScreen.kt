@@ -157,7 +157,20 @@ fun ReaderScreen(
     var progress by remember { mutableIntStateOf(0) }
     var loadFailed by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
+    // --- AI translation state (per chapter) ---
+    // Loaded from the stored book when the chapter changes; replaced by a
+    // fresh ⋮ translation. Renders paragraph-under-paragraph below the
+    // original, toggleable.
+    var translation by remember(target) { mutableStateOf<List<String>?>(null) }
+    var translating by remember(target) { mutableStateOf(false) }
+    var showTranslation by remember { mutableStateOf(true) }
     val chapter = target.chapters.getOrNull(index) ?: return
+    LaunchedEffect(chapter.url, extractTick) {
+        translation = withContext(Dispatchers.IO) {
+            EpubStore.readAllStoredDocs(context, target.seriesUrl)
+                .firstOrNull { it.url == chapter.url }?.translation
+        }
+    }
 
     val showText = viewMode == READER_VIEW_TEXT && extractResult != null
     val palette = when (readerTheme) {
@@ -416,6 +429,69 @@ fun ReaderScreen(
                     },
                     onClick = { showMenu = false; toggleOfflineForSeries() }
                 )
+                // AI translation: current chapter through the configured
+                // OpenAI-compatible endpoint. Needs the API key from Settings.
+                val xlateKey = prefs.getString("xlate_key", "").orEmpty()
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            when {
+                                translating -> t("Translating…", "翻訳中…")
+                                translation != null -> (if (showTranslation) "✓ " else "") +
+                                    t("Translation (toggle)", "翻訳（切替）")
+                                xlateKey.isBlank() -> t("Translate chapter (set API key in Settings)", "この話を翻訳（設定でAPIキー）")
+                                else -> t("Translate chapter", "この話を翻訳")
+                            }
+                        )
+                    },
+                    onClick = {
+                        showMenu = false
+                        if (translating) return@DropdownMenuItem
+                        if (translation != null) {
+                            // Already translated — the item toggles display.
+                            showTranslation = !showTranslation
+                            return@DropdownMenuItem
+                        }
+                        val extract = extractResult ?: return@DropdownMenuItem
+                        if (extract.paragraphs.isEmpty() || xlateKey.isBlank()) return@DropdownMenuItem
+                        translating = true
+                        scope.launch {
+                            val result = try {
+                                TranslationClient.translate(
+                                    endpointBase = prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
+                                    apiKey = xlateKey,
+                                    model = prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
+                                    paragraphs = extract.paragraphs
+                                )
+                            } catch (e: Exception) {
+                                DebugLog.log("XLATE", "chapter translate failed", e)
+                                null
+                            }
+                            translating = false
+                            if (result != null) {
+                                translation = result
+                                showTranslation = true
+                                // Persist alongside the original — store the
+                                // original first if it isn't in the book yet.
+                                withContext(Dispatchers.IO) {
+                                    val stored = EpubStore.setTranslation(
+                                        context, target.seriesTitle, target.seriesUrl, chapter.url, result
+                                    )
+                                    if (!stored) {
+                                        EpubStore.appendChapter(
+                                            context, target.seriesTitle, target.seriesUrl,
+                                            chapter.url, chapter.chapter, extract, target.meta
+                                        )
+                                        EpubStore.setTranslation(
+                                            context, target.seriesTitle, target.seriesUrl, chapter.url, result
+                                        )
+                                    }
+                                    epubCount = EpubStore.storedCount(context, target.seriesUrl)
+                                }
+                            }
+                        }
+                    }
+                )
                 if (offlineEnabled && target.chapters.size > 0) {
                     if (EpubBulkService.running(context)) {
                         DropdownMenuItem(
@@ -661,7 +737,7 @@ fun ReaderScreen(
                             modifier = Modifier.padding(bottom = 16.dp)
                         )
                     }
-                    extract.paragraphs.forEach { paragraph ->
+                    extract.paragraphs.forEachIndexed { i, paragraph ->
                         Text(
                             text = paragraph,
                             color = palette.text,
@@ -670,6 +746,21 @@ fun ReaderScreen(
                             fontFamily = if (serif) FontFamily.Serif else FontFamily.Default,
                             modifier = Modifier.padding(bottom = 10.dp)
                         )
+                        // AI translation renders directly under its source
+                        // paragraph (same order enforced by the JSON-array
+                        // contract); slightly dimmed to keep the original
+                        // visually primary.
+                        val en = translation?.getOrNull(i)
+                        if (en != null && en.isNotBlank() && showTranslation) {
+                            Text(
+                                text = en,
+                                color = palette.text.copy(alpha = 0.72f),
+                                fontSize = fontSize.sp,
+                                lineHeight = (fontSize * 1.6).sp,
+                                fontFamily = if (serif) FontFamily.Serif else FontFamily.Default,
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            )
+                        }
                     }
                     Text(
                         text = "· ${index + 1} of ${target.chapters.size} ·",

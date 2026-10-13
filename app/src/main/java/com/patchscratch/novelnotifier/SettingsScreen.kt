@@ -30,6 +30,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -355,6 +356,54 @@ fun SettingsScreen(
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        // --- Translation (shared: applies to the reader on any site) ---
+        var xlateEndpoint by remember { mutableStateOf(prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty()) }
+        var xlateModel by remember { mutableStateOf(prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty()) }
+        var xlateKey by remember { mutableStateOf(prefs.getString("xlate_key", "").orEmpty()) }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(t("Translation", "翻訳"), style = MaterialTheme.typography.titleMedium)
+        Text(
+            t("Chapter translation through any OpenAI-compatible API. In the reader's ⋮ menu, Translate chapter sends the current chapter and shows the English under the original; the translation is saved into the series' offline book and travels with exports. Your key is kept on this device only — never in backups.",
+                "OpenAI互換APIによる章翻訳。リーダーの⋮メニュー「この話を翻訳」で現在の話を送信し、原文の下に英語を表示します。翻訳はシリーズのオフラインブックに保存され、エクスポートにも含まれます。APIキーは端末内のみに保存 — バックアップには含まれません。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(vertical = 8.dp)
+        )
+        OutlinedTextField(
+            value = xlateEndpoint,
+            onValueChange = {
+                xlateEndpoint = it
+                prefs.edit { putString("xlate_endpoint", it.trim()) }
+            },
+            label = { Text(t("API endpoint (base URL)", "APIエンドポイント（ベースURL）")) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        )
+        OutlinedTextField(
+            value = xlateModel,
+            onValueChange = {
+                xlateModel = it
+                prefs.edit { putString("xlate_model", it.trim()) }
+            },
+            label = { Text(t("Model", "モデル")) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        )
+        OutlinedTextField(
+            value = xlateKey,
+            onValueChange = {
+                xlateKey = it
+                prefs.edit { putString("xlate_key", it.trim()) }
+            },
+            label = { Text(t("API key", "APIキー")) },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            t("Cost guide is in the README (quality tier ≈ half a cent per chapter).", "コスト目安はREADME参照（品質重視層で1話約0.5セント）。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 6.dp)
+        )
         Text(text = t("Display", "表示"), style = MaterialTheme.typography.titleMedium)
         Text(
             text = t("Home layout. Grid columns follow screen width (3 on a phone, more on a tablet).", "ホームレイアウト。グリッドの列数は画面幅に応じます（スマホで3列、タブレットでは更多）。"),
