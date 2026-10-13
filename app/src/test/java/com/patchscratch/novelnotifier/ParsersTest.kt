@@ -713,4 +713,30 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertEquals("転移したら山の中だった。", rows[0].title)
         assertEquals("じゃがバター", rows[0].author)
     }
+
+    // Captured live 2026-10-13 from an account with renamed 分類.
+    @Test
+    fun parseSyosetuCategories_readsRenamedSelector() {
+        val html = """
+            <select class="c-form__select p-up-bookmark-category__select js-bookmark_list_form_select">
+            <option value="/favnovelmain/list/?nowcategory=1&order=updated_at" selected data-categoryid="1">Ongoing Fav(5)</option>
+            <option value="/favnovelmain/list/?nowcategory=2&order=updated_at" data-categoryid="2">分類2(0)</option>
+            <option value="/favnovelmain/list/?nowcategory=3&order=updated_at" data-categoryid="3">Finished(12)</option>
+            </select>
+        """.trimIndent()
+        val cats = parseSyosetuCategories(html)
+        assertEquals(listOf(
+            SyosetuCategory(1, "Ongoing Fav", 5),
+            SyosetuCategory(2, "分類2", 0),
+            SyosetuCategory(3, "Finished", 12)
+        ), cats)
+    }
+
+    @Test
+    fun parseSyosetuBookmarks_categoryOverrideBeatsHeuristic() {
+        val html = """<a href="https://ncode.syosetu.com/n4180mw/"><span class="c-up-label c-up-label--novel-long">連載</span>&nbsp;Title</a>"""
+        val rows = parseSyosetuBookmarks(html, "Ongoing Fav")
+        assertEquals("Ongoing Fav", rows.first().category)
+    }
+
 }

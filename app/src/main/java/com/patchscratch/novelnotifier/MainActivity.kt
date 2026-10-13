@@ -300,6 +300,31 @@ fun NovelApp(
         )
     }
 
+
+    /**
+     * Shared bookmark-page sync: reads the (possibly renamed) category
+     * selector, then fetches each category with bookmarks so rows carry the
+     * user's real category names — the drawer lists them like NU lists.
+     * Falls back to plain single-page parsing when no selector is found.
+     */
+    suspend fun syncSyosetuBookmarkPage(html: String): List<SyosetuBookmark> {
+        if (html.isBlank()) return emptyList()
+        val cats = parseSyosetuCategories(html)
+        if (cats.isEmpty()) return parseSyosetuBookmarks(html)
+        withContext(Dispatchers.IO) { saveSyosetuCategories(context, cats) }
+        DebugLog.log("SYOSETU", "categories: " + cats.joinToString { c -> c.name + "(" + c.count + ")" })
+        val rows = mutableListOf<SyosetuBookmark>()
+        cats.filter { it.count > 0 }.forEach { c ->
+            val page = fetchSyosetuWithSession(
+                "https://syosetu.com/favnovelmain/list/?nowcategory=" + c.id + "&order=updated_at"
+            )
+            if (page.isNotBlank()) rows += parseSyosetuBookmarks(page, c.name)
+        }
+        // Nothing per-category (selector with all-zero counts / a redesign)
+        // → keep the plain page's rows.
+        return rows.ifEmpty { parseSyosetuBookmarks(html) }
+    }
+
     LaunchedEffect(syosetuLoggedIn) {
         if (syosetuLoggedIn) {
             syosetuBookmarks = withContext(Dispatchers.IO) { loadSyosetuBookmarks(context) }
@@ -309,7 +334,7 @@ fun NovelApp(
             // Failure keeps the cache — the visible Sync button reports.
             try {
                 val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
-                val fresh = parseSyosetuBookmarks(html)
+                val fresh = syncSyosetuBookmarkPage(html)
                 if (fresh.isNotEmpty() && fresh.map { it.ncode } != syosetuBookmarks.map { it.ncode }) {
                     withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, fresh) }
                     DebugLog.log("SYOSETU", "startup bookmark refresh: ${fresh.size} rows (was ${syosetuBookmarks.size})")
@@ -605,7 +630,7 @@ fun NovelApp(
                     syosetuStatus = "Syncing bookmarks…"
                     try {
                         val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
-                        val found = parseSyosetuBookmarks(html)
+                        val found = syncSyosetuBookmarkPage(html)
                         if (found.isNotEmpty()) {
                             withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, found) }
                             syosetuBookmarks = found

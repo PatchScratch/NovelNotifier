@@ -300,7 +300,41 @@ data class SyosetuBookmark(
  * ncode pages; category context comes from the 分類 selector/tabs. First run
  * on a real account may need tuning — [raw] echoes a snippet for the log.
  */
-fun parseSyosetuBookmarks(html: String): List<SyosetuBookmark> {
+/** One renamed (or default) bookmark category from the selector. */
+data class SyosetuCategory(val id: Int, val name: String, val count: Int)
+
+/**
+ * Bookmark categories from the favnovelmain selector (verified live
+ * 2026-10-13 against an account with renamed 分類):
+ *   <option value="/favnovelmain/list/?nowcategory=1&order=updated_at"
+ *           selected data-categoryid="1">Ongoing Fav(5)</option>
+ * The label carries the site-rendered count; strip it for storage.
+ */
+fun parseSyosetuCategories(html: String): List<SyosetuCategory> =
+    Regex("""<option[^>]*nowcategory=(\d+)[^>]*>([^<]+)</option>""")
+        .findAll(html).mapNotNull { m ->
+            val label = m.groupValues[2].trim()
+            val count = Regex("""\((\d+)\)\s*$""").find(label)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val name = Regex("""\s*\(\d+\)\s*$""").replace(label, "").trim()
+            if (name.isBlank()) null else SyosetuCategory(m.groupValues[1].toIntOrNull() ?: return@mapNotNull null, name, count)
+        }.toList()
+
+/** Category cache: filesDir/syosetu/categories.json. */
+fun saveSyosetuCategories(context: Context, cats: List<SyosetuCategory>) {
+    syosetuBookmarksFile(context).parentFile!!.resolve("categories.json").writeText(
+        JSONArray(cats.map { JSONObject().put("i", it.id).put("n", it.name).put("c", it.count) }).toString()
+    )
+}
+
+fun loadSyosetuCategories(context: Context): List<SyosetuCategory> = try {
+    val arr = JSONArray(syosetuBookmarksFile(context).parentFile!!.resolve("categories.json").readText())
+    (0 until arr.length()).mapNotNull { i ->
+        val o = arr.optJSONObject(i) ?: return@mapNotNull null
+        SyosetuCategory(o.optInt("i"), o.optString("n"), o.optInt("c"))
+    }
+} catch (e: Exception) { emptyList() }
+
+fun parseSyosetuBookmarks(html: String, categoryOverride: String? = null): List<SyosetuBookmark> {
     // Verified live (2026-10-12): bookmark rows are
     //   <a href="https://ncode.syosetu.com/nXXXX/"><span class="c-up-label
     //   c-up-label--novel-long">連載</span>&nbsp;Title</a>
@@ -322,7 +356,8 @@ fun parseSyosetuBookmarks(html: String): List<SyosetuBookmark> {
     val matches = strict.findAll(html).toList().ifEmpty { broad.findAll(html).toList() }
     val out = mutableListOf<SyosetuBookmark>()
     // current category label if the page shows one (分類 links or selected tab)
-    val cat = Regex("""分類[：:]?\s*</[^>]+>\s*<a[^>]*>([^<]+)</a>""").find(html)?.groupValues?.get(1)
+    val cat = categoryOverride
+        ?: Regex("""分類[：:]?\s*</[^>]+>\s*<a[^>]*>([^<]+)</a>""").find(html)?.groupValues?.get(1)
         ?: Regex("""class="[^"]*current[^"]*"[^>]*>([^<]{2,20})<""").find(html)?.groupValues?.get(1)
         ?: ""
     matches.forEach { m ->
