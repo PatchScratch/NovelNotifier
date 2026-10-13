@@ -250,6 +250,7 @@ fun SyosetuDiscoverBody(
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
         }
+        TranslatingCaption()
         LazyColumn {
             items(results, key = { it.ncode }) { novel ->
                 Card(

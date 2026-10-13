@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,6 +79,26 @@ fun TranslatedHint(
             style = style,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
             modifier = modifier
+        )
+    }
+}
+
+
+/**
+ * One-line "still translating" caption for Discover lists — visible while
+ * titles are queued through the (serialized) on-device engine, gone when
+ * the queue drains. Turns silent lag into visible progress.
+ */
+@Composable
+fun TranslatingCaption() {
+    val pending by MetadataTranslator.pending.collectAsState()
+    if (pending > 0) {
+        Text(
+            t("Translating titles… (", "タイトル翻訳中…（") + pending + t(" queued)", "件待ち") +
+                " — ML Kit translates ~1–2/s",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
         )
     }
 }

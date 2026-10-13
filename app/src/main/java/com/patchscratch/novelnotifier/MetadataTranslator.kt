@@ -40,6 +40,12 @@ object MetadataTranslator {
     // look like "only the first tab translates"). Serialize everything.
     private val mlKitMutex = kotlinx.coroutines.sync.Mutex()
 
+    // Titles queued for on-device translation — Discover screens surface
+    // this so "the EN lines are missing" reads as "still translating"
+    // (30 queued titles take ~30–60s through the serialized engine).
+    private val _pending = kotlinx.coroutines.flow.MutableStateFlow(0)
+    val pending: kotlinx.coroutines.flow.StateFlow<Int> = _pending
+
     /** The effective engine: 'api' requires a configured key; without one it
      *  degrades to the free on-device engine (the user's ML-Kit-default). */
     fun effectiveEngine(prefs: android.content.SharedPreferences): String {
@@ -159,9 +165,14 @@ object MetadataTranslator {
         if (engine == ENGINE_OFF) return null
         val file = cacheFile(context)
         cacheLookup(file, text)?.let { return it }
-        val out = when (engine) {
-            ENGINE_API -> translateViaApi(prefs, text) ?: translateOnDevice(text)
-            else -> translateOnDevice(text)
+        _pending.value += 1
+        val out = try {
+            when (engine) {
+                ENGINE_API -> translateViaApi(prefs, text) ?: translateOnDevice(text)
+                else -> translateOnDevice(text)
+            }
+        } finally {
+            _pending.value -= 1
         } ?: return null
         if (out.isNotBlank() && out != text) {
             withContext(Dispatchers.IO) { cacheStore(file, text, out) }

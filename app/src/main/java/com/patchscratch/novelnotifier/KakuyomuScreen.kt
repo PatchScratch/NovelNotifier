@@ -335,6 +335,7 @@ fun KakuyomuDiscoverBody(
                 modifier = Modifier.padding(16.dp)
             )
         }
+        TranslatingCaption()
         LazyColumn {
             items(shown, key = { it.id }) { work ->
                 Card(
