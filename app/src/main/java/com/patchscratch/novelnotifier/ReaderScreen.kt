@@ -939,24 +939,19 @@ fun ReaderScreen(
                         val showEn = en != null && en.isNotBlank() && showTranslation
                         val isSpeaking = speakingPara == i
                         if (layout != "en") {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (ttsState.state in listOf(TtsController.State.PLAYING, TtsController.State.PAUSED))
-                                            Modifier.clickable { TtsController.seekTo(context, i) }
-                                        else Modifier
-                                    )
-                            ) {
-                                JpParagraph(
-                                    text = paragraph,
-                                    color = if (isSpeaking) palette.text.copy(alpha = 0.5f) else palette.text,
-                                    fontSize = fontSize,
-                                    serif = serif,
-                                    dictOn = jaDictOn,
-                                    onWord = { wordHit = it }
-                                )
-                            }
+                            JpParagraph(
+                                text = paragraph,
+                                color = if (isSpeaking) palette.text.copy(alpha = 0.5f) else palette.text,
+                                fontSize = fontSize,
+                                serif = serif,
+                                dictOn = jaDictOn,
+                                onWord = { wordHit = it },
+                                onTap = if (ttsState.state in listOf(
+                                    TtsController.State.PLAYING, TtsController.State.PAUSED
+                                )) {
+                                    { _ -> TtsController.seekTo(context, i) }
+                                } else null
+                            )
                         }
                         // AI translation renders directly under its source
                         // paragraph (same order enforced by the JSON-array

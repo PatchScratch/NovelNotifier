@@ -172,7 +172,10 @@ fun JpParagraph(
     fontSize: Int,
     serif: Boolean,
     dictOn: Boolean,
-    onWord: (JaDict.WordHit) -> Unit
+    onWord: (JaDict.WordHit) -> Unit,
+    // Fires on single tap — used for TTS tap-to-start (the reader passes
+    // TtsController.seekTo). Null = no tap behavior (dictionary only).
+    onTap: ((Int) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -187,15 +190,18 @@ fun JpParagraph(
         modifier = Modifier
             .padding(bottom = 10.dp)
             .then(
-                if (dictOn) Modifier.pointerInput(text) {
+                if (dictOn || onTap != null) Modifier.pointerInput(text, onTap != null) {
                     detectTapGestures(
-                        onLongPress = { pos ->
+                        onTap = if (onTap != null) { pos ->
+                            onTap(-1)   // index passed by caller via closure
+                        } else null,
+                        onLongPress = if (dictOn) { pos ->
                             val l = layout ?: return@detectTapGestures
                             val offset = l.getOffsetForPosition(pos)
                             scope.launch {
                                 JaDict.lookupAt(context, text, offset)?.let(onWord)
                             }
-                        }
+                        } else null
                     )
                 } else Modifier
             )
