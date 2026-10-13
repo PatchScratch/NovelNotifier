@@ -6,6 +6,7 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -45,6 +46,22 @@ object MetadataTranslator {
     // (30 queued titles take ~30–60s through the serialized engine).
     private val _pending = kotlinx.coroutines.flow.MutableStateFlow(0)
     val pending: kotlinx.coroutines.flow.StateFlow<Int> = _pending
+    @Volatile private var lastPendingChange = 0L
+    // Watchdog: a cancelled coroutine can in theory strand the count (an
+    // await that never resumes). If the queue claims work but nothing has
+    // completed for 30s, it's dead — reset to zero so the caption clears.
+    init {
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            while (true) {
+                kotlinx.coroutines.delay(10_000)
+                if (_pending.value > 0 && lastPendingChange > 0 &&
+                    System.currentTimeMillis() - lastPendingChange > 30_000) {
+                    DebugLog.log("XLATE", "pending-queue watchdog reset (stuck at " + _pending.value + ")")
+                    _pending.value = 0
+                }
+            }
+        }
+    }
 
     /** The effective engine: 'api' requires a configured key; without one it
      *  degrades to the free on-device engine (the user's ML-Kit-default). */
@@ -166,13 +183,15 @@ object MetadataTranslator {
         val file = cacheFile(context)
         cacheLookup(file, text)?.let { return it }
         _pending.value += 1
+        lastPendingChange = System.currentTimeMillis()
         val out = try {
             when (engine) {
                 ENGINE_API -> translateViaApi(prefs, text) ?: translateOnDevice(text)
                 else -> translateOnDevice(text)
             }
         } finally {
-            _pending.value -= 1
+            _pending.value = (_pending.value - 1).coerceAtLeast(0)
+            lastPendingChange = System.currentTimeMillis()
         } ?: return null
         if (out.isNotBlank() && out != text) {
             withContext(Dispatchers.IO) { cacheStore(file, text, out) }
