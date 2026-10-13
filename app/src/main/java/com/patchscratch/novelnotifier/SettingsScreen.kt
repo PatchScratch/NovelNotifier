@@ -19,6 +19,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -453,6 +454,8 @@ fun SettingsScreen(
                 prefs.getString("xlate_cover_model", "")?.ifBlank { null } ?: CoverGenClient.DEFAULT_MODEL
             )
         }
+        var xlateLayout by remember { mutableStateOf(prefs.getString("xlate_layout", "both") ?: "both") }
+        var autoRefine by remember { mutableStateOf(prefs.getBoolean("xlate_auto_refine", true)) }
         OutlinedTextField(
             value = coverModel,
             onValueChange = {
@@ -494,6 +497,42 @@ fun SettingsScreen(
             coverPrompt = CoverGenClient.defaultPrompt()
             prefs.edit { putString("xlate_cover_prompt", "") }   // blank = follow app language
         }) { Text(t("Reset to default", "既定に戻す")) }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+        Text(
+            t("Saved translation layout", "保存時の翻訳レイアウト"),
+            style = MaterialTheme.typography.titleSmall
+        )
+        listOf(
+            "both" to t("Japanese with English under each paragraph", "各段落の下に英語"),
+            "jp" to t("Japanese only", "日本語のみ"),
+            "en" to t("English only (once translated)", "英語のみ（翻訳後）")
+        ).forEach { (mode, label) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable { xlateLayout = mode; prefs.edit { putString("xlate_layout", mode) } }
+            ) {
+                RadioButton(selected = xlateLayout == mode, onClick = { xlateLayout = mode; prefs.edit { putString("xlate_layout", mode) } })
+                Text(label, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Text(
+            t("Applies to the reader now and to ePub exports; stored books keep both languages so you can switch anytime.",
+                "リーダーとePub書き出しに適用されます。保存済みの本は両言語を保持するため、いつでも切り替えられます。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 6.dp)
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().clickable { autoRefine = !autoRefine; prefs.edit { putBoolean("xlate_auto_refine", autoRefine) } }
+        ) {
+            Checkbox(checked = autoRefine, onCheckedChange = { autoRefine = it; prefs.edit { putBoolean("xlate_auto_refine", it) } })
+            Text(t("Auto-refine glossary & voices after each chapter", "各話翻訳後に用語集と声を自動精錬"), style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            t("novel-mill lock files: prompt.txt / glossary.txt / voices.txt, editable per series from the reader's ⋮ menu. Auto-refine asks the model for new names and voice notes from each finished chapter and appends them to this series' files (a few hundred extra tokens).",
+                "novel-millロックファイル：prompt.txt / glossary.txt / voices.txt。リーダーの⋮メニューからシリーズごとに編集できます。自動精錬は翻訳済みの各話から新しい固有名詞・声のメモを模型に尋ね、このシリーズのファイルへ追記します（数百トークンの追加）。"),
+            style = MaterialTheme.typography.bodySmall
+        )
         // Site-info engine: synopses, catchphrases, tags on the Japanese
         // sites — ML Kit on-device is the FREE default; the AI key is an
         // optional quality upgrade at negligible per-synopsis cost.

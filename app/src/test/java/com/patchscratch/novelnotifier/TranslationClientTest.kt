@@ -35,7 +35,8 @@ class TranslationClientTest {
     @Test
     fun systemPrompt_carriesGlossary() {
         val withGlossary = TranslationClient.systemPrompt("custom", "リムル = Rimuru")
-        assertTrue(withGlossary.contains("Glossary"))
+        // novel-mill lock-file section header
+        assertTrue(withGlossary.contains("## glossary.txt"))
         assertTrue(withGlossary.contains("リムル = Rimuru"))
     }
 

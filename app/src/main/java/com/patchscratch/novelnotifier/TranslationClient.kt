@@ -54,11 +54,21 @@ object TranslationClient {
             "quotes, which break JSON. Output the JSON array and nothing else."
 
     /** Full system message: user prompt + alignment contract + glossary. */
-    fun systemPrompt(custom: String, glossary: String): String = buildString {
+    fun systemPrompt(custom: String, glossary: String): String = systemPrompt(custom, glossary, "")
+
+    /**
+     * Full system message with Novel-Mill-style lock sections: glossary and
+     * voices ride under their "## <file>.txt" headers exactly like the mill
+     * concatenates them, so hand-written mill files paste straight in.
+     */
+    fun systemPrompt(custom: String, glossary: String, voices: String): String = buildString {
         append(custom.trim().ifBlank { defaultPrompt() })
         append(ALIGNMENT_CONTRACT)
         if (glossary.isNotBlank()) {
-            append("\n\nGlossary (use these exact renderings):\n").append(glossary)
+            append("\n\n## glossary.txt\n").append(glossary.trim())
+        }
+        if (voices.isNotBlank()) {
+            append("\n\n## voices.txt\n").append(voices.trim())
         }
     }
 
@@ -185,7 +195,8 @@ object TranslationClient {
         glossary: String = "",
         chunkSize: Int = 40,
         customPrompt: String = "",
-        temperature: Double = 0.3
+        temperature: Double = 0.3,
+        voices: String = ""
     ): List<String>? = withContext(Dispatchers.IO) {
         // Blank paragraphs never go over the wire — models drop or merge
         // them, which breaks 1:1 alignment for the whole chunk. They come
@@ -198,7 +209,7 @@ object TranslationClient {
         var i = 0
         while (i < sent.size) {
             val chunk = sent.subList(i, minOf(i + chunkSize, sent.size)).map { it.value }
-            val system = systemPrompt(customPrompt, glossary)
+            val system = systemPrompt(customPrompt, glossary, voices)
             var parsed = runChunk(endpointBase, apiKey, model, system, chunk, temperature)
             if (parsed == null) {
                 // Count mismatch is the usual rejection (the model merges
@@ -241,6 +252,11 @@ object TranslationClient {
         }
         return parsed
     }
+
+    /** Raw chat-completions POST for callers building their own body
+     * (XlateStack refinement); returns message content, throws on errors. */
+    fun postChat(endpointBase: String, apiKey: String, body: JSONObject): String =
+        post("$endpointBase/chat/completions", apiKey, body.toString())
 
     private fun post(url: String, apiKey: String, body: String): String {
         val conn = URL(url).openConnection() as HttpURLConnection

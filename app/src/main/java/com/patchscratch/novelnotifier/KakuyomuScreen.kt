@@ -342,6 +342,7 @@ fun KakuyomuDiscoverBody(
                             (if (work.isSexual) "R18 · " else "") + work.title,
                             style = MaterialTheme.typography.titleMedium
                         )
+                        TranslatedHint(text = work.title, style = MaterialTheme.typography.bodySmall)
                         if (work.catchphrase.isNotBlank()) {
                             Text(
                                 work.catchphrase,

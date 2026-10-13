@@ -46,3 +46,30 @@ fun TranslatedInfoText(
         }
     }
 }
+
+/**
+ * English-only hint line for Discover ranking rows: the Japanese title is
+ * already displayed by the row, so this renders just the dimmed machine
+ * translation underneath (ML Kit free/on-device by default). Nothing shows
+ * when the engine is off or produces nothing.
+ */
+@Composable
+fun TranslatedHint(
+    text: String,
+    style: TextStyle = MaterialTheme.typography.bodySmall,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    var translation by remember(text) { mutableStateOf<String?>(null) }
+    LaunchedEffect(text) {
+        translation = MetadataTranslator.translateInfo(context, text)
+    }
+    if (!translation.isNullOrBlank() && translation != text) {
+        Text(
+            text = translation!!,
+            style = style,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+            modifier = modifier
+        )
+    }
+}

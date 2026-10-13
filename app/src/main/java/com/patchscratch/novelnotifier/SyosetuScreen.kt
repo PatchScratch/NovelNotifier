@@ -253,6 +253,7 @@ fun SyosetuDiscoverBody(
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text(novel.title, style = MaterialTheme.typography.titleMedium)
+                        TranslatedHint(text = novel.title, style = MaterialTheme.typography.bodySmall)
                         Text(
                             "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
                                 (if (novel.isShortStory) syosetuTypeLabel(true)

@@ -112,7 +112,8 @@ private val ReaderDark = ReaderPalette(Color(0xFF101418), Color(0xFFD8DBE2))
 @Composable
 fun ReaderScreen(
     target: ReaderTarget,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenXlateFiles: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
@@ -456,13 +457,21 @@ fun ReaderScreen(
                         if (extract.paragraphs.isEmpty() || xlateKey.isBlank()) return@DropdownMenuItem
                         translating = true
                         scope.launch {
+                            // Novel-Mill lock files: series prompt.txt overrides the
+                            // global one, which overrides the Settings prompt; glossary
+                            // and voices ride along as ## sections.
+                            val locks = XlateStack.load(context, target.seriesUrl)
                             val result = try {
                                 TranslationClient.translate(
                                     endpointBase = prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
                                     apiKey = xlateKey,
                                     model = prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
                                     paragraphs = extract.paragraphs,
-                                    customPrompt = prefs.getString("xlate_prompt", "").orEmpty(),
+                                    customPrompt = locks.prompt.ifBlank {
+                                        prefs.getString("xlate_prompt", "").orEmpty()
+                                    },
+                                    glossary = locks.glossary,
+                                    voices = locks.voices,
                                     temperature = prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
                                 )
                             } catch (e: Exception) {
@@ -490,6 +499,19 @@ fun ReaderScreen(
                                         )
                                     }
                                     epubCount = EpubStore.storedCount(context, target.seriesUrl)
+                                }
+                                // Auto-refine the series lock files with this
+                                // chapter's context (novel-mill's missing piece).
+                                if (prefs.getBoolean("xlate_auto_refine", true)) {
+                                    val refined = XlateStack.refineAfterChapter(
+                                        context, target.seriesUrl,
+                                        extract.paragraphs, result,
+                                        prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
+                                        xlateKey,
+                                        prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
+                                        prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
+                                    )
+                                    DebugLog.log("XLATE", "auto-refine ${if (refined) "saved" else "skipped/failed"}")
                                 }
                             }
                         }
@@ -536,6 +558,10 @@ fun ReaderScreen(
                 DropdownMenuItem(
                     text = { Text(if (jsOn) t("JavaScript: ON (tap to disable)", "JavaScript: ON（タップで無効）") else t("JavaScript: OFF (tap to enable)", "JavaScript: OFF（タップで有効）")) },
                     onClick = { showMenu = false; toggleJs() }
+                )
+                DropdownMenuItem(
+                    text = { Text(t("Translation files (prompt/glossary/voices)…", "翻訳ファイル（プロンプト/用語集/声）…")) },
+                    onClick = { showMenu = false; onOpenXlateFiles() }
                 )
                 DropdownMenuItem(
                     text = { Text(t("Reload", "再読み込み")) },
@@ -741,23 +767,29 @@ fun ReaderScreen(
                         )
                     }
                     extract.paragraphs.forEachIndexed { i, paragraph ->
-                        Text(
-                            text = paragraph,
-                            color = palette.text,
-                            fontSize = fontSize.sp,
-                            lineHeight = (fontSize * 1.65).sp,
-                            fontFamily = if (serif) FontFamily.Serif else FontFamily.Default,
-                            modifier = Modifier.padding(bottom = 10.dp)
-                        )
+                        // Saved layout choice: both (JP with EN under it),
+                        // jp only, or en only once a translation exists.
+                        val layout = prefs.getString("xlate_layout", "both") ?: "both"
+                        val en = translation?.getOrNull(i)
+                        val showEn = en != null && en.isNotBlank() && showTranslation
+                        if (layout != "en") {
+                            Text(
+                                text = paragraph,
+                                color = palette.text,
+                                fontSize = fontSize.sp,
+                                lineHeight = (fontSize * 1.65).sp,
+                                fontFamily = if (serif) FontFamily.Serif else FontFamily.Default,
+                                modifier = Modifier.padding(bottom = 10.dp)
+                            )
+                        }
                         // AI translation renders directly under its source
                         // paragraph (same order enforced by the JSON-array
                         // contract); slightly dimmed to keep the original
                         // visually primary.
-                        val en = translation?.getOrNull(i)
-                        if (en != null && en.isNotBlank() && showTranslation) {
+                        if (showEn && layout != "jp") {
                             Text(
                                 text = en,
-                                color = palette.text.copy(alpha = 0.72f),
+                                color = palette.text.copy(alpha = if (layout == "en") 1f else 0.72f),
                                 fontSize = fontSize.sp,
                                 lineHeight = (fontSize * 1.6).sp,
                                 fontFamily = if (serif) FontFamily.Serif else FontFamily.Default,

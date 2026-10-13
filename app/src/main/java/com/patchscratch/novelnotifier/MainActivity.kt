@@ -141,6 +141,7 @@ fun NovelApp(
     var statusMessage by remember { mutableStateOf("Log in from Settings, then pull down to load your lists") }
     var selectedNovel by remember { mutableStateOf<Novel?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    var showXlateFiles by remember { mutableStateOf(false) }
     var showLoginWeb by remember { mutableStateOf(false) }
     var showEditLists by remember { mutableStateOf(false) }
     var readingLists by remember { mutableStateOf(emptyList<ReadingList>()) }
@@ -520,11 +521,12 @@ fun NovelApp(
     // System back returns to the previous screen instead of leaving the app.
     // Login overlays Settings, so close it the way its Cancel button does.
     BackHandler(
-        enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding ||
+        enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding || showXlateFiles ||
             selectedNovel != null || syosetuNovel != null || kakuyomuWork != null ||
             syosetuBookmarkCat != null || showKakuyomuBookmarks || showKakuyomuLogin
     ) {
         when {
+            showXlateFiles -> showXlateFiles = false
             readerTarget != null -> readerTarget = null
             syosetuNovel != null -> syosetuNovel = null
             kakuyomuWork != null -> kakuyomuWork = null
@@ -547,9 +549,16 @@ fun NovelApp(
     // Only one screen is composed at a time. Order matters: the reader is
     // the topmost surface; login overlays settings.
     when {
+        showXlateFiles && readerTarget != null -> XlateFilesScreen(
+            context = context,
+            seriesUrl = readerTarget!!.seriesUrl,
+            seriesTitle = readerTarget!!.seriesTitle,
+            onBack = { showXlateFiles = false }
+        )
         readerTarget != null -> ReaderScreen(
             target = readerTarget!!,
-            onBack = { readerTarget = null }
+            onBack = { readerTarget = null },
+            onOpenXlateFiles = { showXlateFiles = true }
         )
         showLoginWeb -> LoginWebScreen(
             onLoggedIn = { cookies -> onLoggedIn(cookies) },

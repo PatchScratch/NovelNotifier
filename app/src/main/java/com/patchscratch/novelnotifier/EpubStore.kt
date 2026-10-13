@@ -161,7 +161,10 @@ object EpubStore {
         coverBytes: ByteArray?,
         coverMime: String,
         chapters: List<ChapterDoc>,
-        meta: BookMeta? = null
+        meta: BookMeta? = null,
+        // Saved-file paragraph layout: both (JP+EN interleaved), jp, en —
+        // mirrors the reader's xlate_layout pref at export/write time.
+        layout: String = "both"
     ): Int {
         val metaTitle = meta?.title?.ifBlank { title } ?: title
         val uuid = UUID.nameUUIDFromBytes(metaTitle.toByteArray()).toString()
@@ -195,7 +198,7 @@ object EpubStore {
 
         chapters.forEachIndexed { index, doc ->
             val file = "chapters/c" + "%04d".format(index + 1) + ".xhtml"
-            entries["OEBPS/$file"] = chapterXhtml(doc).toByteArray()
+            entries["OEBPS/$file"] = chapterXhtml(doc, layout).toByteArray()
             val id = "c" + "%04d".format(index + 1)
             manifest.append("    <item id=\"$id\" href=\"$file\" media-type=\"application/xhtml+xml\"/>\n")
             spine.append("    <itemref idref=\"$id\"/>\n")
@@ -269,8 +272,11 @@ object EpubStore {
     /** Our own xhtml is predictable; parse defensively anyway (older files). */
     private fun parseChapterXhtml(html: String, row: StoredChapter): ChapterDoc {
         val title = Regex("<h1[^>]*>(.*?)</h1>").find(html)?.groupValues?.get(1)?.let(::xmlUnescape).orEmpty()
-        val paragraphs = Regex("<p[^>]*>(.*?)</p>", RegexOption.DOT_MATCHES_ALL).findAll(html)
-            .map { xmlUnescape(it.groupValues[1]).trim() }
+        // Paragraphs exclude nn-en lines (the interleaved English copies in
+        // "both"-layout bodies) — originals stay pure JP for re-rendering.
+        val paragraphs = Regex("<p([^>]*)>(.*?)</p>", RegexOption.DOT_MATCHES_ALL).findAll(html)
+            .filterNot { it.groupValues[1].contains("nn-en") }
+            .map { xmlUnescape(it.groupValues[2]).trim() }
             .filter { it.isNotEmpty() }
             .toList()
         // Sidecar translation: a JSON array in a <script> block. External
@@ -455,14 +461,33 @@ $navPoints  </navMap>
     </navPoint>
 """
 
-    private fun chapterXhtml(doc: ChapterDoc) = """<?xml version="1.0" encoding="utf-8"?>
+    private fun chapterXhtml(doc: ChapterDoc, layout: String = "both") = """<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><title>${xmlEscape(doc.label)}</title></head>
 <body>
-${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${doc.paragraphs.joinToString("\n") { "<p>${xmlEscape(it)}</p>" }}
+${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${bodyParagraphs(doc, layout)}
 ${if (doc.translation != null) """<script type="application/json" id="nn-translation">${JSONArray(doc.translation)}</script>""" else ""}
 </body>
 </html>"""
+
+    /** Visible body per the saved layout; the nn-translation block always
+     * keeps the full parallel data so the reader can re-render any layout. */
+    private fun bodyParagraphs(doc: ChapterDoc, layout: String): String {
+        val jp = doc.paragraphs.map { xmlEscape(it) }
+        val en = doc.translation?.map { xmlEscape(it) }
+        return when (layout) {
+            "en" -> en?.filter { it.isNotBlank() }?.joinToString("\n") { "<p>$it</p>" }
+                ?: jp.joinToString("\n") { "<p>$it</p>" }   // no translation yet → original
+            "jp" -> jp.joinToString("\n") { "<p>$it</p>" }
+            else -> buildString {
+                jp.forEachIndexed { i, p ->
+                    append("<p>").append(p).append("</p>\n")
+                    val e = en?.getOrNull(i)
+                    if (!e.isNullOrBlank()) append("<p class=\"nn-en\">").append(e).append("</p>\n")
+                }
+            }.trimEnd('\n')
+        }
+    }
 
     private fun chaptersJson(chapters: List<ChapterDoc>): String {
         val arr = JSONArray()
@@ -650,14 +675,25 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         return null
     }
 
-    /** Copy ONE bucket's book to a SAF destination (file picker). */
+    /** Copy ONE bucket's book to a SAF destination (file picker). The copy
+     *  is re-rendered with the user's saved paragraph layout (both/jp/en) —
+     *  the stored library book always keeps the full parallel data. */
     fun exportTo(context: Context, seriesUrl: String, bucket: String, seriesTitle: String, uri: Uri): String {
         return try {
             val book = bookFile(context, seriesUrl, bucket)
             if (!book.exists()) return "No book for this volume yet"
+            val docs = readAllChapterDocs(book)
+            val layout = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
+                .getString("xlate_layout", "both") ?: "both"
+            val tmp = File(context.cacheDir, "export-${System.currentTimeMillis()}.epub")
+            writeBook(
+                tmp, bookDisplayTitle(seriesTitle, bucket, bucketsOf(context, seriesUrl)),
+                existingCover(book), "image/jpeg", orderDocs(docs), readBookMeta(book), layout
+            )
             context.contentResolver.openOutputStream(uri)?.use { out ->
-                book.inputStream().use { it.copyTo(out) }
+                tmp.inputStream().use { it.copyTo(out) }
             } ?: return "Could not open the destination"
+            tmp.delete()
             val n = readBookIndex(book).size
             "Exported ${bookDisplayTitle(seriesTitle, bucket, bucketsOf(context, seriesUrl))} ($n chapters)"
         } catch (e: Exception) {
