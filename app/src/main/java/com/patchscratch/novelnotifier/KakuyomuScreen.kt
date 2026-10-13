@@ -188,6 +188,12 @@ fun KakuyomuDiscoverBody(
     var variation by remember { mutableStateOf("LONG") }
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<KakuyomuWork>>(emptyList()) }
+    val prefetchContext = androidx.compose.ui.platform.LocalContext.current
+    // Warm every result title through the (serialized) translator — see the
+    // Syosetu twin for why (fling-cancellation blanks otherwise).
+    androidx.compose.runtime.LaunchedEffect(results) {
+        results.take(30).forEach { MetadataTranslator.translateInfo(prefetchContext, it.title) }
+    }
     var total by remember { mutableIntStateOf(0) }
     var offset by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }

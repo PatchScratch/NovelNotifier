@@ -1,6 +1,7 @@
 package com.patchscratch.novelnotifier
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,7 +56,10 @@ private fun BookmarksBody(
     heading: String,
     rows: List<BookmarkRow>,
     emptyMessage: String,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    // Long-press a row/tile to manage it (Syosetu: change category /
+    // remove). Null for stores without a site write-back.
+    onManageRow: ((BookmarkRow) -> Unit)? = null
 ) {
     val context = LocalContext.current
     var layoutMode by remember { mutableStateOf(loadLayoutMode(context.getSharedPreferences("novel_prefs", 0))) }
@@ -94,7 +98,12 @@ private fun BookmarksBody(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(rows, key = { it.seriesUrl }) { row ->
-                    Column(modifier = Modifier.clickable { row.open() }) {
+                    Column(
+                        modifier = Modifier.combinedClickable(
+                            onClick = { row.open() },
+                            onLongClick = { onManageRow?.invoke(row) }
+                        )
+                    ) {
                         CoverThumb(
                             url = row.coverUrl,
                             seriesUrl = row.seriesUrl,
@@ -129,7 +138,7 @@ private fun BookmarksBody(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { row.open() }
+                            .combinedClickable(onClick = { row.open() }, onLongClick = { onManageRow?.invoke(row) })
                     ) {
                         Row(
                             modifier = Modifier.padding(10.dp),
@@ -165,7 +174,10 @@ fun SyosetuBookmarksScreen(
     bookmarks: List<SyosetuBookmark>,
     category: String = "",
     onOpenNovel: (SyosetuNovel) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    categories: List<SyosetuCategory> = emptyList(),
+    onChangeCategory: (SyosetuBookmark, Int) -> Unit = { _, _ -> },
+    onRemove: (SyosetuBookmark) -> Unit = {}
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val shown = if (category.isBlank()) bookmarks else bookmarks.filter { it.category == category }
@@ -187,6 +199,12 @@ fun SyosetuBookmarksScreen(
             onOpenNovel(hydrated ?: minimal)
         }
     }
+    // Long-press management: which row's dialog is open, and its mode.
+    var managed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<BookmarkRow?>(null) }
+    var confirmRemove by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<SyosetuBookmark?>(null) }
+    val managedBm: SyosetuBookmark? = managed?.let { row ->
+        shown.firstOrNull { bm -> row.seriesUrl.endsWith(bm.ncode.lowercase() + "/") }
+    }
     BookmarksBody(
         heading = if (category.isBlank()) t("All", "すべて") + " (${shown.size})" else "$category (${shown.size})",
         rows = shown.map { bm ->
@@ -198,12 +216,56 @@ fun SyosetuBookmarksScreen(
                 open = { open(bm) }
             )
         },
+        onManageRow = { row -> managed = row },
         emptyMessage = t(
             "No bookmarks here yet — bookmark novels on syosetu.com, then Sync in Settings.",
             "ブックマークがありません — syosetu.com でブックマークし、設定で同期してください。"
         ),
         onBack = onBack
     )
+    managed?.let { row ->
+        val bm = managedBm
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { managed = null },
+            title = { androidx.compose.material3.Text(row.title, maxLines = 2) },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    androidx.compose.material3.Text(t("Category", "カテゴリ") + ": " + (bm?.category ?: ""), style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                    categories.forEach { c ->
+                        androidx.compose.material3.TextButton(onClick = {
+                            bm?.let { onChangeCategory(it, c.id) }
+                            managed = null
+                        }) { androidx.compose.material3.Text(c.name + " (" + c.count + ")") }
+                    }
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    bm?.let { confirmRemove = it }
+                    managed = null
+                }) { androidx.compose.material3.Text(t("Remove bookmark", "ブックマーク解除"), color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { managed = null }) { androidx.compose.material3.Text(t("Cancel", "キャンセル")) }
+            }
+        )
+    }
+    confirmRemove?.let { bm ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmRemove = null },
+            title = { androidx.compose.material3.Text(t("Remove bookmark?", "ブックマークを解除しますか？")) },
+            text = { androidx.compose.material3.Text(bm.title) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    onRemove(bm)
+                    confirmRemove = null
+                }) { androidx.compose.material3.Text(t("Remove", "解除"), color = androidx.compose.material3.MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmRemove = null }) { androidx.compose.material3.Text(t("Cancel", "キャンセル")) }
+            }
+        )
+    }
 }
 
 /** Kakuyomu bookmark library — real covers where the work provides one. */

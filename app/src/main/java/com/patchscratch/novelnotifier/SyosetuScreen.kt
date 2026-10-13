@@ -187,6 +187,13 @@ fun SyosetuDiscoverBody(
     }
 
     LaunchedEffect(tab) { if (tab < SYOSETU_ORDERS.size) load() }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Warm every result title through the (serialized) translator so rows
+    // render EN immediately even when flung past before their own
+    // LaunchedEffect could finish — successes persist in the sidecar cache.
+    LaunchedEffect(results) {
+        results.take(30).forEach { MetadataTranslator.translateInfo(context, it.title) }
+    }
 
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(verticalAlignment = Alignment.CenterVertically) {

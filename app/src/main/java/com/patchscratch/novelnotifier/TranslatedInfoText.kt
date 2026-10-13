@@ -63,6 +63,14 @@ fun TranslatedHint(
     var translation by remember(text) { mutableStateOf<String?>(null) }
     LaunchedEffect(text) {
         translation = MetadataTranslator.translateInfo(context, text)
+        // a fling-cancellation or transient miss gets two quiet retries —
+        // blank rows otherwise stick until the row recomposes again
+        var attempt = 0
+        while (translation.isNullOrBlank() && attempt < 2) {
+            kotlinx.coroutines.delay(1500)
+            translation = MetadataTranslator.translateInfo(context, text)
+            attempt++
+        }
     }
     if (!translation.isNullOrBlank() && translation != text) {
         Text(

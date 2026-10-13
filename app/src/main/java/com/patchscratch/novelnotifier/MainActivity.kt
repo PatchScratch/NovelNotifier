@@ -827,6 +827,23 @@ fun NovelApp(
             bookmarks = syosetuBookmarks,
             category = syosetuBookmarkCat!!,
             onOpenNovel = { novel -> syosetuNovel = novel },
+            categories = syosetuCategories,
+            onChangeCategory = { bm, catId ->
+                if (bm.userfavId.isNotBlank()) scope.launch {
+                    syosetuStatus = "Moving bookmark…"
+                    val ok = syosetuMoveBookmarkCategory(bm.userfavId, catId)
+                    syosetuStatus = if (ok) "Bookmark moved" else "Move failed — try again"
+                    if (ok) resyncSyosetuBookmarks()
+                }
+            },
+            onRemove = { bm ->
+                if (bm.userfavId.isNotBlank()) scope.launch {
+                    syosetuStatus = "Removing bookmark…"
+                    val ok = syosetuDeleteBookmark(bm.userfavId)
+                    syosetuStatus = if (ok) "Bookmark removed" else "Remove failed — try again"
+                    if (ok) resyncSyosetuBookmarks()
+                }
+            },
             onBack = { syosetuBookmarkCat = null }
         )
         showKakuyomuBookmarks -> KakuyomuBookmarksScreen(
