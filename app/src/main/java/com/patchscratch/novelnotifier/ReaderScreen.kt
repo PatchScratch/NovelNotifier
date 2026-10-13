@@ -1,4 +1,11 @@
 package com.patchscratch.novelnotifier
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material3.Icon
 
 import android.content.Intent
 import android.net.Uri
@@ -1000,16 +1007,19 @@ fun ReaderScreen(
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
                         IconButton(onClick = { TtsController.prev(context) }, modifier = Modifier.size(40.dp)) {
-                            Text("⏮", fontSize = 18.sp)
+                            Icon(Icons.Rounded.SkipPrevious, contentDescription = "Previous paragraph")
                         }
                         IconButton(onClick = { TtsController.togglePlayPause(context) }, modifier = Modifier.size(44.dp)) {
-                            Text(
-                                if (ttsState.state == TtsController.State.PLAYING) "⏸" else "▶",
-                                fontSize = 24.sp
-                            )
+                            if (ttsState.state == TtsController.State.PLAYING) {
+                                Icon(Icons.Rounded.Pause, contentDescription = "Pause",
+                                    modifier = Modifier.size(28.dp))
+                            } else {
+                                Icon(Icons.Rounded.PlayArrow, contentDescription = "Play",
+                                    modifier = Modifier.size(28.dp))
+                            }
                         }
                         IconButton(onClick = { TtsController.next(context) }, modifier = Modifier.size(40.dp)) {
-                            Text("⏭", fontSize = 18.sp)
+                            Icon(Icons.Rounded.SkipNext, contentDescription = "Next paragraph")
                         }
                         Text(
                             "${ttsState.paragraph + 1}/${ttsState.total}",
@@ -1026,7 +1036,7 @@ fun ReaderScreen(
                             Text("${ttsState.speed}x", style = MaterialTheme.typography.labelMedium)
                         }
                         IconButton(onClick = { TtsController.stop() }, modifier = Modifier.size(36.dp)) {
-                            Text("✕", fontSize = 16.sp, color = MaterialTheme.colorScheme.error)
+                            Icon(Icons.Rounded.Close, contentDescription = "Stop speaking", tint = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
