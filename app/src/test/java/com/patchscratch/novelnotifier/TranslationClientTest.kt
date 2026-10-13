@@ -16,23 +16,42 @@ import org.junit.Test
 class TranslationClientTest {
 
     @Test
-    fun systemPrompt_carriesRoleAndGlossary() {
-        val plain = TranslationClient.systemPrompt("")
-        assertTrue(plain.contains("Japanese-to-English", ignoreCase = true))
-        assertTrue(plain.contains("JSON array"))
-        assertTrue(!plain.contains("Glossary"))
+    fun systemPrompt_customWinsAndContractAlwaysAppended() {
+        val custom = "Translate like a pirate."
+        val prompt = TranslationClient.systemPrompt(custom, "")
+        assertTrue(prompt.startsWith(custom))                       // user's wording leads
+        assertTrue(prompt.contains("JSON array"))                   // alignment contract appended
+        assertTrue(!prompt.contains("Glossary"))
+    }
 
-        val withGlossary = TranslationClient.systemPrompt("リムル = Rimuru")
+    @Test
+    fun systemPrompt_blankCustomFallsBackToDefault() {
+        val prompt = TranslationClient.systemPrompt("", "")
+        // The user's default wording (accuracy/uncensored) in the app language
+        assertTrue(prompt.contains("uncensored") || prompt.contains("検閲しない"))
+        assertTrue(prompt.contains("JSON array"))
+    }
+
+    @Test
+    fun systemPrompt_carriesGlossary() {
+        val withGlossary = TranslationClient.systemPrompt("custom", "リムル = Rimuru")
         assertTrue(withGlossary.contains("Glossary"))
         assertTrue(withGlossary.contains("リムル = Rimuru"))
     }
 
     @Test
-    fun requestBody_isValidChatCompletionsShape() {
+    fun defaultPrompt_matchesUserWording() {
+        // The user-specified default (2026-10-13), verbatim in English mode
+        assertTrue(TranslationClient.defaultPrompt().contains("uncensored literal and contextual"))
+    }
+
+    @Test
+    fun requestBody_carriesTemperatureAndMessages() {
         val body = JSONObject(
-            TranslationClient.requestBody("m", "sys", """["a","b"]""")
+            TranslationClient.requestBody("m", "sys", """["a","b"]""", temperature = 0.7)
         )
         assertEquals("m", body.getString("model"))
+        assertEquals(0.7, body.getDouble("temperature"), 0.0001)
         val msgs = body.getJSONArray("messages")
         assertEquals(2, msgs.length())
         assertEquals("system", msgs.getJSONObject(0).getString("role"))

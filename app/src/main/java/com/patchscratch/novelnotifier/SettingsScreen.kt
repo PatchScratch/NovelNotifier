@@ -360,6 +360,10 @@ fun SettingsScreen(
         var xlateEndpoint by remember { mutableStateOf(prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty()) }
         var xlateModel by remember { mutableStateOf(prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty()) }
         var xlateKey by remember { mutableStateOf(prefs.getString("xlate_key", "").orEmpty()) }
+        var xlatePrompt by remember {
+            mutableStateOf(prefs.getString("xlate_prompt", "")?.ifBlank { null } ?: TranslationClient.defaultPrompt())
+        }
+        var xlateTemp by remember { mutableStateOf(prefs.getString("xlate_temp", "0.3").orEmpty()) }
         HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         Text(t("Translation", "翻訳"), style = MaterialTheme.typography.titleMedium)
         Text(
@@ -397,8 +401,43 @@ fun SettingsScreen(
             label = { Text(t("API key", "APIキー")) },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        )
+        OutlinedTextField(
+            value = xlateTemp,
+            onValueChange = { raw ->
+                // numeric-only, clamped 0..2; saved as a string pref
+                val cleaned = raw.filter { it.isDigit() || it == '.' }.take(4)
+                val parsed = cleaned.toDoubleOrNull()
+                if (parsed == null || parsed in 0.0..2.0) {
+                    xlateTemp = cleaned
+                    prefs.edit { putString("xlate_temp", cleaned.ifBlank { "0.3" }) }
+                }
+            },
+            label = { Text(t("Temperature (0–2)", "温度（0–2）")) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        )
+        OutlinedTextField(
+            value = xlatePrompt,
+            onValueChange = {
+                xlatePrompt = it
+                prefs.edit { putString("xlate_prompt", it) }
+            },
+            label = { Text(t("System prompt (JP → EN)", "システムプロンプト（日→英）")) },
+            minLines = 3,
             modifier = Modifier.fillMaxWidth()
         )
+        Text(
+            t("Sets the translator's persona and fidelity. Paragraph-alignment instructions are appended automatically so the English lands under each Japanese paragraph. The default follows the app language; Reset restores it.",
+                "翻訳者の姿勢と忠実度を決めます。段落整列の指示は自動で追加され、英語が各段落の下に表示されます。既定値はアプリの言語に従います。リセットで既定に戻ります。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+        )
+        TextButton(onClick = {
+            xlatePrompt = TranslationClient.defaultPrompt()
+            prefs.edit { putString("xlate_prompt", "") }   // blank = follow app language
+        }) { Text(t("Reset to default", "既定に戻す")) }
         Text(
             t("Cost guide is in the README (quality tier ≈ half a cent per chapter).", "コスト目安はREADME参照（品質重視層で1話約0.5セント）。"),
             style = MaterialTheme.typography.bodySmall,

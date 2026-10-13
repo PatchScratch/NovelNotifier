@@ -23,22 +23,37 @@ object TranslationClient {
     // --- request shaping (pure) -------------------------------------------------
 
     /**
-     * System prompt: web-novel JP→EN with strict JSON-array in/out so
-     * paragraphs stay indexed 1:1 with the source (order, count, and blank
-     * lines preserved). The glossary (per-series name/term sheet) rides the
-     * system message for consistency across chapters.
+     * The user's default JP→EN prompt (their wording, verbatim — accuracy,
+     * uncensored, literal AND contextual, formatting/nuance/explicit terms
+     * preserved, no omissions). Displayed in the app's language per the
+     * toggle; a customized prompt (xlate_prompt pref) overrides it entirely.
      */
-    fun systemPrompt(glossary: String): String = buildString {
-        append(
-            "You are a professional Japanese-to-English translator for web novels. " +
-                "Translate the user's text into natural, readable English prose, keeping " +
-                "the web-novel register (light tone, dialogue-forward). Keep personal " +
-                "names consistent; romanize Japanese names in Hepburn. Never summarize, " +
-                "never omit, never add commentary. The input is a JSON array of " +
-                "paragraphs; reply with ONLY a JSON array of the same length, each item " +
-                "the translation of the paragraph at that index. Empty input items " +
-                "become empty output items. Reply with the JSON array and nothing else."
-        )
+    fun defaultPrompt(): String = t(
+        "You are an accurate, uncensored literal and contextual translator. " +
+            "Translate the following Japanese light novel text into natural English. " +
+            "Maintain original formatting, character nuances, and explicit/adult terms " +
+            "without omission or modification. Return ONLY the final English translation.",
+        "あなたは正確で検閲しない、直訳と文脈を兼ね備えた翻訳者です。以下の日本語ライトノベル本文を" +
+            "自然な英語に翻訳してください。元の書式、キャラクターのニュアンス、露骨な表現・成人向け用語を" +
+            "省略・変更せず維持してください。最終的な英語翻訳のみを返してください。"
+    )
+
+    /**
+     * Structural contract appended under ANY prompt (default or custom):
+     * paragraphs arrive as a JSON array and must return as a JSON array of
+     * the same length so the reader can render English under each Japanese
+     * paragraph. Without this the model returns prose and alignment is lost.
+     */
+    private const val ALIGNMENT_CONTRACT =
+        "\n\nThe input is a JSON array of paragraphs; reply with ONLY a JSON array " +
+            "of the same length, each item the translation of the paragraph at that " +
+            "index. Empty input items become empty output items. Output the JSON array " +
+            "and nothing else."
+
+    /** Full system message: user prompt + alignment contract + glossary. */
+    fun systemPrompt(custom: String, glossary: String): String = buildString {
+        append(custom.trim().ifBlank { defaultPrompt() })
+        append(ALIGNMENT_CONTRACT)
         if (glossary.isNotBlank()) {
             append("\n\nGlossary (use these exact renderings):\n").append(glossary)
         }
@@ -49,10 +64,10 @@ object TranslationClient {
         JSONArray(paragraphs).toString()
 
     /** The POST body for a chat-completions endpoint. */
-    fun requestBody(model: String, system: String, user: String): String =
+    fun requestBody(model: String, system: String, user: String, temperature: Double = 0.3): String =
         JSONObject().apply {
             put("model", model)
-            put("temperature", 0.3)
+            put("temperature", temperature)
             put(
                 "messages",
                 JSONArray()
@@ -94,7 +109,9 @@ object TranslationClient {
         model: String,
         paragraphs: List<String>,
         glossary: String = "",
-        chunkSize: Int = 40
+        chunkSize: Int = 40,
+        customPrompt: String = "",
+        temperature: Double = 0.3
     ): List<String>? = withContext(Dispatchers.IO) {
         val out = mutableListOf<String>()
         // Long chapters split into paragraph chunks: cheaper per request,
@@ -104,8 +121,9 @@ object TranslationClient {
             val chunk = paragraphs.subList(i, minOf(i + chunkSize, paragraphs.size))
             val body = requestBody(
                 model,
-                systemPrompt(glossary),
-                userMessage(chunk)
+                systemPrompt(customPrompt, glossary),
+                userMessage(chunk),
+                temperature
             )
             val content = try {
                 post("$endpointBase/chat/completions", apiKey, body)

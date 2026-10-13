@@ -461,7 +461,9 @@ fun ReaderScreen(
                                     endpointBase = prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
                                     apiKey = xlateKey,
                                     model = prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
-                                    paragraphs = extract.paragraphs
+                                    paragraphs = extract.paragraphs,
+                                    customPrompt = prefs.getString("xlate_prompt", "").orEmpty(),
+                                    temperature = prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
                                 )
                             } catch (e: Exception) {
                                 DebugLog.log("XLATE", "chapter translate failed", e)
