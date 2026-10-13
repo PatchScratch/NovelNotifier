@@ -201,7 +201,14 @@ fun KakuyomuDiscoverBody(
     val scope = rememberCoroutineScope()
 
     // One shared loader: rankings for period tabs, search for the Search tab.
+    // Same race guard as the Syosetu twin: rapid tab/genre/variation
+    // switching must let only the LATEST load apply state (load-more
+    // calls participate too — an older page appending after a tab change
+    // would splice foreign rows into the list).
+    var loadGen by remember { mutableIntStateOf(0) }
+
     fun load(reset: Boolean) {
+        val gen = ++loadGen
         scope.launch {
             loading = true
             error = ""
@@ -213,6 +220,7 @@ fun KakuyomuDiscoverBody(
                         variation = variation,
                         genre = genre
                     )
+                    if (gen != loadGen) return@launch
                     results = rows
                     total = rows.size
                 } else {
@@ -222,14 +230,15 @@ fun KakuyomuDiscoverBody(
                         genre = genre,
                         offset = offset
                     )
+                    if (gen != loadGen) return@launch
                     results = if (reset) res.works else (results + res.works).distinctBy { it.id }
                     total = res.totalCount
                 }
             } catch (e: Exception) {
                 DebugLog.log("KAKUYOMU", "discover load failed", e)
-                error = "読み込めませんでした: ${e.message}"
+                if (gen == loadGen) error = "読み込めませんでした: ${e.message}"
             }
-            loading = false
+            if (gen == loadGen) loading = false
         }
     }
 

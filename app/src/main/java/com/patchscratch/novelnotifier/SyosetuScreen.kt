@@ -163,12 +163,17 @@ fun SyosetuDiscoverBody(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    // Rapid tab/genre switching races fetches; only the LATEST load may
+    // apply its rows (otherwise a slow older tab lands last and its rows
+    // show under the newer tab's heading).
+    var loadGen by remember { mutableIntStateOf(0) }
 
     fun load() {
+        val gen = ++loadGen
         scope.launch {
             loading = true
             error = ""
-            results = try {
+            val rows = try {
                 // R18 mode queries the sister endpoint filtered to the
                 // CYCLED subsite (nocgenre) and drops the all-ages pin.
                 val extra = if (r18Mode) mapOf("nocgenre" to activeSubsite.toString()) else mapOf("ga" to "none")
@@ -179,10 +184,14 @@ fun SyosetuDiscoverBody(
                 }
                 syosetuApiQuery(params, r18 = r18Mode && r18Enabled)
             } catch (e: Exception) {
-                error = "読み込めませんでした: ${e.message}"
+                if (gen == loadGen) error = "読み込めませんでした: ${e.message}"
                 emptyList()
             }
-            loading = false
+            DebugLog.log("SYOSETU", "discover load gen=" + gen + " latest=" + loadGen + " tab=" + tab + " rows=" + rows.size + (if (gen == loadGen) " APPLY" else " DROP"))
+            if (gen == loadGen) {
+                results = rows
+                loading = false
+            }
         }
     }
 
