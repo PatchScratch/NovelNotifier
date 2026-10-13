@@ -113,6 +113,11 @@ object BackupManager {
             CoverStore.dir(context).listFiles().orEmpty().forEach {
                 put("data/covers/${it.name}", it.readBytes())
             }
+            // AI-provenance markers ride along so restored devices know
+            // which covers are ours (Regenerate vs Generate).
+            context.filesDir.resolve("covers_ai").listFiles().orEmpty().forEach {
+                put("data/covers_ai/${it.name}", it.readBytes())
+            }
         }
         DebugLog.log("BACKUP", "exported ${manifest.optJSONObject("counts")}")
         "Backup saved — ${CoverStore.count(context)} covers, ${manifest.optJSONObject("counts")?.optInt("seriesCacheFiles") ?: 0} series caches"
@@ -150,6 +155,11 @@ object BackupManager {
                         target.writeBytes(zip.readBytes())
                         restoredCovers++
                     }
+                    name.startsWith("data/covers_ai/") -> {
+                        val target = context.filesDir.resolve("covers_ai").apply { mkdirs() }
+                            .resolve(name.substringAfterLast('/'))
+                        target.writeBytes(zip.readBytes())
+                    }
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
@@ -159,6 +169,71 @@ object BackupManager {
         DebugLog.log("BACKUP", "restored files=$restoredFiles covers=$restoredCovers")
         "Restored $restoredFiles caches and $restoredCovers covers — log in to finish"
     }
+
+    // --- covers-only transfer (phone ↔ tablet sync) ----------------------------
+
+    /**
+     * A small zip of just covers/ + covers_ai/ — the lightweight way to push
+     * generated art (and any covers) to another device without touching the
+     * library. Site-fetched covers also self-sync via "Prefetch missing
+     * covers"; only generated art has no upstream to re-download.
+     */
+    suspend fun exportCovers(context: Context, uri: android.net.Uri): String =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val output = context.contentResolver.openOutputStream(uri)
+                ?: return@withContext "Could not open the destination"
+            var n = 0
+            ZipOutputStream(output.buffered()).use { zip ->
+                fun put(name: String, bytes: ByteArray) {
+                    zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry()
+                }
+                put(MANIFEST, JSONObject()
+                    .put("version", 1)
+                    .put("app", context.packageName)
+                    .put("coversOnly", true)
+                    .toString().toByteArray())
+                CoverStore.dir(context).listFiles().orEmpty().forEach {
+                    put("data/covers/${it.name}", it.readBytes()); n++
+                }
+                context.filesDir.resolve("covers_ai").listFiles().orEmpty().forEach {
+                    put("data/covers_ai/${it.name}", it.readBytes())
+                }
+            }
+            DebugLog.log("COVERS", "exported $n covers")
+            "Covers shared — $n cover files"
+        }
+
+    /** Merge a covers zip in (never deletes; existing files are replaced). */
+    suspend fun importCovers(context: Context, uri: android.net.Uri): String =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val input = context.contentResolver.openInputStream(uri)
+                ?: return@withContext "Could not open the file"
+            var covers = 0
+            var sawManifest = false
+            ZipInputStream(input.buffered()).use { zip ->
+                var entry: ZipEntry? = zip.nextEntry
+                while (entry != null) {
+                    val name = entry.name
+                    when {
+                        name == MANIFEST -> sawManifest = true
+                        name.startsWith("data/covers/") -> {
+                            CoverStore.dir(context).resolve(name.substringAfterLast('/'))
+                                .writeBytes(zip.readBytes())
+                            covers++
+                        }
+                        name.startsWith("data/covers_ai/") -> {
+                            context.filesDir.resolve("covers_ai").apply { mkdirs() }
+                                .resolve(name.substringAfterLast('/')).writeBytes(zip.readBytes())
+                        }
+                    }
+                    zip.closeEntry()
+                    entry = zip.nextEntry
+                }
+            }
+            if (!sawManifest) return@withContext "That file is not a NovelNotifier covers file"
+            DebugLog.log("COVERS", "imported $covers covers")
+            "Imported $covers covers"
+        }
 
     private fun applyPrefs(context: Context, bytes: ByteArray) {
         val json = JSONObject(String(bytes))

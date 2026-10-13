@@ -432,7 +432,8 @@ fun KakuyomuDetailScreen(
                 CoverThumb(
                     url = work.coverUrl,
                     seriesUrl = work.url,
-                    modifier = Modifier.padding(top = 8.dp, end = 12.dp).width(84.dp).height(112.dp)
+                    modifier = Modifier.padding(top = 8.dp, end = 12.dp).width(84.dp).height(112.dp),
+                    fullscreen = true
                 )
                 Column {
                     Text(

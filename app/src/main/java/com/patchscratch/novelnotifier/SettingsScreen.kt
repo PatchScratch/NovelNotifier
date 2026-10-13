@@ -102,6 +102,16 @@ fun SettingsScreen(
     ) { uri ->
         if (uri != null) scope.launch { backupMessage = BackupManager.restore(context, uri) }
     }
+    val coversExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) scope.launch { backupMessage = BackupManager.exportCovers(context, uri) }
+    }
+    val coversImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) scope.launch { backupMessage = BackupManager.importCovers(context, uri) }
+    }
 
     // Persist + tell MainActivity so the new palette applies immediately.
     fun pickTheme(mode: String) {
@@ -664,6 +674,22 @@ fun SettingsScreen(
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text(t("Restore from backup", "バックアップから復元")) }
+        Text(
+            t("Covers can be moved between your devices on their own: share a small covers-only zip here and import it on the other device (nothing is deleted; both sides merge). Site-fetched covers also re-download automatically via “Prefetch missing covers”.",
+                "カバーだけを別端末へ移せます：ここでカバー専用の小さなZIPを書き出し、もう一方の端末で読み込んでください（削除は行わず、両側をマージします）。サイト由来のカバーは「不足カバーを先行取得」で自動再取得もできます。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+        )
+        Button(
+            onClick = { coversExportLauncher.launch("novelnotifier-covers.zip") },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text(t("Share covers (zip)", "カバーを書き出す（ZIP）")) }
+        TextButton(
+            onClick = {
+                coversImportLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text(t("Import covers", "カバーを読み込む")) }
         if (backupMessage.isNotBlank()) {
             Text(
                 text = backupMessage,

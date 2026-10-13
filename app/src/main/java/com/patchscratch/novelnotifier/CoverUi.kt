@@ -33,6 +33,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.patchscratch.novelnotifier.R
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
@@ -121,14 +125,19 @@ fun CoverThumb(
     seriesUrl: String = "",
     modifier: Modifier = Modifier,
     // Bump to re-read CoverStore (e.g. after AI cover generation).
-    refreshKey: Int = 0
+    refreshKey: Int = 0,
+    // When set, tapping the thumb opens the image fullscreen (series pages).
+    fullscreen: Boolean = false
 ) {
     val context = LocalContext.current
     val local = remember(seriesUrl, refreshKey) {
         seriesUrl.takeIf { it.isNotBlank() }?.let { CoverStore.localFile(context, it) }
     }
+    var openFull by remember { mutableStateOf(false) }
     Surface(
-        modifier = modifier.clip(MaterialTheme.shapes.small),
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .then(if (fullscreen) Modifier.clickable { openFull = true } else Modifier),
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
         val model: Any? = local ?: url.takeIf { it.isNotBlank() }
@@ -160,6 +169,43 @@ fun CoverThumb(
                         .padding(vertical = 1.dp)
                 )
             }
+        }
+    }
+    if (openFull) {
+        val local2 = local
+        val model: Any? = local2 ?: url.takeIf { it.isNotBlank() }
+        if (model != null) {
+            CoverFullscreenDialog(model = model, onDismiss = { openFull = false })
+        }
+    }
+}
+
+/**
+ * Fullscreen cover view — series pages open this when their thumbnail is
+ * tapped. Whole image visible (Fit), black backdrop, any tap closes.
+ */
+@Composable
+fun CoverFullscreenDialog(model: Any, onDismiss: () -> Unit) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                model = model,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().padding(16.dp)
+            )
         }
     }
 }

@@ -420,6 +420,7 @@ fun NovelDetailScreen(
                     url = cover,
                     seriesUrl = novel.seriesUrl,
                     refreshKey = coverState,
+                    fullscreen = true,
                     modifier = Modifier
                         .width(84.dp)
                         .height(112.dp)
