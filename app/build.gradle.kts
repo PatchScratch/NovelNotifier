@@ -79,6 +79,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.mlkit.translate)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
     // Real implementations of Android's org.json + XML pull parser so the pure

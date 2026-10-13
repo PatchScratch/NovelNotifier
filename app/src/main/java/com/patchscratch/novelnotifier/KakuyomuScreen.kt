@@ -429,9 +429,28 @@ fun KakuyomuDetailScreen(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
+        if (work.catchphrase.isNotBlank()) {
+            TranslatedInfoText(
+                text = work.catchphrase,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
+        }
+        val tags = detail?.work?.tags ?: ""
+        if (tags.isNotBlank()) {
+            TranslatedInfoText(
+                text = tags,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
+        }
         val intro = detail?.work?.introduction ?: ""
         if (intro.isNotBlank()) {
-            Text(intro, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+            TranslatedInfoText(
+                text = intro,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(16.dp)
+            )
         }
         Row(modifier = Modifier.padding(horizontal = 8.dp)) {
             TextButton(

@@ -346,8 +346,8 @@ fun SyosetuDetailScreen(
             modifier = Modifier.padding(horizontal = 16.dp)
         )
         if (novel.story.isNotBlank()) {
-            Text(
-                novel.story,
+            TranslatedInfoText(
+                text = novel.story,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(16.dp)
             )

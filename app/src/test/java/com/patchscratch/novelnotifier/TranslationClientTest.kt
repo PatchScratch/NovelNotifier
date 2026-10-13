@@ -82,4 +82,22 @@ class TranslationClientTest {
         assertNull(TranslationClient.parseReply("", 2))
         assertNull(TranslationClient.parseReply("""[]""", 0))
     }
+
+    // --- site-info cache (MetadataTranslator) -------------------------------
+
+    @org.junit.Test
+    fun metaCache_roundTripAndCap() {
+        val f = java.io.File(createTempDirectoryOrNull(), "cache.json")
+        assertNull(MetadataTranslator.cacheLookup(f, "あらすじ"))
+        MetadataTranslator.cacheStore(f, "あらすじ", "The synopsis")
+        assertEquals("The synopsis", MetadataTranslator.cacheLookup(f, "あらすじ"))
+        // distinct sources hash apart
+        assertNull(MetadataTranslator.cacheLookup(f, "別の文"))
+    }
+
+    private fun createTempDirectoryOrNull(): java.io.File {
+        val d = java.io.File(System.getProperty("java.io.tmpdir"), "nn-test-${System.nanoTime()}")
+        d.mkdirs()
+        return d
+    }
 }

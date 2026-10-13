@@ -438,6 +438,70 @@ fun SettingsScreen(
             xlatePrompt = TranslationClient.defaultPrompt()
             prefs.edit { putString("xlate_prompt", "") }   // blank = follow app language
         }) { Text(t("Reset to default", "既定に戻す")) }
+        // Site-info engine: synopses, catchphrases, tags on the Japanese
+        // sites — ML Kit on-device is the FREE default; the AI key is an
+        // optional quality upgrade at negligible per-synopsis cost.
+        var metaEngine by remember {
+            mutableStateOf(MetadataTranslator.effectiveEngine(prefs))
+        }
+        Text(
+            t("Translate Japanese site info (synopses, tags)", "日本サイトの情報を翻訳（あらすじ・タグ）"),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 12.dp)
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = metaEngine == MetadataTranslator.ENGINE_OFF,
+                onClick = {
+                    metaEngine = MetadataTranslator.ENGINE_OFF
+                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_OFF) }
+                }
+            )
+            Text(t("Off", "オフ"))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = metaEngine == MetadataTranslator.ENGINE_DEVICE,
+                onClick = {
+                    metaEngine = MetadataTranslator.ENGINE_DEVICE
+                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_DEVICE) }
+                }
+            )
+            Text(t("On-device (ML Kit) — free, offline", "端末内（ML Kit）— 無料・オフライン"))
+        }
+        Text(
+            t("Free on-device neural translation. A ~30 MB Japanese→English pack downloads on first use; after that it works offline. Gist-quality — fine for synopses and tags.",
+                "端末内ニューラル翻訳（無料）。初回使用時に約30MBの日→英パックをダウンロード、以降はオフラインで動作します。あらすじ・タグには十分な品質です。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(start = 48.dp, bottom = 4.dp)
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = metaEngine == MetadataTranslator.ENGINE_API,
+                onClick = {
+                    metaEngine = MetadataTranslator.ENGINE_API
+                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_API) }
+                }
+            )
+            Text(t("Via my AI key — best quality", "AIキーで — 最高品質"))
+        }
+        Text(
+            if (xlateKey.isBlank()) t(
+                "Uses the endpoint, model, prompt and temperature above — set the API key first (falls back to on-device until then).",
+                "上記のエンドポイント・モデル・プロンプト・温度を使用 — 先にAPIキーを設定してください（未設定の間は端末内にフォールバック）。"
+            ) else t(
+                "Uses the endpoint, model, prompt and temperature above. Cost is negligible — one synopsis is well under $0.001.",
+                "上記のエンドポイント・モデル・プロンプト・温度を使用。コストはごく僅か — あらすじ1件あたり0.001ドル未満です。"
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(start = 48.dp)
+        )
+        Text(
+            t("Site-info translations are display-only — books, backups, and anything sent to a site stay in the site's native language.",
+                "サイト情報の翻訳は表示のみ — ブック・バックアップ・サイトへ送る内容はサイトの言語のままです。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)
+        )
         Text(
             t("Cost guide is in the README (quality tier ≈ half a cent per chapter).", "コスト目安はREADME参照（品質重視層で1話約0.5セント）。"),
             style = MaterialTheme.typography.bodySmall,
