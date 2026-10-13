@@ -147,13 +147,17 @@ object SyncQueue {
                 .forEach { list -> jobs += SyncJob(TYPE_LIST, list.id, list.name) }
         }
 
-        // 2. Covers for every known series — priority lists first.
+        // 2. Covers for series that don't have one yet — priority lists first.
+        //    SKIP series with a stored cover file: queueing all ~1300 made
+        //    "Prefetch missing covers" march through the whole library from
+        //    zero every time (each job paced, files skipped but the counter
+        //    and the timer still ran — user report 2026-10-13).
         val allRows = listsToScrape
             .flatMap { list -> rowsByList[list.id].orEmpty().map { list.id to it } }
             .sortedBy { (listId, _) -> rank(listId) }
             .distinctBy { (_, row) -> row.seriesUrl.ifBlank { row.title } }
         allRows.forEach { (_, row) ->
-            if (row.seriesUrl.isNotBlank()) {
+            if (row.seriesUrl.isNotBlank() && !CoverStore.hasLocal(context, row.seriesUrl)) {
                 jobs += SyncJob(
                     TYPE_COVER,
                     row.seriesUrl,
