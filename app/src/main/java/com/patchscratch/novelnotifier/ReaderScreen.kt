@@ -190,6 +190,13 @@ fun ReaderScreen(
     val ttsState by TtsController.state.collectAsState()
     val speakingPara = ttsState.paragraph
 
+    // Layout as reactive state — the ⋮ menu AND paragraph rendering both
+    // observe this (reading SharedPreferences directly never triggers
+    // recomposition, so the layout appeared to "do nothing").
+    var xlateLayout by remember(target) {
+        mutableStateOf(prefs.getString("xlate_layout", "both") ?: "both")
+    }
+
     fun startSpeaking() {
         val layout = prefs.getString("xlate_layout", "both") ?: "both"
         val spoken = mutableListOf<String>()
@@ -640,7 +647,7 @@ fun ReaderScreen(
                 DropdownMenuItem(
                     text = {
                         Text(
-                            t("Layout: ", "レイアウト：") + when (prefs.getString("xlate_layout", "both") ?: "both") {
+                            t("Layout: ", "レイアウト：") + when (xlateLayout) {
                                 "jp" -> t("Japanese only", "日本語のみ")
                                 "en" -> t("English only", "英語のみ")
                                 else -> t("JP + EN", "日英両方")
@@ -648,10 +655,10 @@ fun ReaderScreen(
                         )
                     },
                     onClick = {
-                        val next = when (prefs.getString("xlate_layout", "both") ?: "both") {
+                        xlateLayout = when (xlateLayout) {
                             "both" -> "jp"; "jp" -> "en"; else -> "both"
                         }
-                        prefs.edit { putString("xlate_layout", next) }
+                        prefs.edit { putString("xlate_layout", xlateLayout) }
                     }
                 )
                 if (shioriPos >= 0) {
@@ -934,11 +941,10 @@ fun ReaderScreen(
                     extract.paragraphs.forEachIndexed { i, paragraph ->
                         // Saved layout choice: both (JP with EN under it),
                         // jp only, or en only once a translation exists.
-                        val layout = prefs.getString("xlate_layout", "both") ?: "both"
                         val en = translation?.getOrNull(i)
                         val showEn = en != null && en.isNotBlank() && showTranslation
                         val isSpeaking = speakingPara == i
-                        if (layout != "en") {
+                        if (xlateLayout != "en") {
                             JpParagraph(
                                 text = paragraph,
                                 color = if (isSpeaking) palette.text.copy(alpha = 0.5f) else palette.text,
@@ -957,10 +963,10 @@ fun ReaderScreen(
                         // paragraph (same order enforced by the JSON-array
                         // contract); slightly dimmed to keep the original
                         // visually primary.
-                        if (showEn && layout != "jp") {
+                        if (showEn && xlateLayout != "jp") {
                             Text(
                                 text = en,
-                                color = palette.text.copy(alpha = if (layout == "en") 1f else 0.72f),
+                                color = palette.text.copy(alpha = if (xlateLayout == "en") 1f else 0.72f),
                                 fontSize = fontSize.sp,
                                 lineHeight = (fontSize * 1.6).sp,
                                 fontFamily = if (serif) FontFamily.Serif else FontFamily.Default,
