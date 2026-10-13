@@ -1,0 +1,12 @@
+Reading positions sync both ways, and a faster, hardier translation engine.
+
+New:
+- Syosetu しおり (reading position) sync: opening or advancing through a bookmarked serial moves your しおり on the site automatically, and the reader's ⋮ menu sets it anywhere manually — the same write the site itself performs, verified live.
+- Kakuyomu reading history: opening an episode records your position on the site (続きから読む), with a manual "set reading position here" in the reader menu. Auto + manual, both verified.
+- Parallel chapter translation: chunks now fly two at a time — long chapters translate in roughly half the time (a 287-paragraph chapter: 169s, measured).
+
+Fixed:
+- Rapid tab switching can no longer paint one tab's rows under another tab's heading (fetch results are generation-guarded on both Discover screens).
+- Ranking-title translations show a "Translating titles… (N queued)" progress line while the on-device engine chews through a new list, instead of rows looking silently blank; the queue counter can no longer strand.
+- Detail-screen titles translate (dimmed English under the Japanese, Syosetu + Kakuyomu).
+- ScribbleHub suggestion rows confirmed gone from the reading list.
