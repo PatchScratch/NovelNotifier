@@ -289,7 +289,8 @@ data class SyosetuBookmark(
     val ncode: String,
     val title: String,
     val category: String,
-    val updated: String
+    val updated: String,
+    val userfavId: String = ""
 ) {
     val url: String get() = "https://ncode.syosetu.com/${ncode.lowercase()}/"
 }
@@ -318,6 +319,100 @@ fun parseSyosetuCategories(html: String): List<SyosetuCategory> =
             val name = Regex("""\s*\(\d+\)\s*$""").replace(label, "").trim()
             if (name.isBlank()) null else SyosetuCategory(m.groupValues[1].toIntOrNull() ?: return@mapNotNull null, name, count)
         }.toList()
+
+/** Settings-form state parsed from a bookmark's 設定変更 page. */
+data class SyosetuBookmarkSettings(
+    val actionUrl: String,   // POST target incl. ?token=…
+    val token: String,
+    val jyokyo: String,      // current 公開設定 (2 public / 1 private)
+    val isnotice: Boolean,   // current 更新通知 checkbox
+    // every 分類 name on the account (the settings page's categoryid
+    // select lists ALL of them, renamed included — richer than the list
+    // page's selector which only shows categories with bookmarks).
+    val categoryNames: List<Pair<Int, String>> = emptyList()
+)
+
+/**
+ * One bookmark's settings form (verified live 2026-10-13):
+ *   <form action="/favnovelmain/update/useridfavncode/<id>/?token=<hex>" method="post">
+ *     … name="isnotice" value="1" (checked only when on)
+ *     … name="jyokyo" value="2" checked="checked"
+ *     … <select name="categoryid">…
+ * Delete = the same POST with an extra del field (the remodal's submit
+ * button belongs to this form).
+ */
+fun parseSyosetuBookmarkSettings(html: String): SyosetuBookmarkSettings? {
+    val action = Regex("""<form[^>]*action="(/favnovelmain/update/useridfavncode/[^"]+)"""")
+        .find(html)?.groupValues?.get(1) ?: return null
+    val token = Regex("""[?&]token=([0-9a-f]{16,})""").find(html)?.groupValues?.get(1) ?: return null
+    val jyokyo = Regex("""name="jyokyo"[^>]*value="(\d)"[^>]*checked""").find(html)?.groupValues?.get(1)
+        ?: "2"
+    val isnotice = Regex("""name="isnotice"[^>]*checked""").containsMatchIn(html)
+    val selStart = html.indexOf("""name="categoryid"""")
+    val selEnd = if (selStart >= 0) html.indexOf("</select>", selStart) else -1
+    val names = if (selStart in 0 until selEnd) {
+        Regex("""<option value="(\d+)"[^>]*>([^<]+)</option>""")
+            .findAll(html.substring(selStart, selEnd))
+            .mapNotNull { o ->
+                val n = o.groupValues[2].trim()
+                if (n.isBlank()) null else o.groupValues[1].toInt() to n
+            }.toList()
+    } else emptyList()
+    return SyosetuBookmarkSettings(action, token, jyokyo, isnotice, names)
+}
+
+/** POST a form to syosetu.com with the WebView session's cookies. */
+private suspend fun postSyosetuForm(url: String, form: String): Boolean = withContext(Dispatchers.IO) {
+    try {
+        val conn = URL(url).openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.instanceFollowRedirects = false
+        conn.doOutput = true
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 20_000
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0")
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+        CookieManager.getInstance().getCookie("https://syosetu.com/")?.let {
+            conn.setRequestProperty("Cookie", it)
+        }
+        conn.outputStream.use { it.write(form.toByteArray()) }
+        val ok = conn.responseCode in 200..399
+        DebugLog.log("SYOSETU", "bookmark POST " + conn.responseCode + " ok=" + ok)
+        conn.disconnect()
+        ok
+    } catch (e: Exception) {
+        DebugLog.log("SYOSETU", "bookmark POST failed", e)
+        false
+    }
+}
+
+/** Move one bookmark to another 分類 (the site's 設定変更 submission).
+ *  Other settings on the form (公開設定, 更新通知) are re-posted unchanged. */
+suspend fun syosetuMoveBookmarkCategory(userfavId: String, newCategoryId: Int): Boolean {
+    val page = fetchSyosetuWithSession(
+        "https://syosetu.com/favnovelmain/updateinput/useridfavncode/" + userfavId + "/"
+    )
+    val st = parseSyosetuBookmarkSettings(page) ?: return false
+    val notice = if (st.isnotice) "&isnotice=1" else ""
+    return postSyosetuForm(
+        "https://syosetu.com" + st.actionUrl,
+        "jyokyo=" + st.jyokyo + notice + "&categoryid=" + newCategoryId
+    )
+}
+
+/** Remove one bookmark (same form, plus the delete button's del field). */
+suspend fun syosetuDeleteBookmark(userfavId: String): Boolean {
+    val page = fetchSyosetuWithSession(
+        "https://syosetu.com/favnovelmain/updateinput/useridfavncode/" + userfavId + "/"
+    )
+    val st = parseSyosetuBookmarkSettings(page) ?: return false
+    val notice = if (st.isnotice) "&isnotice=1" else ""
+    val del = java.net.URLEncoder.encode("実行する", "UTF-8")
+    return postSyosetuForm(
+        "https://syosetu.com" + st.actionUrl,
+        "jyokyo=" + st.jyokyo + notice + "&del=" + del
+    )
+}
 
 /** Category cache: filesDir/syosetu/categories.json. */
 fun saveSyosetuCategories(context: Context, cats: List<SyosetuCategory>) {
@@ -374,9 +469,12 @@ fun parseSyosetuBookmarks(html: String, categoryOverride: String? = null): List<
         title = title.removePrefix("連載 ").removePrefix("短編 ").trim()
         if (title.isBlank()) return@forEach
         val idx = m.range.first
-        val window = html.substring(idx, minOf(idx + 800, html.length))
+        val window = html.substring(idx, minOf(idx + 1600, html.length))
         val upd = Regex("""(\d{4}/\d{2}/\d{2} \d{2}:\d{2})""").find(window)?.groupValues?.get(1) ?: ""
-        out.add(SyosetuBookmark(ncode, title, cat, upd))
+        // Per-row edit key from the 設定変更 link: the settings page for ONE
+        // bookmark (category change lives there).
+        val uf = Regex("""updateinput/useridfavncode/(\d+_\d+)/""").find(window)?.groupValues?.get(1) ?: ""
+        out.add(SyosetuBookmark(ncode, title, cat, upd, uf))
     }
     return out
 }
@@ -388,7 +486,7 @@ fun syosetuBookmarksFile(context: Context) =
 fun saveSyosetuBookmarks(context: Context, bookmarks: List<SyosetuBookmark>) {
     val arr = JSONArray()
     bookmarks.forEach {
-        arr.put(JSONObject().put("n", it.ncode).put("t", it.title).put("c", it.category).put("u", it.updated))
+        arr.put(JSONObject().put("n", it.ncode).put("t", it.title).put("c", it.category).put("u", it.updated).put("f", it.userfavId))
     }
     syosetuBookmarksFile(context).writeText(arr.toString())
 }
@@ -397,7 +495,7 @@ fun loadSyosetuBookmarks(context: Context): List<SyosetuBookmark> = try {
     val arr = JSONArray(syosetuBookmarksFile(context).readText())
     (0 until arr.length()).mapNotNull { i ->
         val row = arr.optJSONObject(i) ?: return@mapNotNull null
-        SyosetuBookmark(row.optString("n"), row.optString("t"), row.optString("c"), row.optString("u"))
+        SyosetuBookmark(row.optString("n"), row.optString("t"), row.optString("c"), row.optString("u"), row.optString("f"))
     }
 } catch (e: Exception) { emptyList() }
 

@@ -739,4 +739,33 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertEquals("Ongoing Fav", rows.first().category)
     }
 
+
+    // Captured live 2026-10-13 from /favnovelmain/updateinput/useridfavncode/…/
+    @Test
+    fun parseSyosetuBookmarkSettings_readsFormContract() {
+        val html = """
+            <form id="update" action="/favnovelmain/update/useridfavncode/3154074_3256858/?token=eaa84eaa5e1f53223fa4db2ea46aa53d" method="post">
+            <input class="c-form__checkbox-input" type="checkbox" id="isnotice" name="isnotice" value="1">
+            <input class="c-form__radio-input" type="radio" name="jyokyo" id="public" value="2" checked="checked">
+            <select name="categoryid" class="c-form__select">
+            <option value="1" selected="selected">Ongoing Fav</option>
+            </select>
+        """.trimIndent()
+        val st = parseSyosetuBookmarkSettings(html)!!
+        assertEquals("/favnovelmain/update/useridfavncode/3154074_3256858/?token=eaa84eaa5e1f53223fa4db2ea46aa53d", st.actionUrl)
+        assertEquals("eaa84eaa5e1f53223fa4db2ea46aa53d", st.token)
+        assertEquals("2", st.jyokyo)
+        assertEquals(false, st.isnotice)
+    }
+
+    @Test
+    fun parseSyosetuBookmarks_capturesUserfavId() {
+        val html = """
+            <a href="https://ncode.syosetu.com/n4180mw/"><span class="c-up-label c-up-label--novel-long">連載</span>&nbsp;Title</a>
+            <li><a href="/favnovelmain/updateinput/useridfavncode/3154074_3256858/">設定変更</a></li>
+        """.trimIndent()
+        val rows = parseSyosetuBookmarks(html)
+        assertEquals("3154074_3256858", rows.first().userfavId)
+    }
+
 }

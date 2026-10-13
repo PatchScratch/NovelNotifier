@@ -183,6 +183,7 @@ fun NovelApp(
         mutableStateOf(prefs.getBoolean("syosetu_logged_in", false))
     }
     var syosetuBookmarks by remember { mutableStateOf<List<SyosetuBookmark>>(emptyList()) }
+    var syosetuCategories by remember { mutableStateOf<List<SyosetuCategory>>(emptyList()) }
     var syosetuStatus by remember { mutableStateOf("") }
     var syosetuR18 by remember {
         mutableStateOf(prefs.getBoolean("syosetu_r18", false))
@@ -322,28 +323,49 @@ fun NovelApp(
         }
         // Nothing per-category (selector with all-zero counts / a redesign)
         // → keep the plain page's rows.
-        return rows.ifEmpty { parseSyosetuBookmarks(html) }
+        val final = rows.ifEmpty { parseSyosetuBookmarks(html) }
+        // Enrich the category list with every renamed name from ONE
+        // settings page (its select lists all 分類; the list page's
+        // selector only shows categories that hold bookmarks).
+        final.firstOrNull { it.userfavId.isNotBlank() }?.let { first ->
+            try {
+                val page = fetchSyosetuWithSession(
+                    "https://syosetu.com/favnovelmain/updateinput/useridfavncode/" + first.userfavId + "/"
+                )
+                parseSyosetuBookmarkSettings(page)?.categoryNames?.takeIf { it.isNotEmpty() }?.let { names ->
+                    val merged = names.map { (id, name) ->
+                        val known = cats.firstOrNull { it.id == id }
+                        SyosetuCategory(id, name, known?.count ?: 0)
+                    }
+                    withContext(Dispatchers.IO) { saveSyosetuCategories(context, merged) }
+                }
+            } catch (e: Exception) {
+                DebugLog.log("SYOSETU", "category name enrichment skipped", e)
+            }
+        }
+        return final
+    }
+
+    suspend fun resyncSyosetuBookmarks() {
+        syosetuBookmarks = withContext(Dispatchers.IO) { loadSyosetuBookmarks(context) }
+        syosetuCategories = withContext(Dispatchers.IO) { loadSyosetuCategories(context) }
+        try {
+            val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
+            val fresh = syncSyosetuBookmarkPage(html)
+            if (fresh.isNotEmpty()) {
+                withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, fresh) }
+                syosetuBookmarks = fresh
+            }
+            // reload AFTER the sync — it enriches categories.json with every
+            // renamed 分類 from the settings page
+            syosetuCategories = withContext(Dispatchers.IO) { loadSyosetuCategories(context) }
+        } catch (e: Exception) {
+            DebugLog.log("SYOSETU", "bookmark refresh skipped", e)
+        }
     }
 
     LaunchedEffect(syosetuLoggedIn) {
-        if (syosetuLoggedIn) {
-            syosetuBookmarks = withContext(Dispatchers.IO) { loadSyosetuBookmarks(context) }
-            // Quiet self-heal: one page fetch re-syncs bookmarks so a stale
-            // or junk cache (e.g. a parse that over-captured on an older
-            // build) converges to the account's truth on every app open.
-            // Failure keeps the cache — the visible Sync button reports.
-            try {
-                val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
-                val fresh = syncSyosetuBookmarkPage(html)
-                if (fresh.isNotEmpty() && fresh.map { it.ncode } != syosetuBookmarks.map { it.ncode }) {
-                    withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, fresh) }
-                    DebugLog.log("SYOSETU", "startup bookmark refresh: ${fresh.size} rows (was ${syosetuBookmarks.size})")
-                    syosetuBookmarks = fresh
-                }
-            } catch (e: Exception) {
-                DebugLog.log("SYOSETU", "startup bookmark refresh skipped", e)
-            }
-        }
+        if (syosetuLoggedIn) resyncSyosetuBookmarks()
     }
 
     // Cold start first (volatile parked by onCreate), then live taps while running.
@@ -763,6 +785,30 @@ fun NovelApp(
         )
         syosetuNovel != null -> SyosetuDetailScreen(
             novel = syosetuNovel!!,
+            bookmark = syosetuBookmarks.firstOrNull { it.url == syosetuNovel!!.url },
+            categories = syosetuCategories,
+            onChangeCategory = { catId ->
+                val bm = syosetuBookmarks.firstOrNull { it.url == syosetuNovel!!.url }
+                if (bm != null && bm.userfavId.isNotBlank()) {
+                    scope.launch {
+                        syosetuStatus = "Moving bookmark…"
+                        val ok = syosetuMoveBookmarkCategory(bm.userfavId, catId)
+                        syosetuStatus = if (ok) "Bookmark moved" else "Move failed — try again"
+                        if (ok) resyncSyosetuBookmarks()
+                    }
+                }
+            },
+            onRemoveBookmark = {
+                val bm = syosetuBookmarks.firstOrNull { it.url == syosetuNovel!!.url }
+                if (bm != null && bm.userfavId.isNotBlank()) {
+                    scope.launch {
+                        syosetuStatus = "Removing bookmark…"
+                        val ok = syosetuDeleteBookmark(bm.userfavId)
+                        syosetuStatus = if (ok) "Bookmark removed" else "Remove failed — try again"
+                        if (ok) resyncSyosetuBookmarks()
+                    }
+                }
+            },
             onBack = { syosetuNovel = null },
             onOpenReader = { chapters, startAt ->
                 readerTarget = ReaderTarget(

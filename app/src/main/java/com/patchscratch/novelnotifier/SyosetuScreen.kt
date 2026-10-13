@@ -285,7 +285,13 @@ fun SyosetuDiscoverBody(
 fun SyosetuDetailScreen(
     novel: SyosetuNovel,
     onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit,
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    // Bookmark management (site write-back, NU-style CHANGE LIST parity):
+    // non-null category = this series is bookmarked with that 分類 name.
+    bookmark: SyosetuBookmark? = null,
+    categories: List<SyosetuCategory> = emptyList(),
+    onChangeCategory: (Int) -> Unit = {},
+    onRemoveBookmark: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var toc by remember { mutableStateOf<SyosetuToc?>(null) }
@@ -403,6 +409,56 @@ fun SyosetuDetailScreen(
                     },
                     enabled = toc?.episodes?.isNotEmpty() == true
                 ) { Text(t("Download all", "全部ダウンロード") + " (" + syosetuEpisodeLabel(novel.episodeCount) + ")") }
+            }
+        }
+        if (bookmark != null) {
+            item {
+                var showCats by remember { mutableStateOf(false) }
+                var confirmDelete by remember { mutableStateOf(false) }
+                Row(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    TextButton(onClick = { showCats = true }) {
+                        Text(t("Category", "カテゴリ") + ": " + bookmark.category + " ▾")
+                    }
+                    TextButton(onClick = { confirmDelete = true }) {
+                        Text(t("Remove bookmark", "ブックマーク解除"), color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                if (showCats) {
+                    AlertDialog(
+                        onDismissRequest = { showCats = false },
+                        title = { Text(t("Change category", "カテゴリ変更")) },
+                        text = {
+                            Column {
+                                categories.forEach { c ->
+                                    TextButton(onClick = { showCats = false; onChangeCategory(c.id) }) {
+                                        Text(c.name + " (" + c.count + ")")
+                                    }
+                                }
+                                if (categories.isEmpty()) {
+                                    Text(t("Sync bookmarks once first (open the drawer).", "先にドロワーからブックマークを同期してください。"), style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showCats = false }) { Text(t("Cancel", "キャンセル")) }
+                        }
+                    )
+                }
+                if (confirmDelete) {
+                    AlertDialog(
+                        onDismissRequest = { confirmDelete = false },
+                        title = { Text(t("Remove bookmark?", "ブックマークを解除しますか？")) },
+                        text = { Text(novel.title) },
+                        confirmButton = {
+                            TextButton(onClick = { confirmDelete = false; onRemoveBookmark() }) {
+                                Text(t("Remove", "解除"), color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { confirmDelete = false }) { Text(t("Cancel", "キャンセル")) }
+                        }
+                    )
+                }
             }
         }
         item {
