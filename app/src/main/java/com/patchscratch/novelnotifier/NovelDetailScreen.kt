@@ -266,6 +266,8 @@ fun NovelDetailScreen(
     }
 
     val cover = usableCoverUrl(page.coverUrl).ifBlank { usableCoverUrl(novel.coverUrl) }
+    // Bumped after AI cover generation so CoverThumb re-reads the store.
+    var coverState by remember { mutableStateOf(0) }
     val lastReadNum = lastRead?.first?.let(::chapterNum) ?: -1
     val expectedNextNum = if (lastReadNum > 0) lastReadNum + 1 else -1
     // Next unread = last-read c-number + 1 if that row is loaded, else the lowest c we have.
@@ -417,6 +419,7 @@ fun NovelDetailScreen(
                 CoverThumb(
                     url = cover,
                     seriesUrl = novel.seriesUrl,
+                    refreshKey = coverState,
                     modifier = Modifier
                         .width(84.dp)
                         .height(112.dp)
@@ -450,6 +453,18 @@ fun NovelDetailScreen(
                     }
                     if (listStatus.isNotBlank()) {
                         Text(listStatus, style = MaterialTheme.typography.bodySmall)
+                    }
+                    // Cover-less NU series can get AI art like the JP sites.
+                    if (cover.isBlank()) {
+                        GenerateCoverButton(
+                            context = context,
+                            seriesUrl = novel.seriesUrl,
+                            title = page.title.ifBlank { novel.title },
+                            genre = page.genres,
+                            synopsis = page.description,
+                            hasCover = CoverStore.hasLocal(context, novel.seriesUrl),
+                            onGenerated = { coverState += 1 }
+                        )
                     }
                 }
             }

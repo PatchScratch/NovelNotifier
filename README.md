@@ -123,12 +123,15 @@ The on-screen contrast tip: the status bar icon color follows whichever scheme i
 
 Settings → **Back up library** writes one zip via the file picker — save it to Google Drive, OneDrive, a USB drive, anywhere. On the new device: install, **Restore from backup**, log in. Your library and covers appear instantly; the sync engine tops up anything stale. Backups deliberately exclude credentials and feed tokens — a restored device does a fresh login and re-captures its own feed links automatically.
 
-## Translation costs (planned: OpenAI-compatible API)
+## AI translation & cover costs (bring your own key)
 
-Planned feature: chapter translation through any OpenAI-compatible endpoint
-(OpenRouter, OpenAI, a local server) — you bring your own key. Translations
-are stored in the offline ePub library alongside the original text, so they
-carry between devices in backups and exports like any other book.
+Chapter translation and AI cover art run through any OpenAI-compatible
+endpoint (OpenRouter, OpenAI, a local server) — you bring your own key,
+set once in Settings → Translation. Translations are stored in the
+offline ePub library alongside the original text (English renders under
+each Japanese paragraph in the reader), so they carry between devices in
+backups and exports like any other book. The API key never leaves the
+device and is excluded from backups.
 
 Approximate per-chapter cost for a typical web-novel chapter (~3,000 Japanese
 characters in ≈ ~2,500–3,000 input tokens, ~2,000–2,500 output tokens for a
@@ -150,9 +153,17 @@ favorite passages, not whole libraries. Glossaries (character/term sheets
 kept in the prompt) improve name consistency at ~500 extra input tokens per
 chapter.
 
+**AI covers:** series without a site cover offer a *Generate cover (AI)*
+button on their page (all three sites). Art is generated from the title,
+genre and synopsis in light-novel cover style, without text baked into the
+image, and stored exactly like a downloaded cover — grids, backups and
+transfers treat it identically. Typical image models run **~$0.01–0.02 per
+cover** (measured: Seedream 5 Flash, $0.018). Series info (synopses, tags)
+can also be translated for free on-device via ML Kit — see Settings.
+
 ## Roadmap
 
-Planned next: chapter **translation via OpenAI-compatible APIs** (your own endpoint + key, e.g. OpenRouter; translations stored in the ePub library — cost estimates below), **AI-generated covers** from story content for series without covers, Kakuyomu login features (follows, reading history), then the wider Japanese webnovel sites. Shipped already: in-app reader (browser + extracted views, anti-scrape font-substitution decoding), the full offline ePub library, and the three-site workspace. Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction filters by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
+Planned next: the rest of the Japanese webnovel sites, Syosetu bookmark categories and しおり sync, reading-history sync on Kakuyomu. Shipped already: chapter **translation via OpenAI-compatible APIs** and **AI-generated covers** (your own endpoint + key, e.g. OpenRouter — cost estimates above), free on-device synopsis translation via ML Kit, Kakuyomu login + follows with site-master sync, the in-app reader (browser + extracted views, anti-scrape font-substitution decoding), the full offline ePub library, and the three-site workspace. Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction filters by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
 
 ## Acknowledgements
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -424,19 +425,28 @@ fun KakuyomuDetailScreen(
             }
         }
         item {
-            Text(
-                (if (work.isSexual) "R18 · " else "") + work.title,
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-        }
-        item {
-            Text(
-                "${work.author} ・ ${kakuyomuGenreName(work.genre)} ・ " +
-                    kakuyomuEpisodeLabel(work.episodeCount) + " ・ " + kakuyomuStatusLabel(work.isCompleted),
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
+            // Cover thumb beside the title, NU-style — shows generated art
+            // once CoverStore has one (Kakuyomu covers are admin-set and
+            // mostly absent from the API payload).
+            Row(modifier = Modifier.padding(horizontal = 16.dp)) {
+                CoverThumb(
+                    url = work.coverUrl,
+                    seriesUrl = work.url,
+                    modifier = Modifier.padding(top = 8.dp, end = 12.dp).width(84.dp).height(112.dp)
+                )
+                Column {
+                    Text(
+                        (if (work.isSexual) "R18 · " else "") + work.title,
+                        style = MaterialTheme.typography.headlineSmall
+                    )
+                    Text(
+                        "${work.author} ・ ${kakuyomuGenreName(work.genre)} ・ " +
+                            kakuyomuEpisodeLabel(work.episodeCount) + " ・ " + kakuyomuStatusLabel(work.isCompleted),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
         }
         if (work.catchphrase.isNotBlank()) {
             item {
@@ -494,6 +504,17 @@ fun KakuyomuDetailScreen(
                     enabled = detail?.episodes?.isNotEmpty() == true
                 ) { Text(t("Download all", "全部ダウンロード") + " (" + kakuyomuEpisodeLabel(detail?.episodes?.size ?: work.episodeCount) + ")") }
             }
+        }
+        item {
+            GenerateCoverButton(
+                context = context,
+                seriesUrl = work.url,
+                title = work.title,
+                genre = kakuyomuGenreName(work.genre),
+                synopsis = (detail?.work?.introduction ?: "").ifBlank { work.catchphrase },
+                hasCover = CoverStore.hasLocal(context, work.url),
+                onGenerated = {}
+            )
         }
         if (loading) {
             item { CircularProgressIndicator(modifier = Modifier.padding(24.dp)) }

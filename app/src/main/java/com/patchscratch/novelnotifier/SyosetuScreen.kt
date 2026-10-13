@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -340,20 +342,28 @@ fun SyosetuDetailScreen(
             }
         }
         item {
-            Text(
-                novel.title,
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-        }
-        item {
-            Text(
-                "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
-                    syosetuEpisodeLabel(novel.episodeCount) + " ・ " + syosetuStatusLabel(novel.isCompleted) + " ・ " +
-                    t("Updated", "最終更新") + " ${novel.lastUpdate.take(10)}",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
+            // Cover thumb beside the title, NU-style — shows generated art
+            // once CoverStore has one (Syosetu itself serves no covers).
+            Row(modifier = Modifier.padding(horizontal = 16.dp)) {
+                CoverThumb(
+                    url = "",
+                    seriesUrl = novel.url,
+                    modifier = Modifier.padding(top = 8.dp, end = 12.dp).width(84.dp).height(112.dp)
+                )
+                Column {
+                    Text(novel.title, style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
+                            syosetuEpisodeLabel(novel.episodeCount) + " ・ " + syosetuStatusLabel(novel.isCompleted),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Text(
+                        t("Updated", "最終更新") + " ${novel.lastUpdate.take(10)}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
         }
         if (novel.story.isNotBlank()) {
             item {
@@ -391,6 +401,17 @@ fun SyosetuDetailScreen(
                     enabled = toc?.episodes?.isNotEmpty() == true
                 ) { Text(t("Download all", "全部ダウンロード") + " (" + syosetuEpisodeLabel(novel.episodeCount) + ")") }
             }
+        }
+        item {
+            GenerateCoverButton(
+                context = context,
+                seriesUrl = novel.url,
+                title = novel.title,
+                genre = syosetuGenreName(novel.genreCode),
+                synopsis = novel.story,
+                hasCover = CoverStore.hasLocal(context, novel.url),
+                onGenerated = {}
+            )
         }
         if (loading) {
             item {

@@ -37,6 +37,31 @@ object CoverStore {
 
     fun count(context: Context): Int = dir(context).listFiles()?.size ?: 0
 
+    // --- AI-generated covers ----------------------------------------------------
+    // Provenance marker lives OUTSIDE covers/ (a covers/<hash>.ai file would
+    // collide with localFile()'s prefix match and inflate count()).
+
+    private fun genMarker(context: Context, seriesUrl: String): File =
+        context.filesDir.resolve("covers_ai").apply { mkdirs() }.resolve(prefix(seriesUrl))
+
+    /** True when the stored cover came from CoverGenClient (not the site). */
+    fun isGenerated(context: Context, seriesUrl: String): Boolean =
+        seriesUrl.isNotBlank() && genMarker(context, seriesUrl).exists()
+
+    /**
+     * Store generated [bytes] as the cover for [seriesUrl] (extension [ext]),
+     * replacing any earlier file for the series, and mark its provenance.
+     */
+    fun saveGenerated(context: Context, seriesUrl: String, bytes: ByteArray, ext: String): File {
+        val p = prefix(seriesUrl)
+        dir(context).listFiles()?.forEach { if (it.name.startsWith("$p.")) it.delete() }
+        val file = dir(context).resolve("$p.$ext")
+        file.writeBytes(bytes)
+        genMarker(context, seriesUrl).writeText("1")
+        DebugLog.log("COVER", "stored generated ${file.name} (${bytes.size}B) '$seriesUrl'")
+        return file
+    }
+
     /**
      * Download [coverUrl] into the store for [seriesUrl]. [CoverResult.file]
      * is null for blank/placeholder URLs, HTTP errors, or junk responses;

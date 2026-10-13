@@ -438,6 +438,27 @@ fun SettingsScreen(
             xlatePrompt = TranslationClient.defaultPrompt()
             prefs.edit { putString("xlate_prompt", "") }   // blank = follow app language
         }) { Text(t("Reset to default", "既定に戻す")) }
+        var coverModel by remember {
+            mutableStateOf(
+                prefs.getString("xlate_cover_model", "")?.ifBlank { null } ?: CoverGenClient.DEFAULT_MODEL
+            )
+        }
+        OutlinedTextField(
+            value = coverModel,
+            onValueChange = {
+                coverModel = it
+                prefs.edit { putString("xlate_cover_model", it) }
+            },
+            label = { Text(t("Cover image model", "カバー画像モデル")) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            t("Model used by “Generate cover (AI)” on a series page. Only appears for series without a site cover. Typical OpenRouter image models run about $0.01–0.02 per cover.",
+                "シリーズ画面の「カバーを生成（AI）」で使うモデルです。サイトカバーのないシリーズにのみ表示されます。OpenRouterの画像モデルは通常1枚約$0.01–0.02です。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
+        )
         // Site-info engine: synopses, catchphrases, tags on the Japanese
         // sites — ML Kit on-device is the FREE default; the AI key is an
         // optional quality upgrade at negligible per-synopsis cost.

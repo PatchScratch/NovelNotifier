@@ -116,9 +116,15 @@ fun CoverPrefetcher(
  * at all → the puzzled shiba placeholder with its "No cover available" caption.
  */
 @Composable
-fun CoverThumb(url: String, seriesUrl: String = "", modifier: Modifier = Modifier) {
+fun CoverThumb(
+    url: String,
+    seriesUrl: String = "",
+    modifier: Modifier = Modifier,
+    // Bump to re-read CoverStore (e.g. after AI cover generation).
+    refreshKey: Int = 0
+) {
     val context = LocalContext.current
-    val local = remember(seriesUrl) {
+    val local = remember(seriesUrl, refreshKey) {
         seriesUrl.takeIf { it.isNotBlank() }?.let { CoverStore.localFile(context, it) }
     }
     Surface(
