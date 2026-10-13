@@ -59,11 +59,12 @@ class TranslationClientTest {
     }
 
     @Test
-    fun userMessage_isParagraphJsonArray() {
+    fun userMessage_isIndexedObjectArray() {
         val arr = JSONArray(TranslationClient.userMessage(listOf("壱", "弐", "")))
         assertEquals(3, arr.length())
-        assertEquals("壱", arr.getString(0))
-        assertEquals("", arr.getString(2))   // blanks preserved — indexes stay 1:1
+        assertEquals(0, arr.getJSONObject(0).getInt("i"))
+        assertEquals("壱", arr.getJSONObject(0).getString("t"))
+        assertEquals("", arr.getJSONObject(2).getString("t"))   // blanks preserved — indexes stay 1:1
     }
 
     @Test
@@ -81,6 +82,44 @@ class TranslationClientTest {
         assertNull(TranslationClient.parseReply("I could not translate that.", 2))
         assertNull(TranslationClient.parseReply("", 2))
         assertNull(TranslationClient.parseReply("""[]""", 0))
+    }
+
+    @Test
+    fun parseReply_acceptsIndexedObjects_withToleratedGaps() {
+        val ok = """[{"i":0,"e":"One."},{"i":1,"e":"Two."},{"i":2,"e":"Three."}]"""
+        assertEquals(listOf("One.", "Two.", "Three."), TranslationClient.parseReply(ok, 3))
+        // one skipped index → blank, accepted
+        val gap = """[{"i":0,"e":"One."},{"i":2,"e":"Three."}]"""
+        assertEquals(listOf("One.", "", "Three."), TranslationClient.parseReply(gap, 3))
+        // three skipped of five → rejected
+        val bad = """[{"i":0,"e":"One."},{"i":4,"e":"Five."}]"""
+        assertNull(TranslationClient.parseReply(bad, 5))
+        // out-of-range index → rejected
+        assertNull(TranslationClient.parseReply("""[{"i":0,"e":"One."},{"i":3,"e":"?"}]""", 2))
+        // "t" key also accepted as the translation field
+        assertEquals(listOf("One."), TranslationClient.parseReply("""[{"i":0,"t":"One."}]""", 1))
+    }
+
+    // Observed live (2026-10-13, gpt-4.1-mini via OpenRouter): the model
+    // renders dialogue with straight ASCII quotes INSIDE JSON string values.
+    @Test
+    fun parseReply_repairsUnescapedDialogueQuotes() {
+        val bad = """["What is it?","Another elbow came.",""—Twelve years," I thought.","He said "hello" to her.","The prince stopped."]"""
+        val parsed = TranslationClient.parseReply(bad, 5)
+        assertNotNull(parsed)
+        // item 2 legitimately opens with a dialogue quote rendered as "
+        assertEquals("\"—Twelve years,\" I thought.", parsed!![2])
+        assertEquals("He said \"hello\" to her.", parsed[3])
+        assertEquals("The prince stopped.", parsed[4])
+    }
+
+    @Test
+    fun escapeInnerQuotes_leavesValidJsonAlone() {
+        val ok = """["a","b","c"]"""
+        assertEquals(ok, TranslationClient.escapeInnerQuotes(ok))
+        // raw string: backslash-quote here is the literal escaped-JSON form
+        val escaped = """["he said \"hi\"","b"]"""
+        assertEquals(escaped, TranslationClient.escapeInnerQuotes(escaped))
     }
 
     // --- site-info cache (MetadataTranslator) -------------------------------

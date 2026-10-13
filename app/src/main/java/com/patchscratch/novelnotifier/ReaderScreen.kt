@@ -471,6 +471,7 @@ fun ReaderScreen(
                             }
                             translating = false
                             if (result != null) {
+                                DebugLog.log("XLATE", "chapter translated OK: ${result.size} paragraphs")
                                 translation = result
                                 showTranslation = true
                                 // Persist alongside the original — store the

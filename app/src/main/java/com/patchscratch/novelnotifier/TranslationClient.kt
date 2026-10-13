@@ -40,15 +40,18 @@ object TranslationClient {
 
     /**
      * Structural contract appended under ANY prompt (default or custom):
-     * paragraphs arrive as a JSON array and must return as a JSON array of
-     * the same length so the reader can render English under each Japanese
-     * paragraph. Without this the model returns prose and alignment is lost.
+     * paragraphs arrive as indexed JSON objects and must return the same way
+     * so the reader can render English under each Japanese paragraph.
+     * Indices make line-merging detectable (a skipped index) instead of
+     * silently shifting every paragraph after it.
      */
     private const val ALIGNMENT_CONTRACT =
-        "\n\nThe input is a JSON array of paragraphs; reply with ONLY a JSON array " +
-            "of the same length, each item the translation of the paragraph at that " +
-            "index. Empty input items become empty output items. Output the JSON array " +
-            "and nothing else."
+        "\n\nThe input is a JSON array of objects like {\"i\":0,\"t\":\"…\"}, one per " +
+            "paragraph. Reply with ONLY a JSON array of objects with the SAME i values, " +
+            "each \"e\" (or \"t\") holding that paragraph's translation. Include EVERY " +
+            "index — never merge, split, add or drop paragraphs. Render dialogue and " +
+            "quotation marks as curly quotes (“ ”) — never straight ASCII double " +
+            "quotes, which break JSON. Output the JSON array and nothing else."
 
     /** Full system message: user prompt + alignment contract + glossary. */
     fun systemPrompt(custom: String, glossary: String): String = buildString {
@@ -59,9 +62,11 @@ object TranslationClient {
         }
     }
 
-    /** User message = the paragraphs as a JSON array (indexes stay 1:1). */
+    /** User message = the paragraphs as an indexed JSON array (i is 1:1). */
     fun userMessage(paragraphs: List<String>): String =
-        JSONArray(paragraphs).toString()
+        JSONArray(paragraphs.withIndex().map { (i, p) ->
+            JSONObject().put("i", i).put("t", p)
+        }).toString()
 
     /** The POST body for a chat-completions endpoint. */
     fun requestBody(model: String, system: String, user: String, temperature: Double = 0.3): String =
@@ -89,14 +94,83 @@ object TranslationClient {
         val start = cleaned.indexOf('[')
         val end = cleaned.lastIndexOf(']')
         if (start < 0 || end <= start) return null
-        return try {
-            val arr = JSONArray(cleaned.substring(start, end + 1))
-            if (arr.length() == 0 || arr.length() != expectedCount) return null
-            (0 until arr.length()).map { arr.optString(it) }
+        val slice = cleaned.substring(start, end + 1)
+        val arr = try {
+            JSONArray(slice)
         } catch (e: Exception) {
-            DebugLog.log("XLATE", "reply parse failed", e)
-            null
+            // Models emit unescaped dialogue quotes inside string values
+            // (“"—Twelve years," I thought.”) which kills strict JSON. Repair:
+            // a quote only closes a string when the next non-space char is a
+            // structural , or ] — every other inner quote gets escaped.
+            val repaired = try {
+                JSONArray(escapeInnerQuotes(slice))
+            } catch (e2: Exception) {
+                DebugLog.log("XLATE", "reply parse failed", e)
+                return null
+            }
+            DebugLog.log("XLATE", "repaired ${repaired.length()}-item reply with inner-quote fix")
+            repaired
         }
+        // Indexed objects {"i":n,"e":"…"}: place by i. A couple of skipped
+        // indices degrade to blank lines; more than that is a mis-aligned
+        // reply we refuse (the caller's corrective retry names the count).
+        if (arr.length() > 0 && arr.opt(0) is JSONObject) {
+            val byIndex = HashMap<Int, String>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: return null
+                val idx = o.optInt("i", -1)
+                if (idx < 0 || idx >= expectedCount) return null
+                byIndex[idx] = o.optString("e").ifBlank { o.optString("t") }
+            }
+            val missing = expectedCount - byIndex.size
+            if (missing > 2) return null
+            if (missing > 0) DebugLog.log("XLATE", "indexed reply missing $missing items — leaving blanks")
+            return List(expectedCount) { byIndex[it] ?: "" }
+        }
+        // Legacy plain-string array.
+        if (arr.length() == 0 || arr.length() != expectedCount) return null
+        return (0 until arr.length()).map { arr.optString(it) }
+    }
+
+    /** Escape string-internal double quotes so the array parses again. */
+    internal fun escapeInnerQuotes(slice: String): String {
+        val sb = StringBuilder(slice.length + 16)
+        var inString = false
+        var i = 0
+        while (i < slice.length) {
+            val c = slice[i]
+            when {
+                c == '\\' && inString && i + 1 < slice.length -> {
+                    sb.append(c).append(slice[i + 1]); i += 2; continue
+                }
+                c == '"' -> {
+                    if (!inString) {
+                        inString = true; sb.append(c)
+                    } else {
+                        // A close quote must be followed by , or ] — and after
+                        // a comma the next non-space must open an item or end
+                        // the array. "…" dialogue directly before a comma
+                        // ("years," I thought.) fails that second test.
+                        var j = i + 1
+                        while (j < slice.length && slice[j] == ' ') j++
+                        val closes = when {
+                            j >= slice.length || slice[j] == ']' -> true
+                            slice[j] == ',' -> {
+                                var k = j + 1
+                                while (k < slice.length && slice[k] == ' ') k++
+                                k >= slice.length || slice[k] == '"' || slice[k] == ']'
+                            }
+                            else -> false
+                        }
+                        if (closes) { inString = false; sb.append(c) }
+                        else sb.append("\\\"")
+                    }
+                }
+                else -> sb.append(c)
+            }
+            i++
+        }
+        return sb.toString()
     }
 
     // --- network ----------------------------------------------------------------
@@ -113,33 +187,59 @@ object TranslationClient {
         customPrompt: String = "",
         temperature: Double = 0.3
     ): List<String>? = withContext(Dispatchers.IO) {
-        val out = mutableListOf<String>()
+        // Blank paragraphs never go over the wire — models drop or merge
+        // them, which breaks 1:1 alignment for the whole chunk. They come
+        // back as blanks in the same positions.
+        val sent = paragraphs.withIndex().filter { it.value.isNotBlank() }
+        if (sent.isEmpty()) return@withContext paragraphs.map { "" }
+        val out = arrayOfNulls<String>(paragraphs.size)
         // Long chapters split into paragraph chunks: cheaper per request,
         // bounded output tokens, and a failed chunk fails only itself.
         var i = 0
-        while (i < paragraphs.size) {
-            val chunk = paragraphs.subList(i, minOf(i + chunkSize, paragraphs.size))
-            val body = requestBody(
-                model,
-                systemPrompt(customPrompt, glossary),
-                userMessage(chunk),
-                temperature
-            )
-            val content = try {
-                post("$endpointBase/chat/completions", apiKey, body)
-            } catch (e: Exception) {
-                DebugLog.log("XLATE", "request failed at paragraph $i", e)
-                return@withContext null
+        while (i < sent.size) {
+            val chunk = sent.subList(i, minOf(i + chunkSize, sent.size)).map { it.value }
+            val system = systemPrompt(customPrompt, glossary)
+            var parsed = runChunk(endpointBase, apiKey, model, system, chunk, temperature)
+            if (parsed == null) {
+                // Count mismatch is the usual rejection (the model merges
+                // short lines despite the contract). One corrective retry
+                // naming the exact item count recovers most of them.
+                parsed = runChunk(
+                    endpointBase, apiKey, model,
+                    system + "\n\nCRITICAL: the input has EXACTLY ${chunk.size} indexed items " +
+                        "(i = 0…${chunk.size - 1}). Your reply MUST contain one object for EVERY " +
+                        "index with its translation in \"e\". Do not merge, split, add or drop items; " +
+                        "use curly quotes (“ ”), never straight ASCII double quotes.",
+                    chunk, temperature
+                )
             }
-            val parsed = parseReply(content, chunk.size)
-                ?: run {
-                    DebugLog.log("XLATE", "unusable reply at paragraph $i: ${content.take(160)}")
-                    return@withContext null
-                }
-            out += parsed
+            if (parsed == null) return@withContext null
+            parsed.forEachIndexed { j, s -> out[sent[i + j].index] = s }
             i += chunkSize
         }
-        out
+        List(paragraphs.size) { out[it] ?: "" }
+    }
+
+    /** One chunk through the endpoint; null = unusable reply or network error. */
+    private fun runChunk(
+        endpointBase: String,
+        apiKey: String,
+        model: String,
+        system: String,
+        chunk: List<String>,
+        temperature: Double
+    ): List<String>? {
+        val content = try {
+            post("$endpointBase/chat/completions", apiKey, requestBody(model, system, userMessage(chunk), temperature))
+        } catch (e: Exception) {
+            DebugLog.log("XLATE", "request failed", e)
+            null
+        } ?: return null
+        val parsed = parseReply(content, chunk.size)
+        if (parsed == null) {
+            DebugLog.log("XLATE", "unusable reply (expected ${chunk.size} items): ${content.take(160)}")
+        }
+        return parsed
     }
 
     private fun post(url: String, apiKey: String, body: String): String {
@@ -159,9 +259,18 @@ object TranslationClient {
         val raw = stream?.bufferedReader()?.use { it.readText() } ?: ""
         conn.disconnect()
         if (status !in 200..299) throw java.io.IOException("translate HTTP $status: ${raw.take(200)}")
-        // chat-completions envelope: choices[0].message.content
-        return JSONObject(raw)
-            .optJSONArray("choices")?.optJSONObject(0)
-            ?.optJSONObject("message")?.optString("content").orEmpty()
+        // chat-completions envelope: choices[0].message.content. OpenRouter
+        // reports upstream provider errors as HTTP 200 with content:null (and
+        // sometimes a top-level error object) — treat that as a request
+        // failure, not an unusable reply, and surface the finish reason.
+        val root = JSONObject(raw)
+        val choice = root.optJSONArray("choices")?.optJSONObject(0)
+        val content = choice?.optJSONObject("message")?.optString("content").orEmpty()
+        if (content.isBlank() || content == "null") {
+            val finish = choice?.optString("finish_reason").orEmpty()
+            val err = root.optJSONObject("error")?.optString("message").orEmpty()
+            throw java.io.IOException("empty completion (finish_reason=$finish) ${err.take(160)}")
+        }
+        return content
     }
 }
