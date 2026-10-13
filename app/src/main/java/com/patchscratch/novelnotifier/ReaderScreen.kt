@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -586,6 +587,49 @@ fun ReaderScreen(
                     text = { Text(t("Translation files (prompt/glossary/voices)…", "翻訳ファイル（プロンプト/用語集/声）…")) },
                     onClick = { showMenu = false; onOpenXlateFiles() }
                 )
+                // Paragraph layout, switchable right here (Settings holds the
+                // saved default): both / Japanese only / English only.
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            t("Layout: ", "レイアウト：") + when (prefs.getString("xlate_layout", "both") ?: "both") {
+                                "jp" -> t("Japanese only", "日本語のみ")
+                                "en" -> t("English only", "英語のみ")
+                                else -> t("JP + EN", "日英両方")
+                            }
+                        )
+                    },
+                    onClick = {
+                        val next = when (prefs.getString("xlate_layout", "both") ?: "both") {
+                            "both" -> "jp"; "jp" -> "en"; else -> "both"
+                        }
+                        prefs.edit { putString("xlate_layout", next) }
+                    }
+                )
+                // Bulk twin of Download all: every STORED chapter through the
+                // translator, one at a time, auto-refining lock files as it
+                // goes. Unstored chapters need Download all first.
+                if (xlateKey.isNotBlank()) {
+                    val bulk by TranslationQueue.state.collectAsState()
+                    val mine = bulk?.takeIf { it.seriesUrl == target.seriesUrl }
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                when {
+                                    mine?.running == true ->
+                                        t("Translating all… ", "一括翻訳中… ") + mine.done + "/" + mine.total +
+                                            t(" (tap to stop)", "（タップで停止）")
+                                    else -> t("Translate all stored", "保存済みを一括翻訳")
+                                }
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            if (mine?.running == true) TranslationQueue.stop()
+                            else TranslationQueue.start(context, target.seriesTitle, target.seriesUrl)
+                        }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text(t("Reload", "再読み込み")) },
                     onClick = { showMenu = false; loadKey += 1 }
