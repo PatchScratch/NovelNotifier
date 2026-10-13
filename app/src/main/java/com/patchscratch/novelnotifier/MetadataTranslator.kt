@@ -7,6 +7,7 @@ import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -34,6 +35,10 @@ object MetadataTranslator {
 
     private var translator: com.google.mlkit.nl.translate.Translator? = null
     private var modelReady = false
+    // ML Kit's client is happiest with one request at a time — a tab of
+    // rows firing concurrent translate() calls trips failures (which then
+    // look like "only the first tab translates"). Serialize everything.
+    private val mlKitMutex = kotlinx.coroutines.sync.Mutex()
 
     /** The effective engine: 'api' requires a configured key; without one it
      *  degrades to the free on-device engine (the user's ML-Kit-default). */
@@ -57,19 +62,24 @@ object MetadataTranslator {
         return translator!!
     }
 
-    /** Download the JP→EN pack if absent (first use needs network; ~30MB). */
+    /** Download the JP→EN pack if absent (first use needs network; ~30MB).
+     *  A failed download is NOT sticky — the next call retries, so a
+     *  transient failure can't blank the feature for the whole process. */
     suspend fun ensureModel() {
         if (modelReady) return
-        val t = deviceTranslator()
-        val done = suspendCancellableCoroutine<Boolean> { cont ->
-            t.downloadModelIfNeeded(DownloadConditions.Builder().build())
-                .addOnSuccessListener { if (cont.isActive) cont.resume(true) }
-                .addOnFailureListener { e ->
-                    DebugLog.log("XLATE", "model download failed", e)
-                    if (cont.isActive) cont.resume(false)
-                }
+        mlKitMutex.withLock {
+            if (modelReady) return
+            val t = deviceTranslator()
+            val done = suspendCancellableCoroutine<Boolean> { cont ->
+                t.downloadModelIfNeeded(DownloadConditions.Builder().build())
+                    .addOnSuccessListener { if (cont.isActive) cont.resume(true) }
+                    .addOnFailureListener { e ->
+                        DebugLog.log("XLATE", "model download failed", e)
+                        if (cont.isActive) cont.resume(false)
+                    }
+            }
+            if (done) modelReady = true
         }
-        modelReady = done
     }
 
     /** On-device ML Kit translation; null when the model is unavailable. */
@@ -77,14 +87,16 @@ object MetadataTranslator {
         if (text.isBlank()) return null
         ensureModel()
         if (!modelReady) return null
-        val t = deviceTranslator()
-        return suspendCancellableCoroutine { cont ->
-            t.translate(text)
-                .addOnSuccessListener { out -> if (cont.isActive) cont.resume(out) }
-                .addOnFailureListener { e ->
-                    DebugLog.log("XLATE", "on-device translate failed", e)
-                    if (cont.isActive) cont.resume(null)
-                }
+        return mlKitMutex.withLock {
+            val t = deviceTranslator()
+            suspendCancellableCoroutine { cont ->
+                t.translate(text)
+                    .addOnSuccessListener { out -> if (cont.isActive) cont.resume(out) }
+                    .addOnFailureListener { e ->
+                        DebugLog.log("XLATE", "on-device translate failed", e)
+                        if (cont.isActive) cont.resume(null)
+                    }
+            }
         }
     }
 
