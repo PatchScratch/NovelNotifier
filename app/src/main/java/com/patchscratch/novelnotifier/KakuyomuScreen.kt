@@ -405,104 +405,121 @@ fun KakuyomuDetailScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize().screenInsets()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
-            Spacer(modifier = Modifier.weight(1f))
-            // Local bookmark (device reading list) — the site's own follow
-            // (フォロー) needs an account; the drawer notes that.
-            TextButton(onClick = onToggleBookmark) {
-                Text(
-                    if (bookmarked) t("⚑ Bookmarked", "⚑ ブックマーク済み") else t("⚑ Bookmark", "⚑ ブックマーク"),
-                    color = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    // One scrollable surface (same fix as Syosetu's detail): header, intro,
+    // catchphrase, tags, buttons and every episode share a single
+    // LazyColumn so translated metadata can't box the chapter list.
+    LazyColumn(modifier = Modifier.fillMaxSize().screenInsets()) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
+                Spacer(modifier = Modifier.weight(1f))
+                // Local bookmark (device reading list) — the site's own follow
+                // (フォロー) needs an account; the drawer notes that.
+                TextButton(onClick = onToggleBookmark) {
+                    Text(
+                        if (bookmarked) t("⚑ Bookmarked", "⚑ ブックマーク済み") else t("⚑ Bookmark", "⚑ ブックマーク"),
+                        color = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+        item {
+            Text(
+                (if (work.isSexual) "R18 · " else "") + work.title,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+        item {
+            Text(
+                "${work.author} ・ ${kakuyomuGenreName(work.genre)} ・ " +
+                    kakuyomuEpisodeLabel(work.episodeCount) + " ・ " + kakuyomuStatusLabel(work.isCompleted),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+        if (work.catchphrase.isNotBlank()) {
+            item {
+                TranslatedInfoText(
+                    text = work.catchphrase,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
                 )
             }
         }
-        Text(
-            (if (work.isSexual) "R18 · " else "") + work.title,
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Text(
-            "${work.author} ・ ${kakuyomuGenreName(work.genre)} ・ " +
-                kakuyomuEpisodeLabel(work.episodeCount) + " ・ " + kakuyomuStatusLabel(work.isCompleted),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        if (work.catchphrase.isNotBlank()) {
-            TranslatedInfoText(
-                text = work.catchphrase,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
-            )
-        }
         val tags = detail?.work?.tags ?: ""
         if (tags.isNotBlank()) {
-            TranslatedInfoText(
-                text = tags,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
-            )
+            item {
+                TranslatedInfoText(
+                    text = tags,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                )
+            }
         }
         val intro = detail?.work?.introduction ?: ""
         if (intro.isNotBlank()) {
-            TranslatedInfoText(
-                text = intro,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(16.dp)
-            )
+            item {
+                TranslatedInfoText(
+                    text = intro,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
         }
-        Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-            TextButton(
-                onClick = {
-                    val chapters = toChapters()
-                    if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
-                },
-                enabled = detail?.episodes?.isNotEmpty() == true
-            ) { Text(t("Read from start", "最初から読む")) }
-            TextButton(
-                onClick = {
-                    val chapters = toChapters()
-                    if (chapters.isNotEmpty()) {
-                        EpubBulkService.start(
-                            context,
-                            EpubBulkService.BulkJob(
-                                seriesTitle = work.title,
-                                seriesUrl = work.url,
-                                chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
-                                meta = (detail?.work ?: work).toBookMeta()
+        item {
+            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                TextButton(
+                    onClick = {
+                        val chapters = toChapters()
+                        if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
+                    },
+                    enabled = detail?.episodes?.isNotEmpty() == true
+                ) { Text(t("Read from start", "最初から読む")) }
+                TextButton(
+                    onClick = {
+                        val chapters = toChapters()
+                        if (chapters.isNotEmpty()) {
+                            EpubBulkService.start(
+                                context,
+                                EpubBulkService.BulkJob(
+                                    seriesTitle = work.title,
+                                    seriesUrl = work.url,
+                                    chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
+                                    meta = (detail?.work ?: work).toBookMeta()
+                                )
                             )
-                        )
-                    }
-                },
-                enabled = detail?.episodes?.isNotEmpty() == true
-            ) { Text(t("Download all", "全部ダウンロード") + " (" + kakuyomuEpisodeLabel(detail?.episodes?.size ?: work.episodeCount) + ")") }
+                        }
+                    },
+                    enabled = detail?.episodes?.isNotEmpty() == true
+                ) { Text(t("Download all", "全部ダウンロード") + " (" + kakuyomuEpisodeLabel(detail?.episodes?.size ?: work.episodeCount) + ")") }
+            }
         }
         if (loading) {
-            CircularProgressIndicator(modifier = Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
+            item { CircularProgressIndicator(modifier = Modifier.padding(24.dp)) }
         }
-        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+        if (error.isNotBlank()) {
+            item { Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+        }
         val list = detail?.episodes ?: emptyList()
-        LazyColumn {
-            items(list, key = { it.id }) { ep ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val chapters = toChapters()
-                            onOpenReader(chapters, list.indexOf(ep))
-                        }
-                        .padding(horizontal = 20.dp, vertical = 10.dp)
-                ) {
-                    if (ep.chapterTitle.isNotBlank()) {
-                        Text(
-                            ep.chapterTitle,
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
+        items(list, key = { it.id }) { ep ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val chapters = toChapters()
+                        onOpenReader(chapters, list.indexOf(ep))
                     }
-                    Text("${list.indexOf(ep) + 1}. ${ep.title}", style = MaterialTheme.typography.bodyMedium)
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
+            ) {
+                if (ep.chapterTitle.isNotBlank()) {
+                    Text(
+                        ep.chapterTitle,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
                 }
+                Text("${list.indexOf(ep) + 1}. ${ep.title}", style = MaterialTheme.typography.bodyMedium)
             }
         }
     }

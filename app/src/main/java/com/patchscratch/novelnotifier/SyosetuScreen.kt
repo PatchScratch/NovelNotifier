@@ -292,6 +292,7 @@ fun SyosetuDetailScreen(
 
     // Fetch ToC pages until we have every episode (100 per page).
     LaunchedEffect(novel.ncode) {
+        DebugLog.log("SYOSETU", "detail story len=${novel.story.length} for ${novel.ncode}")
         loading = true
         error = ""
         try {
@@ -329,74 +330,91 @@ fun SyosetuDetailScreen(
         Release(chapter = "c${ep.number}", group = "", date = "", url = url)
     }
 
-    Column(modifier = Modifier.fillMaxSize().screenInsets()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
+    // One scrollable surface: header, synopsis (JP + translation), buttons
+    // and every episode share a single LazyColumn — a tall translated
+    // synopsis must not squeeze the chapter list into a small box.
+    LazyColumn(modifier = Modifier.fillMaxSize().screenInsets()) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
+            }
         }
-        Text(
-            novel.title,
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        Text(
-            "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
-                syosetuEpisodeLabel(novel.episodeCount) + " ・ " + syosetuStatusLabel(novel.isCompleted) + " ・ " +
-                t("Updated", "最終更新") + " ${novel.lastUpdate.take(10)}",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 16.dp)
-        )
-        if (novel.story.isNotBlank()) {
-            TranslatedInfoText(
-                text = novel.story,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(16.dp)
+        item {
+            Text(
+                novel.title,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(horizontal = 16.dp)
             )
         }
-        Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-            TextButton(
-                onClick = {
-                    val chapters = toChapters()
-                    if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
-                },
-                enabled = toc?.episodes?.isNotEmpty() == true
-            ) { Text(t("Read from start", "最初から読む")) }
-            TextButton(
-                onClick = {
-                    val chapters = toChapters()
-                    if (chapters.isNotEmpty()) {
-                        EpubBulkService.start(
-                            context,
-                            EpubBulkService.BulkJob(
-                                seriesTitle = novel.title,
-                                seriesUrl = novel.url,
-                                chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
-                                meta = novel.toBookMeta()
-                            )
-                        )
-                    }
-                },
-                enabled = toc?.episodes?.isNotEmpty() == true
-            ) { Text(t("Download all", "全部ダウンロード") + " (" + syosetuEpisodeLabel(novel.episodeCount) + ")") }
+        item {
+            Text(
+                "${novel.writer} ・ ${syosetuGenreName(novel.genreCode)} ・ " +
+                    syosetuEpisodeLabel(novel.episodeCount) + " ・ " + syosetuStatusLabel(novel.isCompleted) + " ・ " +
+                    t("Updated", "最終更新") + " ${novel.lastUpdate.take(10)}",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         }
-        if (loading) {
-            CircularProgressIndicator(modifier = Modifier.padding(24.dp).align(Alignment.CenterHorizontally))
-        }
-        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
-        val list = toc?.episodes ?: emptyList()
-        LazyColumn {
-            items(list, key = { it.number }) { ep ->
-                Text(
-                    "${ep.number}. ${ep.title}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            val chapters = toChapters()
-                            onOpenReader(chapters, ep.number - 1)
-                        }
-                        .padding(horizontal = 20.dp, vertical = 10.dp)
+        if (novel.story.isNotBlank()) {
+            item {
+                TranslatedInfoText(
+                    text = novel.story,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(16.dp)
                 )
             }
+        }
+        item {
+            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                TextButton(
+                    onClick = {
+                        val chapters = toChapters()
+                        if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
+                    },
+                    enabled = toc?.episodes?.isNotEmpty() == true
+                ) { Text(t("Read from start", "最初から読む")) }
+                TextButton(
+                    onClick = {
+                        val chapters = toChapters()
+                        if (chapters.isNotEmpty()) {
+                            EpubBulkService.start(
+                                context,
+                                EpubBulkService.BulkJob(
+                                    seriesTitle = novel.title,
+                                    seriesUrl = novel.url,
+                                    chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
+                                    meta = novel.toBookMeta()
+                                )
+                            )
+                        }
+                    },
+                    enabled = toc?.episodes?.isNotEmpty() == true
+                ) { Text(t("Download all", "全部ダウンロード") + " (" + syosetuEpisodeLabel(novel.episodeCount) + ")") }
+            }
+        }
+        if (loading) {
+            item {
+                CircularProgressIndicator(modifier = Modifier.padding(24.dp))
+            }
+        }
+        if (error.isNotBlank()) {
+            item {
+                Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+            }
+        }
+        val list = toc?.episodes ?: emptyList()
+        items(list, key = { it.number }) { ep ->
+            Text(
+                "${ep.number}. ${ep.title}",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val chapters = toChapters()
+                        onOpenReader(chapters, ep.number - 1)
+                    }
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
+            )
         }
     }
 }
