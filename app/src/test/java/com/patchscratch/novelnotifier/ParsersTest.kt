@@ -142,6 +142,26 @@ class ParsersTest {
         )
     }
 
+    @Test
+    fun sortedReleases_volumeKeyOrdersReadingOrder() {
+        // Mixed label eras (Starship model): bare-c chapters are the ORIGINAL
+        // group's era → (0, n) keys sort before every volume-labeled era.
+        val releases = listOf(
+            Release("v2c1", "g", "d", "u"),
+            Release("v1c100", "g", "d", "u"),
+            Release("v1c2", "g", "d", "u"),
+            Release("c500", "g", "d", "u")
+        )
+        assertEquals(
+            listOf("c500", "v1c2", "v1c100", "v2c1"),
+            sortedReleases(releases, newestFirst = false).map { it.chapter }
+        )
+        assertEquals(
+            listOf("v2c1", "v1c100", "v1c2", "c500"),
+            sortedReleases(releases, newestFirst = true).map { it.chapter }
+        )
+    }
+
     // --- misc helpers ---
 
     @Test

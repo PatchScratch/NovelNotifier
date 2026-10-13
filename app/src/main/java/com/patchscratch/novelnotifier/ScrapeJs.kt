@@ -85,10 +85,11 @@ fun listPageJs(): String = """
       for (var n = 0; n < order.length; n++) {
         lists.push(found[order[n]] + '===' + order[n]);
       }
-      var novels = [];
-      function isJunkTitle(title) {
+        var novels = [];
+        function isJunkTitle(title) {
         return /^(series information|description|latest release|status|notes|latest series)$/i.test(title);
       }
+      var candidates = [];
       document.querySelectorAll('a[href*="/series/"]').forEach(function(a) {
         var title = (a.textContent || '').replace(/\s+/g, ' ').trim();
         var href = a.href || '';
@@ -137,7 +138,25 @@ fun listPageJs(): String = """
           node = node.parentElement;
         }
         if (!chapter && !hasListMark) return;
-        novels.push(title + '===' + (chapter || 'No chapter info') + '===' + href + '===' + img + '===' + lastReadCh + '===' + lastReadUrl);
+        candidates.push({
+          title: title, chapter: chapter || 'No chapter info', href: href, img: img,
+          lastReadCh: lastReadCh, lastReadUrl: lastReadUrl, hasListMark: hasListMark
+        });
+      });
+      // Strict row scoping (2026-10-13): real reading-list rows live in the
+      // table whose rows carry NU's own list checkboxes (chklist inputs — the
+      // original app keyed on the same ids). Suggestion/recommendation
+      // widgets elsewhere on the page share the /series/ href + bracket
+      // chapter text but have NO checkbox, and were leaking into the
+      // library (user report: Scribble Hub suggestions appearing). When any
+      // checkbox-marked row exists, ONLY those count; the looser
+      // chapter-text acceptance survives solely as a fallback for a page
+      // redesign where nothing carries checkboxes (degrade, don't lose the
+      // library).
+      var anyMarked = candidates.some(function(c) { return c.hasListMark; });
+      candidates.forEach(function(c) {
+        if (anyMarked && !c.hasListMark) return;
+        novels.push(c.title + '===' + c.chapter + '===' + c.href + '===' + c.img + '===' + c.lastReadCh + '===' + c.lastReadUrl);
       });
       // NU shows the personal RSS feed links on this page — the releases feed
       // and the read-activity feed (type=read). Grab every feed-ish anchor so

@@ -496,12 +496,15 @@ ${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${doc
      */
     fun orderDocs(docs: List<ChapterDoc>): List<ChapterDoc> = docs
         .mapIndexed { i, doc -> i to doc }
-        .sortedWith(
-            compareBy(
-                { (_, doc) -> chapterNum(doc.label).let { n -> if (n > 0) n else 1_000_000 } },
-                { (i, _) -> i }
-            )
-        )
+        .sortedWith { (i1, d1), (i2, d2) ->
+            // full (volume, chapter) key — chapter-number-only sorting
+            // scrambled volume-labeled series (v2c1 sorted before v1c100)
+            val k1 = chapterKey(d1.label) ?: (1_000_000 to 1_000_000)
+            val k2 = chapterKey(d2.label) ?: (1_000_000 to 1_000_000)
+            val byKey = k1.first.compareTo(k2.first).takeIf { it != 0 }
+                ?: k1.second.compareTo(k2.second)
+            byKey.takeIf { it != 0 } ?: i1.compareTo(i2)
+        }
         .map { it.second }
 
     // --- Context wrappers ----------------------------------------------------

@@ -70,6 +70,19 @@ class EpubStoreTest {
     }
 
     @Test
+    fun orderDocs_volumeKeyBeatsBareChapterNumber() {
+        // v2c1 reads AFTER v1c100 — chapter-number-only sorting put v2c1
+        // first (the "chapters download out of order" report)
+        val ordered = EpubStore.orderDocs(listOf(
+            doc("https://h/a", "v2c1", "V2C1", "p"),
+            doc("https://h/b", "v1c100", "V1C100", "p"),
+            doc("https://h/c", "v1c2", "V1C2", "p"),
+            doc("https://h/d", "v3c10", "V3C10", "p")
+        ))
+        assertEquals(listOf("v1c2", "v1c100", "v2c1", "v3c10"), ordered.map { it.label })
+    }
+
+    @Test
     fun merge_replacesSameUrlKeepsOrder() {
         val book = tempBook("merge")
         EpubStore.writeBook(book, "T", null, "image/jpeg", EpubStore.orderDocs(listOf(

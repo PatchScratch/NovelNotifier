@@ -101,18 +101,24 @@ fun highestReadRelease(releases: List<Release>): Release? {
         ?.takeIf { chapterNum(it.chapter) > 0 }
 }
 
+/**
+ * Reading order for a releases list. Sorts by the FULL (volume, chapter)
+ * key — a chapter-number-only sort puts v2c1 before v1c100, scrambling
+ * volume-labeled series (user report 2026-10-13: chapters "download out
+ * of order"). Unparseable labels keep their relative position at the end
+ * (ascending) / start (descending), as before.
+ */
 fun sortedReleases(releases: List<Release>, newestFirst: Boolean): List<Release> {
-    return if (newestFirst) {
-        releases.sortedByDescending { row ->
-            val n = chapterNum(row.chapter)
-            if (n < 0) Int.MIN_VALUE else n
-        }
-    } else {
-        releases.sortedBy { row ->
-            val n = chapterNum(row.chapter)
-            if (n < 0) Int.MAX_VALUE else n
-        }
+    // Unparseable labels pin LAST in both directions (sentinels differ).
+    fun key(chapter: String): Pair<Int, Int> = chapterKey(chapter)
+        ?: if (newestFirst) (Int.MIN_VALUE to Int.MIN_VALUE) else (Int.MAX_VALUE to Int.MAX_VALUE)
+    val cmp = Comparator<Release> { a, b ->
+        val ka = key(a.chapter); val kb = key(b.chapter)
+        val byKey = ka.first.compareTo(kb.first).takeIf { it != 0 }
+            ?: ka.second.compareTo(kb.second)
+        if (newestFirst) -byKey else byKey
     }
+    return releases.sortedWith(cmp)
 }
 
 fun cacheHasAllPages(maxPage: Int, loadedPage: Int, releaseCount: Int): Boolean {

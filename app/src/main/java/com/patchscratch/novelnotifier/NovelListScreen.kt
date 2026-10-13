@@ -673,6 +673,14 @@ fun NovelListScreen(
                                 }
                                 val lastReads = result.lastReads
                                 val parsedNovels = result.novels
+                                // Row-capture visibility: what the scraper took
+                                // from this page (diagnosing suggestion-widget
+                                // leaks into the library, 2026-10-13).
+                                DebugLog.log(
+                                    "SYNC",
+                                    "list '$selectedList' parsed ${parsedNovels.size} rows: " +
+                                        parsedNovels.take(30).joinToString { it.title.take(28) }
+                                )
                                 val cachedRows = novelsByList[selectedListId].orEmpty().ifEmpty { listNovels }
                                 val cachedLooksReal = cachedRows.any { chapterNum(it.latestChapter) > 0 }
                                 // Cloudflare / empty HTML must never wipe a real library.
