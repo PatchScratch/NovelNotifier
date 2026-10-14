@@ -43,8 +43,13 @@ class HostProbeService : Service() {
 
     companion object {
         const val REPORT = "host_probe_report.json"
+        const val HARVEST = "host_probe_targets.json"
         var probeAlive = false
             private set
+
+        const val EXTRA_MODE = "mode"
+        const val MODE_LIBRARY = "library"     // one chapter per cached series
+        const val MODE_DIRECTORY = "directory" // the full NU groups directory
 
         /**
          * ONE chapter per cached SERIES — the releases tables store NU's
@@ -74,9 +79,10 @@ class HostProbeService : Service() {
             return out
         }
 
-        fun start(context: Context) {
+        fun start(context: Context, mode: String = MODE_LIBRARY) {
             ContextCompat.startForegroundService(
-                context, Intent(context, HostProbeService::class.java)
+                context,
+                Intent(context, HostProbeService::class.java).putExtra(EXTRA_MODE, mode)
             )
         }
     }
@@ -93,6 +99,7 @@ class HostProbeService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        val mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_LIBRARY
         probeAlive = true
         startForeground(
             47,
@@ -108,7 +115,7 @@ class HostProbeService : Service() {
                 ))
                 .build()
         )
-        scope.launch { runProbe() }
+        scope.launch { if (mode == MODE_DIRECTORY) runDirectoryProbe() else runProbe() }
         return START_NOT_STICKY
     }
 
@@ -143,6 +150,65 @@ class HostProbeService : Service() {
             stopSelf()
             return
         }
+        runTargetList(targets)
+    }
+
+    /**
+     * Full-directory sweep (Wayne's 2026-10-15 directive): harvest NU's
+     * groups directory (list pages -> group pages -> a live release link),
+     * then probe one chapter per group.
+     */
+    private suspend fun runDirectoryProbe() {
+        val sess = session ?: SiteClient.openSession(SiteClient.Site.NU).also { session = it }
+        // --- phase 1: walk the groups list pages -------------------------
+        val groups = LinkedHashMap<String, String>()   // groupPageUrl -> title
+        var page = 1
+        while (page in 1..200) {
+            val url = "https://www.novelupdates.com/groupslist/?pg=$page"
+            val raw = loadJs(sess, url, harvestListJs()) ?: break
+            if (raw == "CF") {
+                DebugLog.log("PROBE", "groupslist page $page CF-blocked — waiting 30s")
+                delay(30_000)
+                continue
+            }
+            val found = parseHarvest(raw)
+            if (found.isEmpty()) {
+                DebugLog.log("PROBE", "groupslist page $page yielded no groups — end of list")
+                break
+            }
+            val before = groups.size
+            found.forEach { (u, t) -> if (u !in groups) groups[u] = t }
+            note("harvest list page $page: +${groups.size - before} groups (total ${groups.size})")
+            if (groups.size == before) break // repeat page — done
+            page++
+            delay(6_000)
+        }
+
+        // --- phase 2: per group, find a live release link ----------------
+        val targets = mutableListOf<Target>()
+        for ((i, g) in groups.entries.withIndex()) {
+            val raw = loadJs(sess, g.key, harvestGroupJs()) ?: continue
+            if (raw == "CF") {
+                delay(30_000)
+                continue
+            }
+            val chapter = parseHarvest(raw).entries.firstOrNull()?.key
+            if (chapter != null) targets.add(Target(g.value, chapter))
+            if (i % 10 == 0) note("groups ${i + 1}/${groups.size}: ${targets.size} chapter links")
+            delay(6_000)
+        }
+
+        // --- phase 3: probe them ------------------------------------------
+        runTargetList(targets)
+    }
+
+    /** Shared probe loop used by both modes. */
+    private suspend fun runTargetList(targets: List<Target>) {
+        if (targets.isEmpty()) {
+            note("nothing to probe")
+            stopSelf()
+            return
+        }
         val sess = session ?: SiteClient.openSession(SiteClient.Site.NU).also { session = it }
         val report = JSONArray()
         val seenHosts = mutableSetOf<String>()
@@ -155,21 +221,43 @@ class HostProbeService : Service() {
                     File(filesDir, REPORT).writeText(report.toString())
                 }
                 note("${i + 1}/${targets.size} ${entry.optString("host")}: ${entry.optString("verdict")}")
+                // Full entry on logcat — the release build's file is only
+                // reachable via backup, so the analysis can run from adb.
+                DebugLog.log("PROBE-ENTRY", entry.toString().take(400))
                 val verdict = entry.optString("verdict")
                 consecutiveFailures = if (verdict.startsWith("OK") || verdict == "SKIP") 0 else consecutiveFailures + 1
                 if (consecutiveFailures >= 40) {
                     DebugLog.log("PROBE", "aborting: 40 consecutive failures (network died?)")
                     break
                 }
-                delay(10_000) // one page per host, politely spaced
+                delay(10_000)
             }
         } finally {
-            withContext(Dispatchers.IO) {
-                File(filesDir, REPORT).writeText(report.toString())
-            }
+            withContext(Dispatchers.IO) { File(filesDir, REPORT).writeText(report.toString()) }
             note("done — ${report.length()} sites probed")
             DebugLog.log("PROBE", "run complete: ${report.length()} entries in $REPORT")
         }
+    }
+
+    private suspend fun loadJs(sess: SiteClient.Session, url: String, js: String): String? =
+        withTimeoutOrNull(60_000) {
+            suspendCancellableCoroutine<String> { cont ->
+                sess.loadUrl(url, js) { res ->
+                    if (cont.isActive) cont.resumeWith(kotlin.Result.success(res))
+                }
+            }
+        }
+
+    /** "url|title,url|title,…" -> pairs. */
+    private fun parseHarvest(raw: String): Map<String, String> {
+        val body = unwrapJsResult(raw).trim()
+        if (body.isBlank() || body == "CF") return emptyMap()
+        return body.split(',')
+            .mapNotNull { item ->
+                val parts = item.split('|')
+                if (parts.size == 2 && parts[0].startsWith("http")) parts[0] to parts[1] else null
+            }
+            .toMap(LinkedHashMap())
     }
 
     /** Load the chapter through the shared WebView and run the real extractor.
@@ -203,6 +291,7 @@ class HostProbeService : Service() {
             return entry.put("verdict", "OK")
                 .put("paragraphs", parsed.paragraphs.size)
                 .put("chars", parsed.paragraphs.sumOf { it.length })
+                .put("quality", proseQuality(parsed.paragraphs))
         }
         // Failed — the WHY matters. Give the page one more beat (JS hosts),
         // then run the stage diagnostics.
@@ -219,6 +308,7 @@ class HostProbeService : Service() {
             return entry.put("verdict", "OK-SLOW") // needed the extra beat — TTS/ePub must too
                 .put("paragraphs", parsed2.paragraphs.size)
                 .put("chars", parsed2.paragraphs.sumOf { it.length })
+                .put("quality", proseQuality(parsed2.paragraphs))
         }
         val diag = withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine<String> { cont ->
@@ -284,3 +374,85 @@ fun probeDiagJs(): String = """
   }
 })()
 """.trimIndent()
+
+/**
+ * Groups-directory row harvester: every group-page link on a list page,
+ * as "url|title,…" (absorbs NU's markup changes better than one selector).
+ */
+fun harvestListJs(): String = """
+(function() {
+  try {
+    var out = [];
+    var seen = {};
+    var anchors = document.querySelectorAll('a[href]');
+    for (var i = 0; i < anchors.length; i++) {
+      var h = anchors[i].getAttribute('href') || '';
+      if (h.indexOf('/group/') < 0) continue;
+      var abs = anchors[i].href;
+      if (seen[abs]) continue;
+      seen[abs] = 1;
+      var t = (anchors[i].innerText || '').trim().replace(/[,|]/g, ' ').slice(0, 60);
+      if (t) out.push(abs + '|' + t);
+    }
+    return out.join(',');
+  } catch (e) {
+    return '';
+  }
+})()
+""".trimIndent()
+
+/**
+ * Group-page harvester: the group's own website link AND its newest
+ * release link (external or NU /extnu — both land on a probeable chapter).
+ */
+fun harvestGroupJs(): String = """
+(function() {
+  try {
+    var out = [];
+    var seen = {};
+    // Release rows first — the extnu/external links lead to chapters.
+    var anchors = document.querySelectorAll('a[href]');
+    for (var i = 0; i < anchors.length && out.length < 3; i++) {
+      var h = anchors[i].getAttribute('href') || '';
+      var isChapter = h.indexOf('/extnu/') >= 0 || h.indexOf('ch-release') >= 0;
+      if (!isChapter) continue;
+      var abs = anchors[i].href;
+      if (seen[abs]) continue;
+      seen[abs] = 1;
+      out.push(abs + '|release');
+    }
+    return out.join(',');
+  } catch (e) {
+    return '';
+  }
+})()
+""".trimIndent()
+
+/**
+ * Content-quality flags for the census (Wayne: "make sure the translations
+ * make sense and have no rubbish added in"). Heuristics over the extracted
+ * paragraphs: duplicate-paragraph spam (foxteller's filler), watermark
+ * density, and residual cipher codepoints. Pure — unit-testable.
+ */
+fun proseQuality(paragraphs: List<String>): String {
+    if (paragraphs.isEmpty()) return "empty"
+    val counts = HashMap<String, Int>()
+    paragraphs.forEach { p -> counts[p] = (counts[p] ?: 0) + 1 }
+    val maxDup = counts.values.max()
+    val repeatRatio = maxDup.toFloat() / paragraphs.size
+    val watermark = paragraphs.count {
+        it.contains("contact@", true) || it.contains("read only at", true) ||
+            it.contains("if you see this", true) || it.contains("content is owned", true) ||
+            it.contains("support the", true) && it.length < 120
+    }
+    var sus = 0
+    var total = 0
+    paragraphs.forEach { p ->
+        total += p.length
+        p.forEach { c ->
+            val code = c.code
+            if (code in 0x2F00..0x2FDF || code in 0xE000..0xF8FF || code in 0x3400..0x4DBF) sus++
+        }
+    }
+    return "repeat=%.2f wm=%d sus%%=%d".format(repeatRatio, watermark, 100 * sus / total.coerceAtLeast(1))
+}

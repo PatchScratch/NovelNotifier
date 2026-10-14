@@ -161,7 +161,12 @@ fun ListOptionsScreen(
                         if (!HostProbeService.probeAlive) HostProbeService.start(context)
                     }) {
                         Text(if (HostProbeService.probeAlive) "Probe running — see notification"
-                            else "Probe translator sites (one chapter per site)")
+                            else "Probe library sites (one chapter per series)")
+                    }
+                    TextButton(onClick = {
+                        if (!HostProbeService.probeAlive) HostProbeService.start(context, HostProbeService.MODE_DIRECTORY)
+                    }) {
+                        Text("Probe the full NU groups directory (overnight)")
                     }
                     Text(
                         text = "Walks every host your cached series link to and runs the " +

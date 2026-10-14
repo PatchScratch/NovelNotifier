@@ -112,6 +112,10 @@ object BackupManager {
             listOfNotNull(context.filesDir.resolve("categories.json").takeIf { it.exists() }).forEach {
                 put("data/categories.json", it.readBytes())
             }
+            // Translator-host probe census (diagnostics; regenerable but handy).
+            listOfNotNull(context.filesDir.resolve(HostProbeService.REPORT).takeIf { it.exists() }).forEach {
+                put("data/" + HostProbeService.REPORT, it.readBytes())
+            }
             context.filesDir.resolve("series_cache").listFiles().orEmpty().forEach {
                 put("data/series_cache/${it.name}", it.readBytes())
             }
@@ -151,6 +155,10 @@ object BackupManager {
                     }
                     name == "data/categories.json" -> {
                         context.filesDir.resolve("categories.json").writeBytes(zip.readBytes())
+                        restoredFiles++
+                    }
+                    name == "data/" + HostProbeService.REPORT -> {
+                        context.filesDir.resolve(HostProbeService.REPORT).writeBytes(zip.readBytes())
                         restoredFiles++
                     }
                     name.startsWith("data/series_cache/") -> {
