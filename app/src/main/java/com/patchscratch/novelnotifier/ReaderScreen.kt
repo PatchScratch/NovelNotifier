@@ -165,6 +165,8 @@ fun ReaderScreen(
     var extractResult by remember(target) { mutableStateOf<ChapterExtract?>(null) }
     var extractFailed by remember(target) { mutableStateOf(false) }
     var extracting by remember(target) { mutableStateOf(false) }
+    /** True while the chapter host is showing a Cloudflare challenge. */
+    var cfChecking by remember(target) { mutableStateOf(false) }
     var imageChapter by remember(target) { mutableStateOf(false) } // chapter is image slices, not text
     var webDecodeStamp by remember(target) { mutableStateOf("") } // pages the web decode ran on
     // --- offline library state (3.3) ---
@@ -420,42 +422,55 @@ fun ReaderScreen(
     }
 
     // Extraction pipeline: after each finished load (and manual retries) try
-    // at ~1.2 s; JS-rendering hosts get one more shot ~2.5 s later. Only in
-    // text mode — the web view needs no extraction. A successful extraction
-    // appends the chapter to the series' offline ePub; total failure falls
-    // back to the stored copy when one exists (offline reading).
+    // at ~1.2 s, again ~2.5 s later, then keep a patient ladder going for
+    // ~24 s more. Fast server-rendered hosts still succeed on the first two
+    // shots; SPA hosts behind Cloudflare (verified: foxteller.com — challenge
+    // page first, then a client-rendered #chapter-content) need the ladder:
+    // their content arrives long after onPageFinished, and CF clearance
+    // re-fires page finishes that restart this effect with a fresh window.
+    // Only in text mode — the web view needs no extraction. A successful
+    // extraction appends the chapter to the series' offline ePub; total
+    // failure falls back to the stored copy when one exists (offline reading).
     LaunchedEffect(extractTick, retryKey, viewMode, chapter.url) {
         if (viewMode != READER_VIEW_TEXT || extractTick == 0) return@LaunchedEffect
         extractResult = null
         extractFailed = false
         imageChapter = false
         offlineCopy = false
+        cfChecking = false
         delay(1200)
         tryExtract()
         delay(2600)
+        var shots = 0
+        while (extractResult == null && !extractFailed && shots < 8) {
+            // A challenge page up? Say so instead of spinning silently —
+            // the visible WebView may need the user's eyes for a moment.
+            webViewRef.value?.evaluateJavascript("(document.title || '')") { r ->
+                val title = unwrapJsResult(r).lowercase()
+                cfChecking = title.contains("just a moment") ||
+                    title.contains("attention required") || title.contains("challenge")
+            }
+            delay(3000)
+            tryExtract()
+            shots++
+        }
         if (extractResult == null && !extractFailed) {
-            // Second try; verdict inside the callback — evaluateJavascript is
-            // asynchronous, so checking extractResult synchronously raced.
-            tryExtract {
-                if (extractResult == null) {
-                    // Offline fallback first: if this chapter was read before,
-                    // serve the stored ePub copy instead of declaring failure.
-                    // (Plain callback — hop into the composable scope for IO.)
-                    scope.launch {
-                        val stored = withContext(Dispatchers.IO) {
-                            EpubStore.readChapter(context, target.seriesUrl, chapter.url)
-                        }
-                        if (stored != null && extractResult == null) {
-                            extractResult = stored
-                            offlineCopy = true
-                            return@launch
-                        }
-                        if (stored == null && extractResult == null) {
-                            extractFailed = true
-                            webViewRef.value?.evaluateJavascript(imageChapterJs()) { r ->
-                                if (unwrapJsResult(r).startsWith("IMAGES")) imageChapter = true
-                            }
-                        }
+            // Offline fallback first: if this chapter was read before, serve
+            // the stored ePub copy instead of declaring failure. (Plain
+            // callback — hop into the composable scope for IO.)
+            scope.launch {
+                val stored = withContext(Dispatchers.IO) {
+                    EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+                }
+                if (stored != null && extractResult == null) {
+                    extractResult = stored
+                    offlineCopy = true
+                    return@launch
+                }
+                if (stored == null && extractResult == null) {
+                    extractFailed = true
+                    webViewRef.value?.evaluateJavascript(imageChapterJs()) { r ->
+                        if (unwrapJsResult(r).startsWith("IMAGES")) imageChapter = true
                     }
                 }
             }
@@ -859,6 +874,16 @@ fun ReaderScreen(
             // (a spinning challenge re-fires onPageFinished constantly).
             Text(
                 t("Extracting chapter text…", "章テキストを抽出中…"),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
+        }
+        if (cfChecking && !extractFailed) {
+            Text(
+                t(
+                    "Cloudflare check on this site — it usually clears in a few seconds; the page will pick up when it does.",
+                    "このサイトはCloudflare確認中です — 通常数秒で解除され、その後本文が読み込まれます。"
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
             )

@@ -670,6 +670,7 @@ fun chapterExtractJs(): String = """
     function isJunk(t, p) {
       // Anti-piracy watermarks (decoded or plain) are not prose.
       if (/content is owned by/i.test(t)) return true;
+      if (/if you see this on (another|any other) site/i.test(t)) return true; // foxteller et al
       if (t.length > 60) return false;
       // Footer/copyright lines travel inside the content container sometimes.
       // (Single backslash on purpose: Kotlin raw strings don't process
