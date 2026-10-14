@@ -34,6 +34,7 @@ Each site is its own workspace (hamburger → site chips), served by official/op
 ### Reading & offline
 - **In-app reader** — ‹ Prev / Next › through the book, sepia/dark/light themes, serif/sans, adjustable font size, per-novel JavaScript toggle, ad/tracker blocking, open-in-browser escape hatch. Extraction filters NU's hidden decoy content by computed styles and falls back to the full-page web view when a host defeats it.
 - **Offline library as standard ePubs** — opt in per series; chapters save as you read or bulk-download whole volumes (survives screen-off; the queue survives reboots). Books export/share to any e-reader. Storage stays yours — nothing saves without your say-so.
+- **Read aloud** — three engines (Android system TTS, zero download, reads Japanese natively; Kokoro offline neural English; or a cloud TTS through your own key) with a Voice Aloud-style control bar: play/pause, paragraph skip, tap-a-paragraph to jump, a live speed slider (0.5–2.5×), a sleep timer that pauses at the deadline, and a media-style notification with lockscreen controls.
 - **Long-press Japanese dictionary** — tap-and-hold any word in the reader for its reading, part of speech and JMdict senses. Fully offline (built-in Kuromoji tokenizer + a 499k-entry JMdict; ~80MB unpacked once on first enable).
 
 ### AI translation & covers (bring your own key)
@@ -41,7 +42,7 @@ Each site is its own workspace (hamburger → site chips), served by official/op
 - **Novel-Mill-style lock files** — `prompt.txt` / `glossary.txt` / `voices.txt`, editable per series, and **auto-refined after every chapter** (new names and voice notes are extracted and saved for the next chapter's context). Files from the desktop [novel-mill](https://github.com/PatchScratch/novel-mill) paste straight in.
 - **Reader layout switch** — JP+EN, Japanese only, or English only, cycled right from the reader menu; ePub exports follow the same choice.
 - **AI cover art** for series without one (all three sites) — generated from title, genre and synopsis with your own prompt; title and author render as cover typography in the artwork's style.
-- **Costs are yours to control** — the key lives only on the device, never in backups; typical translation runs ~half a cent per chapter, covers ~$0.01–0.02 (see the cost table below).
+- **Costs are yours to control** — the key lives only on the device, never in backups; typical translation runs ~half a cent per chapter, covers ~$0.02 by default (see the cost table below).
 
 ### Hidden lists & SFW mode
 - **Flag any list or category as hidden** — NU reading lists, Syosetu 分類, and Kakuyomu's client-side categories (Kakuyomu's follows are flat on the site, so the app adds local folders; they live in app data and ride backups). Hidden series vanish from every screen, cover grids, counts, search and notifications until you unlock.
@@ -210,8 +211,8 @@ typography better. The prompt is yours to customise. Series info
 
 ## Roadmap
 
-Planned next: read-aloud refinements (speed sliders, sleep timer, media
-notification), visual polish, and then the wider Japanese webnovel sites.
+Planned next: site consistency polish, visual polish, and then the wider
+Japanese webnovel sites.
 
 Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction filters by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
 
