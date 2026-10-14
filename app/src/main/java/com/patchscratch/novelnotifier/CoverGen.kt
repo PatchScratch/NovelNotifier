@@ -33,12 +33,16 @@ import java.net.URL
  * Images land in CoverStore like downloaded covers, so grids, backups and
  * transfers treat them identically. A marker file (filesDir/covers_ai/)
  * records provenance so the UI can offer "regenerate" only for art we
- * made. The prompt always forbids text in the image — model typography
- * typos on a book cover cannot be un-seen.
+ * made. Only the title/author typography the prompt asks for is allowed in
+ * the image — extraneous text a custom prompt may add is banned.
  */
 object CoverGenClient {
 
-    const val DEFAULT_MODEL = "bytedance-seed/seedream-5-0-flash"
+    // Default picked for tolerance + typography: Seedream's moderation
+    // hard-rejects suggestive (ecchi) synopses with HTTP 400, while Nano
+    // Banana passes them and renders the in-image title/author lettering
+    // better. ~$0.04 per 1K cover (~2x Seedream flash) — measured 2026-10-14.
+    const val DEFAULT_MODEL = "google/gemini-nano-banana-2.1"
 
     // --- request shaping (pure) -----------------------------------------------
 
