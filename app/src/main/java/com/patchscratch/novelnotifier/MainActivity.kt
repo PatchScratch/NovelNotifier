@@ -446,8 +446,8 @@ fun NovelApp(
             nsfwUnlocked = app.nsfwUnlocked
         )
 
-        Route.Categories -> CategoriesScreen(
-            nuLists = nu.readingLists,
+        is Route.Categories -> CategoriesScreen(
+            site = route.site,
             syosetuCategories = syosetu.categories,
             onBack = { router.pop() }
         )
@@ -483,7 +483,7 @@ fun NovelApp(
                 r18Enabled = syosetu.r18 && app.nsfwUnlocked,
                 enabledSubsites = syosetu.subsites,
                 onOpenBookmarks = { cat -> router.push(Route.SyosetuLibrary(cat)) },
-                onOpenCategories = { router.push(Route.Categories) },
+                onOpenCategories = { router.push(Route.Categories("syosetu")) },
                 nsfwUnlocked = app.nsfwUnlocked,
                 onToggleNsfw = { toggleNsfw() },
                 hiddenCategories = app.hiddenSyosetuCats
@@ -503,7 +503,7 @@ fun NovelApp(
                 bookmarks = kakuyomu.bookmarks,
                 categories = kakuyomu.categories,
                 onOpenBookmarks = { catId -> router.push(Route.KakuyomuLibrary(catId)) },
-                onOpenCategories = { router.push(Route.Categories) },
+                onOpenCategories = { router.push(Route.Categories("kakuyomu")) },
                 loggedIn = kakuyomu.loggedIn,
                 nsfwUnlocked = app.nsfwUnlocked,
                 onToggleNsfw = { toggleNsfw() }
@@ -548,8 +548,8 @@ fun NovelApp(
                     onLastReads = { incoming -> nu.mergeIncomingLastReads(incoming) },
                     nsfwUnlocked = app.nsfwUnlocked,
                     onToggleNsfw = { toggleNsfw() },
-                    onOpenCategories = { router.push(Route.Categories) },
                     hiddenLists = app.hiddenLists,
+                    onHiddenLists = { app.updateHiddenLists(it) },
                     pauseLocalCovers = app.syncStatus.startsWith("Running") ||
                         app.syncStatus.startsWith("Lists") ||
                         app.syncStatus.startsWith("Covers") ||

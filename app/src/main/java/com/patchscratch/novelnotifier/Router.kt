@@ -39,8 +39,8 @@ sealed interface Route {
     data class SyosetuLibrary(val category: String) : Route
     /** "" shows all follows; otherwise the local-category id. */
     data class KakuyomuLibrary(val categoryId: String = "") : Route
-    /** Category management + hidden switches for every site (SFW/NSFW). */
-    data object Categories : Route
+    /** Per-site category management + hidden switches (SFW/NSFW). */
+    data class Categories(val site: String) : Route
     data object Discover : Route
     data object Search : Route
     data object Settings : Route

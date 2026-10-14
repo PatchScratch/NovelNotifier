@@ -26,17 +26,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
- * One screen manages all hiding (SFW/NSFW feature). Three sections:
- * - Kakuyomu: full CRUD for the client-side categories + hidden switch.
- * - NU reading lists and Syosetu 分類: the site-native groupings, read-only
- *   names with a hidden switch (their hide flags live in the
- *   hidden_lists / syosetu_hidden_cats pref sets, so they ride backups).
- *
- * NU EditLists aesthetic: plain sections, inline dialogs, no chrome.
+ * Per-site category management (Wayne's silo rule: each site's drawer
+ * manages its own settings). "kakuyomu" shows the client-side categories
+ * (full CRUD + hidden switch); "syosetu" shows the site-native 分類 with
+ * hidden switches. NU lists are managed in the NU Lists window instead
+ * (ListOptionsScreen), not here. NU EditLists aesthetic: plain sections,
+ * inline dialogs, no chrome.
  */
 @Composable
 fun CategoriesScreen(
-    nuLists: List<ReadingList>,
+    site: String,
     syosetuCategories: List<SyosetuCategory>,
     onBack: () -> Unit
 ) {
@@ -44,7 +43,6 @@ fun CategoriesScreen(
     val app = viewModel<AppViewModel>()
     val kaku = viewModel<KakuyomuViewModel>()
     // Live state from AppViewModel — flips here re-filter every surface.
-    val hiddenLists = app.hiddenLists
     val hiddenSyosetu = app.hiddenSyosetuCats
 
     var newCatName by remember { mutableStateOf("") }
@@ -66,82 +64,67 @@ fun CategoriesScreen(
         }
         Text(
             t(
-                "Flagged lists and categories vanish from every screen until \"Reveal hidden (18+)\" is unlocked with your fingerprint or screen lock. Hidden series never notify.",
-                "フラグを付けたリスト・カテゴリは、「非表示を表示（18禁）」を指紋・画面ロックでロック解除するまで全画面から消えます。非表示の作品は通知されません。"
+                "Flagged categories vanish from every screen until \"Reveal hidden (18+)\" is unlocked with your fingerprint or screen lock. Hidden series never notify.",
+                "フラグを付けたカテゴリは、「非表示を表示（18禁）」を指紋・画面ロックでロック解除するまで全画面から消えます。非表示の作品は通知されません。"
             ),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
 
-        // --- Kakuyomu: client-side categories ------------------------------
-        SectionHeader(t("Kakuyomu categories", "カクヨム カテゴリ"))
-        kaku.categories.cats.forEach { cat ->
-            CategoryRow(
-                name = cat.name,
-                hidden = cat.hidden,
-                onHidden = { kaku.setCategoryHidden(cat.id, it) },
-                onRename = { renameCat = cat },
-                onDelete = { confirmDelete = cat }
-            )
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-        ) {
-            OutlinedTextField(
-                value = newCatName,
-                onValueChange = { newCatName = it },
-                label = { Text(t("New category", "新しいカテゴリ")) },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(
-                enabled = newCatName.isNotBlank(),
-                onClick = {
-                    kaku.addCategory(newCatName)
-                    newCatName = ""
-                }
-            ) { Text(t("Add", "追加")) }
-        }
-
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-        // --- NU reading lists (site-native) ----------------------------------
-        SectionHeader("Novel Updates")
-        if (nuLists.isEmpty()) {
-            EmptyNote(t("Lists appear after the first library sync.", "ライブラリ同期後に表示されます。"))
-        }
-        nuLists.forEach { list ->
-            CategoryRow(
-                name = list.name,
-                hidden = list.id in hiddenLists,
-                onHidden = {
-                    app.updateHiddenLists(
-                        if (it) hiddenLists + list.id else hiddenLists - list.id
-                    )
-                }
-            )
+        if (site == "kakuyomu") {
+            // --- Kakuyomu: client-side categories --------------------------
+            SectionHeader(t("Kakuyomu categories", "カクヨム カテゴリ"))
+            kaku.categories.cats.forEach { cat ->
+                CategoryRow(
+                    name = cat.name,
+                    hidden = cat.hidden,
+                    onHidden = { kaku.setCategoryHidden(cat.id, it) },
+                    onRename = { renameCat = cat },
+                    onDelete = { confirmDelete = cat }
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                OutlinedTextField(
+                    value = newCatName,
+                    onValueChange = { newCatName = it },
+                    label = { Text(t("New category", "新しいカテゴリ")) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    enabled = newCatName.isNotBlank(),
+                    onClick = {
+                        kaku.addCategory(newCatName)
+                        newCatName = ""
+                    }
+                ) { Text(t("Add", "追加")) }
+            }
         }
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        if (site == "syosetu") {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-        // --- Syosetu 分類 (site-native) ---------------------------------------
-        SectionHeader(t("Syosetu 分類", "Syosetu 分類"))
-        if (syosetuCategories.isEmpty()) {
-            EmptyNote(t("Categories appear after the first bookmark sync.", "ブックマーク同期後に表示されます。"))
-        }
-        syosetuCategories.forEach { cat ->
-            CategoryRow(
-                name = cat.name,
-                hidden = cat.name in hiddenSyosetu,
-                onHidden = {
-                    // Names, not ids: bookmarks carry only the category name,
-                    // so a site-side rename orphans the flag (accepted).
-                    app.updateHiddenSyosetuCats(
-                        if (it) hiddenSyosetu + cat.name else hiddenSyosetu - cat.name
-                    )
-                }
-            )
+            // --- Syosetu 分類 (site-native) ---------------------------------
+            SectionHeader(t("Syosetu 分類", "Syosetu 分類"))
+            if (syosetuCategories.isEmpty()) {
+                EmptyNote(t("Categories appear after the first bookmark sync.", "ブックマーク同期後に表示されます。"))
+            }
+            syosetuCategories.forEach { cat ->
+                CategoryRow(
+                    name = cat.name,
+                    hidden = cat.name in hiddenSyosetu,
+                    onHidden = {
+                        // Names, not ids: bookmarks carry only the category name,
+                        // so a site-side rename orphans the flag (accepted).
+                        app.updateHiddenSyosetuCats(
+                            if (it) hiddenSyosetu + cat.name else hiddenSyosetu - cat.name
+                        )
+                    }
+                )
+            }
         }
     }
 

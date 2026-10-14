@@ -106,8 +106,8 @@ fun NovelListScreen(
     onLastReads: (Map<String, Pair<String, String>>) -> Unit = {},
     nsfwUnlocked: Boolean = false,
     onToggleNsfw: () -> Unit = {},
-    onOpenCategories: () -> Unit = {},
     hiddenLists: Set<String> = emptySet(),
+    onHiddenLists: (Set<String>) -> Unit = {},
     pauseLocalCovers: Boolean = false
 ) {
     val context = LocalContext.current
@@ -150,17 +150,23 @@ fun NovelListScreen(
     // System back closes the List options overlay instead of leaving the app.
     BackHandler(enabled = showListOptions) { showListOptions = false }
 
-    // List options is its own full screen. return so the drawer is not drawn under it.
+    // The Lists window is its own full screen. return so the drawer is not drawn under it.
     if (showListOptions) {
         ListOptionsScreen(
             lists = vm.lists,
             notifyOff = notifyOff,
             updateOff = updateOff,
-            onSave = { n, u ->
+            hiddenLists = hiddenLists,
+            onSave = { n, u, h ->
                 onSaveListOptions(n, u)
+                onHiddenLists(h)
                 showListOptions = false
             },
             onCancel = { showListOptions = false },
+            onEditLists = {
+                showListOptions = false
+                onEditLists()
+            },
             shScanLabel = vm.shScan?.let { "${it.done}/${it.total}" } ?: "",
             shScanRunning = vm.shScan?.running == true,
             onToggleShScan = { vm.toggleShScan() }
@@ -258,16 +264,11 @@ fun NovelListScreen(
                     }
                 )
                 }
+                // One management entry (Wayne's de-clutter rule): the Lists
+                // window holds notify/update/hidden switches per list, the
+                // site-side list editor, and the SH scan.
                 NavigationDrawerItem(
-                    label = { Text("Edit Lists  ⚙") },
-                    selected = false,
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        onEditLists()
-                    }
-                )
-                NavigationDrawerItem(
-                    label = { Text("List options  ⚙") },
+                    label = { Text("Lists  ⚙") },
                     selected = false,
                     onClick = {
                         scope.launch { drawerState.close() }
@@ -293,14 +294,6 @@ fun NovelListScreen(
                     }
                 }
                 HorizontalDivider()
-                NavigationDrawerItem(
-                    label = { Text(t("Categories  ⚙", "カテゴリ  ⚙")) },
-                    selected = false,
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        onOpenCategories()
-                    }
-                )
                 NsfwToggleRow(unlocked = nsfwUnlocked, onToggle = onToggleNsfw)
                 NavigationDrawerItem(
                     label = { Text("Settings") },
