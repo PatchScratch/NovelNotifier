@@ -167,6 +167,13 @@ fun ReaderScreen(
     var extracting by remember(target) { mutableStateOf(false) }
     /** True while the chapter host is showing a Cloudflare challenge. */
     var cfChecking by remember(target) { mutableStateOf(false) }
+    /**
+     * CF first-touch per chapter (Wayne's foxteller case): subresource
+     * challenges can never render UI, so an SPA whose app.js gets challenged
+     * stalls on its splash forever. One detour through the HOST ROOT forces
+     * a main-frame challenge that CAN auto-clear and set cf_clearance; the
+     * chapter then reloads into a session that passes.
+     */
     var imageChapter by remember(target) { mutableStateOf(false) } // chapter is image slices, not text
     var webDecodeStamp by remember(target) { mutableStateOf("") } // pages the web decode ran on
     // --- offline library state (3.3) ---
@@ -238,6 +245,15 @@ fun ReaderScreen(
     }
     var wordHit by remember(target) { mutableStateOf<JaDict.WordHit?>(null) }
     val chapter = target.chapters.getOrNull(index) ?: return
+
+    /**
+     * Foxteller /rss/<id> resolution stage per chapter: 0 = not needed,
+     * 1 = resolving (extraction paused — the overview page must not win),
+     * 2 = resolved (final navigation fired; the ladder owns it now).
+     */
+    var foxRssStage by remember(chapter.url) { mutableStateOf(0) }
+    /** The WebView's actual URL — chapter.url can be NU's /extnu redirect. */
+    var loadedUrl by remember(target) { mutableStateOf("") }
 
     val xlateKey = prefs.getString("xlate_key", "").orEmpty()
     // Shared by first translation and re-translate: runs the
@@ -416,8 +432,108 @@ fun ReaderScreen(
         wv.evaluateJavascript(chapterExtractJs()) { res ->
             extractResult = parseChapterExtract(res)
             if (extractResult != null) extractFailed = false
+            if (extractResult != null) {
+                DebugLog.log("READER", "extracted ${extractResult!!.paragraphs.size} paragraphs")
+            } else {
+                DebugLog.log("READER", "extract miss — js said: " + (res ?: "").take(120))
+                // Which extractor stage fails? Mirror nodeVisible's checks.
+                webViewRef.value?.evaluateJavascript(
+                    """(function(){
+                        var c = document.querySelector('.chapter-content');
+                        if (!c) return 'NOCONTAINER';
+                        var ps = c.querySelectorAll('p'), vis = 0, chars = 0, h0 = [];
+                        for (var i = 0; i < ps.length; i++) {
+                          var p = ps[i], st = window.getComputedStyle(p);
+                          var r = p.getBoundingClientRect();
+                          if (i < 3) h0.push((r.height|0) + '/' + st.display + '/' + st.visibility + '/' + st.opacity);
+                          if (st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0.01 && r.height > 0) {
+                            var t = (p.innerText || '').trim();
+                            if (t.length > 1) { vis++; chars += t.length; }
+                          }
+                        }
+                        return 'cc=' + ps.length + ' vis=' + vis + ' chars=' + chars + ' first=' + h0.join(',');
+                    })()"""
+                ) { d -> DebugLog.log("READER", "dom: " + unwrapJsResult(d).take(140)) }
+            }
             extracting = false
             onDone?.invoke()
+        }
+    }
+
+    // NU /extnu chapter loader (Wayne's foxteller case, 2026-10-15): the
+    // entry link is NU's redirector, the destination is the translator's
+    // /rss/<id> URL (an SPA overview, never a chapter), subresource
+    // Cloudflare stalls the SPA on its splash, and NU sometimes bounces
+    // the redirect back to its own homepage. One state machine, keyed per
+    // chapter (never restarted by page finishes), walks the whole chain:
+    // bounce-retry -> rss resolve (DIRECT/BASE) -> splash first-touch ->
+    // final chapter URL. foxRssStage==1 keeps the extraction ladder from
+    // crowning an intermediate overview page; ==2 hands over to it.
+    LaunchedEffect(chapter.url, viewMode) {
+        val entry = android.net.Uri.parse(chapter.url)
+        val isExtNu = (entry.host ?: "").endsWith("novelupdates.com") &&
+            (entry.path ?: "").startsWith("/extnu/")
+        if (!isExtNu || viewMode != READER_VIEW_TEXT) return@LaunchedEffect
+        val ordinal = chapterNum(chapter.chapter)
+        if (ordinal <= 0) return@LaunchedEffect
+        var rssUrl = ""
+        var rootTouched = false
+        var stalledSteps = 0
+        for (step in 0 until 44) {          // ~2.5s each -> ~110s ceiling
+            delay(2500)
+            val wv = webViewRef.value ?: return@LaunchedEffect
+            val cur = loadedUrl
+            val curHost = android.net.Uri.parse(cur.ifBlank { chapter.url }).host ?: ""
+            val onNu = curHost.endsWith("novelupdates.com")
+            when {
+                // NU bounced the redirect to its own pages -> retry the entry
+                onNu && cur != chapter.url -> {
+                    DebugLog.log("READER", "extnu bounced to $curHost — retrying entry")
+                    wv.loadUrl(chapter.url)
+                }
+                // The rss overview: resolve the real chapter via site links
+                cur.contains("/rss/") -> {
+                    if (rssUrl.isBlank()) {
+                        rssUrl = cur
+                        foxRssStage = 1
+                    }
+                    stalledSteps++
+                    wv.evaluateJavascript(foxtellerRssResolveJs(ordinal)) { r ->
+                        val v = unwrapJsResult(r)
+                        when {
+                            v.startsWith("DIRECT:") -> {
+                                foxRssStage = 2
+                                DebugLog.log("READER", "rss -> chapter " + v.take(100))
+                                wv.loadUrl(v.removePrefix("DIRECT:"))
+                            }
+                            v.startsWith("BASE:") -> {
+                                DebugLog.log("READER", "rss -> series base (older chapter)")
+                                wv.loadUrl(v.removePrefix("BASE:"))
+                            }
+                        }
+                    }
+                    // Splash stall (subresource CF): detour through the host
+                    // root ONCE so a main-frame challenge can clear, then
+                    // return straight to the rss URL (not the flaky entry).
+                    if (!rootTouched && stalledSteps >= 5) {
+                        rootTouched = true
+                        DebugLog.log("READER", "splash stall — CF first-touch via root")
+                        wv.loadUrl("https://$curHost/")
+                        delay(7000)
+                        if (foxRssStage == 1) wv.loadUrl(rssUrl)
+                    }
+                }
+                // A /novel/<id>/<n>/ page: the chapter itself — done here;
+                // the extraction ladder (re-armed by its page finish) owns it.
+                curHost.endsWith("foxteller.com") && Regex("/novel/\\d+/\\d+/").containsMatchIn(cur) -> {
+                    if (foxRssStage == 1) foxRssStage = 2
+                    return@LaunchedEffect
+                }
+            }
+        }
+        if (foxRssStage == 1) {
+            DebugLog.log("READER", "extnu loader gave up; letting the ladder try")
+            foxRssStage = 2
         }
     }
 
@@ -433,6 +549,7 @@ fun ReaderScreen(
     // failure falls back to the stored copy when one exists (offline reading).
     LaunchedEffect(extractTick, retryKey, viewMode, chapter.url) {
         if (viewMode != READER_VIEW_TEXT || extractTick == 0) return@LaunchedEffect
+        if (foxRssStage == 1) return@LaunchedEffect
         extractResult = null
         extractFailed = false
         imageChapter = false
@@ -442,7 +559,7 @@ fun ReaderScreen(
         tryExtract()
         delay(2600)
         var shots = 0
-        while (extractResult == null && !extractFailed && shots < 8) {
+        while (extractResult == null && !extractFailed && shots < 10) {
             // A challenge page up? Say so instead of spinning silently —
             // the visible WebView may need the user's eyes for a moment.
             webViewRef.value?.evaluateJavascript("(document.title || '')") { r ->
@@ -972,7 +1089,11 @@ fun ReaderScreen(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 // Main frame only matters; subframe finishes would
                                 // trigger re-extraction storms.
-                                if (url != null && url == view?.url) extractTick += 1
+                                if (url != null && url == view?.url) {
+                                    DebugLog.log("READER", "loaded " + url.take(90) + " title=" + (view?.title ?: "").take(40))
+                                    loadedUrl = url
+                                    extractTick += 1
+                                }
                                 super.onPageFinished(view, url)
                             }
 

@@ -609,6 +609,9 @@ fun chapterExtractJs(): String = """
     // Watermark tokens the same hosts embed inside paragraphs ("cls1b7bcfa179…").
     function cleanText(t) {
       var cleaned = t.replace(/cls[0-9a-f]{12,}/g, ' ');
+      // Foxteller (verified 2026-10-15) injects its anti-piracy line INTO
+      // every content paragraph — strip the sentence, keep the prose.
+      cleaned = cleaned.replace(/Please contact us at [\w.@-]+ if you see this on (another|any other) site\.?\s*\d+(\.\d+)?/gi, ' ');
       cleaned = cleaned.replace(/\s+/g, ' ').trim();
       return decodeSubstituted(cleaned);
     }
@@ -670,7 +673,9 @@ fun chapterExtractJs(): String = """
     function isJunk(t, p) {
       // Anti-piracy watermarks (decoded or plain) are not prose.
       if (/content is owned by/i.test(t)) return true;
-      if (/if you see this on (another|any other) site/i.test(t)) return true; // foxteller et al
+      // Foxteller's watermark ends with a bare chapter id; after the
+      // sentence strip in cleanText only the number survives.
+      if (/^\d{1,6}$/.test(t)) return true;
       if (t.length > 60) return false;
       // Footer/copyright lines travel inside the content container sometimes.
       // (Single backslash on purpose: Kotlin raw strings don't process
@@ -739,7 +744,7 @@ fun chapterExtractJs(): String = """
     var json = out.map(function(t) { return JSON.stringify(t); }).join(',');
     return '{"title":' + JSON.stringify(title) + ',"paragraphs":[' + json + ']}';
   } catch (e) {
-    return 'FAIL';
+    return 'FAIL:' + (e && e.message ? e.message : String(e)).slice(0, 120) + ' @out' + (typeof out !== 'undefined' ? out.length : -1);
   }
 })();
 """.trimIndent()
@@ -960,4 +965,31 @@ fun tocHarvestJs(parentScope: Boolean = true): String = """
     return '[]';
   }
 })();
+""".trimIndent()
+
+/**
+ * Foxteller chapter resolver (2026-10-15, Wayne's broken series): NU's
+ * release rows for this host link the site's /rss/<id> URL, which renders
+ * the series OVERVIEW, never the chapter. The rendered page always links
+ * the latest chapter (/novel/<id>/<n>/slug) and the series base derives
+ * from any novel link; the series page lists every chapter URL.
+ *
+ * Returns "DIRECT:<url>" when the wanted ordinal is linked, "BASE:<url>"
+ * when only the series base is derivable (navigate there and re-run), or
+ * "" while the page is still booting (SPA behind Cloudflare).
+ */
+fun foxtellerRssResolveJs(ordinal: Int): String = """
+(function() {
+  var links = Array.prototype.slice.call(document.querySelectorAll('a[href*="/novel/"]'));
+  var want = new RegExp('/novel/\\d+/${ordinal}/');
+  for (var i = 0; i < links.length; i++) {
+    var h = links[i].href || '';
+    if (want.test(h)) return 'DIRECT:' + h;
+  }
+  for (var j = 0; j < links.length; j++) {
+    var mm = (links[j].href || '').match(/^https?:\/\/[^\/]+\/novel\/\d+/);
+    if (mm) return 'BASE:' + mm[0];
+  }
+  return '';
+})()
 """.trimIndent()
