@@ -320,7 +320,11 @@ fun NovelApp(
             onCancel = { router.pop() }
         )
 
-        Route.EditLists -> EditListsScreen(onBack = { router.pop() })
+        is Route.EditLists -> EditListsScreen(
+            url = route.url,
+            title = route.title,
+            onBack = { router.pop() }
+        )
 
         Route.Onboarding -> OnboardingScreen(
             onFinished = { router.pop() },
@@ -449,7 +453,15 @@ fun NovelApp(
         is Route.Categories -> CategoriesScreen(
             site = route.site,
             syosetuCategories = syosetu.categories,
-            onBack = { router.pop() }
+            onBack = { router.pop() },
+            onEditCategories = {
+                router.push(
+                    Route.EditLists(
+                        url = "https://syosetu.com/favnovelmain/editcategory/",
+                        title = t("Edit 分類", "分類編集")
+                    )
+                )
+            }
         )
 
         Route.SyosetuLogin -> SyosetuLoginScreen(
@@ -541,7 +553,7 @@ fun NovelApp(
                     activeSite = app.activeSite,
                     onSwitchSite = { app.switchSite(it) },
                     onOpenSettings = { app.openSettings("nu") },
-                    onEditLists = { router.push(Route.EditLists) },
+                    onEditLists = { router.push(Route.EditLists()) },
                     onSaveListOptions = { newNotifyOff, newUpdateOff ->
                         nu.saveListOptions(newNotifyOff, newUpdateOff)
                     },

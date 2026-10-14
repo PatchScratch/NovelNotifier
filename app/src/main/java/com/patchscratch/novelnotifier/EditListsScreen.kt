@@ -22,13 +22,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 
 /**
- * Full Novel Updates reading-list page so the user can create/rename lists on the site.
- * We do not scrape here — Done just closes. The next list refresh picks up site changes.
+ * Full site page in a WebView so the user can create/rename things on the
+ * site itself (NU reading lists, Syosetu 分類 via /favnovelmain/editcategory/).
+ * We do not scrape here — Done just closes. The next refresh picks up site changes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun EditListsScreen(onBack: () -> Unit) {
+fun EditListsScreen(
+    url: String = "https://www.novelupdates.com/reading-list/",
+    title: String = "Edit Lists",
+    onBack: () -> Unit
+) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -41,7 +46,7 @@ fun EditListsScreen(onBack: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Edit Lists",
+                    text = title,
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
@@ -68,7 +73,7 @@ fun EditListsScreen(onBack: () -> Unit) {
                     settings.domStorageEnabled = true
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                    loadUrl("https://www.novelupdates.com/reading-list/")
+                    loadUrl(url)
                 }
             }
         )

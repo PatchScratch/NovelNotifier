@@ -37,7 +37,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 fun CategoriesScreen(
     site: String,
     syosetuCategories: List<SyosetuCategory>,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onEditCategories: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = viewModel<AppViewModel>()
@@ -125,6 +126,18 @@ fun CategoriesScreen(
                     }
                 )
             }
+            // Same affordance as NU's Lists window: edit on the site itself.
+            TextButton(onClick = onEditCategories) {
+                Text(t("Edit categories on syosetu.com  ↗", "syosetu.comでカテゴリを編集  ↗"))
+            }
+            Text(
+                t(
+                    "Create, rename or delete 分類 on the site; the next bookmark sync picks up changes.",
+                    "分類の作成・名前変更・削除はサイト上で行います。次回のブックマーク同期で反映されます。"
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
         }
     }
 

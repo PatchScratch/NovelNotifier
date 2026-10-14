@@ -44,7 +44,11 @@ sealed interface Route {
     data object Discover : Route
     data object Search : Route
     data object Settings : Route
-    data object EditLists : Route
+    /** Site-page editor WebView (NU lists; Syosetu 分類 editcategory). */
+    data class EditLists(
+        val url: String = "https://www.novelupdates.com/reading-list/",
+        val title: String = "Edit Lists"
+    ) : Route
     data object Onboarding : Route
     data object NuLogin : Route
     data object SyosetuLogin : Route
