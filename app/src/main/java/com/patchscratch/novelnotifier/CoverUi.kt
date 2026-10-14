@@ -1,14 +1,19 @@
 package com.patchscratch.novelnotifier
 
-import android.annotation.SuppressLint
-import android.webkit.CookieManager
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -16,48 +21,30 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.patchscratch.novelnotifier.R
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Cover helpers used by the list screen.
- *
- * CoverPrefetcher — hidden WebView that opens one series page at a time and
- *                   copies `.seriesimg img` src. [gapSeconds] spaces hits out
- *                   so Cloudflare is less likely to trip. A "Just a moment"
- *                   page waits 20s, then skips that title to the end of the queue.
- *
- * CoverThumb      — Coil image, or an empty grey box if we have no URL yet.
+ * Cover image UI: a prefetcher that walks a queue of series, extracting
+ * cover URLs from each series page (hidden WebView via SiteClient — Phase 4a
+ * migration, previously its own 1dp off-screen WebView), and the CoverThumb
+ * tile used everywhere covers render (grids, detail screens).
  *
  * Bulk prefetch (hundreds of covers after you leave the app) lives in
  * SyncEngineService.kt, not here.
- *
- * getValue / setValue are used by the `by` keyword. Do not delete those imports.
  */
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CoverPrefetcher(
     queue: List<Novel>,
@@ -66,52 +53,40 @@ fun CoverPrefetcher(
     gapSeconds: Int = 8
 ) {
     val next = queue.firstOrNull() ?: return
-    var canLoad by remember(next.title) { mutableStateOf(false) }
     var tries by remember(next.title) { mutableIntStateOf(0) }
+    var canRequest by remember(next.title) { mutableStateOf(false) }
 
+    // Local pacing gap (8s, 20s on retry) — sits on top of SiteClient's
+    // broader 10s politeness gap to avoid double-tapping the same page.
     LaunchedEffect(next.title, tries) {
-        canLoad = false
+        canRequest = false
         delay((if (tries > 0) 20 else gapSeconds).seconds)
-        canLoad = true
+        canRequest = true
     }
 
-    if (!canLoad) return
-
-    AndroidView(
-        modifier = Modifier
-            .size(1.dp)
-            .alpha(0f)
-            .offset(x = 4000.dp),
-        factory = { context ->
-            WebView(context).apply {
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                CookieManager.getInstance().setAcceptCookie(true)
-            }
-        },
-        update = { webView ->
-            webView.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    view?.evaluateJavascript(coverJs()) { result ->
-                        val cover = unwrapJsResult(result)
-                        when {
-                            cover.startsWith("http") -> onCoverFound(next.title, cover)
-                            cover == "CF" || tries < 2 -> {
-                                tries += 1
-                                canLoad = false
-                            }
-                            else -> onSkip(next.title)
-                        }
+    // Phase 4a: SiteClient owns the WebView; this composable just enqueues.
+    LaunchedEffect(next.title, canRequest, tries) {
+        if (!canRequest) return@LaunchedEffect
+        SiteClient.enqueue(
+            site = SiteClient.Site.NU,
+            request = SiteClient.ScrapeRequest(
+                url = next.seriesUrl,
+                js = coverJs(),
+                onComplete = { result ->
+                    val cover = when (result) {
+                        is SiteClient.ScrapeRequest.Result.Success ->
+                            unwrapJsResult(result.html)
+                        else -> ""
+                    }
+                    when {
+                        cover.startsWith("http") -> onCoverFound(next.title, cover)
+                        cover == "CF" || tries < 2 -> tries += 1
+                        else -> onSkip(next.title)
                     }
                 }
-            }
-            val current = webView.url ?: ""
-            if (current != next.seriesUrl) {
-                webView.loadUrl(next.seriesUrl)
-            }
-        }
-    )
+            )
+        )
+    }
 }
 
 /**
@@ -150,7 +125,7 @@ fun CoverThumb(
             )
         } else {
             Box(modifier = Modifier.fillMaxSize()) {
-                Image(
+                androidx.compose.foundation.Image(
                     painter = androidx.compose.ui.res.painterResource(R.drawable.ic_shiba_no_cover),
                     contentDescription = "No cover available",
                     contentScale = ContentScale.Crop,
