@@ -104,6 +104,8 @@ fun NovelListScreen(
     onEditLists: () -> Unit,
     onSaveListOptions: (Set<String>, Set<String>) -> Unit,
     onLastReads: (Map<String, Pair<String, String>>) -> Unit = {},
+    nsfwUnlocked: Boolean = false,
+    onToggleNsfw: () -> Unit = {},
     pauseLocalCovers: Boolean = false
 ) {
     val context = LocalContext.current
@@ -276,6 +278,7 @@ fun NovelListScreen(
                     }
                 }
                 HorizontalDivider()
+                NsfwToggleRow(unlocked = nsfwUnlocked, onToggle = onToggleNsfw)
                 NavigationDrawerItem(
                     label = { Text("Settings") },
                     selected = false,

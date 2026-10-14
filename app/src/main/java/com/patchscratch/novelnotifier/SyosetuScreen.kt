@@ -68,7 +68,9 @@ fun SyosetuHome(
     bookmarks: List<SyosetuBookmark> = emptyList(),
     r18Enabled: Boolean = false,
     enabledSubsites: Set<Int> = setOf(1, 2, 3),
-    onOpenBookmarks: (String) -> Unit = {}
+    onOpenBookmarks: (String) -> Unit = {},
+    nsfwUnlocked: Boolean = false,
+    onToggleNsfw: () -> Unit = {}
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -126,6 +128,7 @@ fun SyosetuHome(
                         onOpenSettings()
                     }
                 )
+                NsfwToggleRow(unlocked = nsfwUnlocked, onToggle = onToggleNsfw)
             }
         }
     ) {

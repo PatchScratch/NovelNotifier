@@ -57,7 +57,9 @@ fun KakuyomuHome(
     r18Enabled: Boolean = false,
     bookmarks: List<KakuyomuWork> = emptyList(),
     onOpenBookmarks: () -> Unit = {},
-    loggedIn: Boolean = false
+    loggedIn: Boolean = false,
+    nsfwUnlocked: Boolean = false,
+    onToggleNsfw: () -> Unit = {}
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -128,6 +130,7 @@ fun KakuyomuHome(
                         onOpenSettings()
                     }
                 )
+                NsfwToggleRow(unlocked = nsfwUnlocked, onToggle = onToggleNsfw)
             }
         }
     ) {

@@ -4,12 +4,12 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -47,7 +47,10 @@ import com.patchscratch.novelnotifier.ui.theme.NovelNotifierTheme
  * Android Studio may grey it out — it is not unused. Do not delete it.
  */
 
-class MainActivity : ComponentActivity() {
+// FragmentActivity (a ComponentActivity subclass): everything Compose needs
+// keeps working, and it is what androidx.biometric's BiometricPrompt requires
+// to host the system fingerprint / lockscreen-PIN dialog for NSFW mode.
+class MainActivity : FragmentActivity() {
 
     /** A notification tap asking for a series detail page. */
     data class SeriesDeepLink(val url: String, val title: String, val chapter: String)
@@ -134,11 +137,14 @@ fun NovelApp(
     val router = app.router
 
     // Foreground tracking gates AppViewModel's queue auto-resume (Android
-    // 12+ forbids background foreground-service starts).
+    // 12+ forbids background foreground-service starts). ON_STOP also
+    // re-locks NSFW mode: the app must never come back from the background
+    // still unlocked.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             app.setForeground(event != Lifecycle.Event.ON_STOP)
+            if (event == Lifecycle.Event.ON_STOP) app.lockNsfw()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -155,6 +161,14 @@ fun NovelApp(
     fun openDeepLink(link: MainActivity.SeriesDeepLink) {
         nu.openFromNotification(link)
         router.resetTo(Route.NuDetail(link.url))
+    }
+
+    // SFW/NSFW mode: unlocking needs the hosting activity for the system
+    // biometric dialog; hiding again is always free.
+    val nsfwActivity = context as? androidx.fragment.app.FragmentActivity
+    fun toggleNsfw() {
+        if (app.nsfwUnlocked) app.lockNsfw()
+        else nsfwActivity?.let { app.unlockNsfw(it) }
     }
 
     // Cold start first (volatile parked by onCreate), then live taps while running.
@@ -425,7 +439,9 @@ fun NovelApp(
                 bookmarks = syosetu.bookmarks,
                 r18Enabled = syosetu.r18,
                 enabledSubsites = syosetu.subsites,
-                onOpenBookmarks = { cat -> router.push(Route.SyosetuLibrary(cat)) }
+                onOpenBookmarks = { cat -> router.push(Route.SyosetuLibrary(cat)) },
+                nsfwUnlocked = app.nsfwUnlocked,
+                onToggleNsfw = { toggleNsfw() }
             )
 
             "kakuyomu" -> KakuyomuHome(
@@ -439,7 +455,9 @@ fun NovelApp(
                 r18Enabled = kakuyomu.r18,
                 bookmarks = kakuyomu.bookmarks,
                 onOpenBookmarks = { router.push(Route.KakuyomuLibrary) },
-                loggedIn = kakuyomu.loggedIn
+                loggedIn = kakuyomu.loggedIn,
+                nsfwUnlocked = app.nsfwUnlocked,
+                onToggleNsfw = { toggleNsfw() }
             )
 
             else -> {
@@ -479,6 +497,8 @@ fun NovelApp(
                         nu.saveListOptions(newNotifyOff, newUpdateOff)
                     },
                     onLastReads = { incoming -> nu.mergeIncomingLastReads(incoming) },
+                    nsfwUnlocked = app.nsfwUnlocked,
+                    onToggleNsfw = { toggleNsfw() },
                     pauseLocalCovers = app.syncStatus.startsWith("Running") ||
                         app.syncStatus.startsWith("Lists") ||
                         app.syncStatus.startsWith("Covers") ||
@@ -528,6 +548,11 @@ fun NovelApp(
             challenge = challenge,
             onSolved = { SiteClient.clearCloudflare(challenge.site) }
         )
+    }
+
+    // Unlock attempted with no lockscreen credential at all.
+    if (app.needsDeviceLock) {
+        NeedsDeviceLockDialog(onDismiss = { app.dismissNeedsDeviceLock() })
     }
     }
 }
