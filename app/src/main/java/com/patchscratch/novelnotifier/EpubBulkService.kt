@@ -8,11 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
@@ -60,10 +55,9 @@ class EpubBulkService : Service() {
         val meta: EpubStore.BookMeta?
     )
 
-    private var webView: WebView? = null
+    private var session: SiteClient.Session? = null
     private var job: BulkJob? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var loadTick = 0          // main-frame onPageFinished count
     private var extractResult: ChapterExtract? = null
     private var extractFailed = false
 
@@ -104,8 +98,8 @@ class EpubBulkService : Service() {
     override fun onDestroy() {
         serviceAlive = false
         scope.cancel()
-        webView?.destroy()
-        webView = null
+        session?.close()
+        session = null
         super.onDestroy()
     }
 
@@ -114,71 +108,40 @@ class EpubBulkService : Service() {
     private fun nuHosted(url: String) =
         url.startsWith("https://www.novelupdates.com/") || url.startsWith("http://www.novelupdates.com/")
 
-    private fun webViewOrCreate(): WebView {
-        return webView ?: WebView(applicationContext).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            // bulk never needs popups; ad hosts stay blocked like the reader
-            settings.setSupportMultipleWindows(false)
-            settings.javaScriptCanOpenWindowsAutomatically = false
-            webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    loadTick++
-                }
-
-                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                    val host = request?.url?.host ?: return false
-                    return isBlockedReaderHost(host)
-                }
-
-                override fun shouldInterceptRequest(
-                    view: WebView?,
-                    request: WebResourceRequest?
-                ): WebResourceResponse? {
-                    val host = request?.url?.host ?: return null
-                    if (!isBlockedReaderHost(host)) return null
-                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
-                }
-            }
-            webView = this
+    private fun sessionOrCreate(): SiteClient.Session {
+        return session ?: SiteClient.openSession(SiteClient.Site.NU).also {
+            session = it
         }
     }
 
     /** Load [url], wait for the main frame to finish, then run the extractor
      *  (with one retry for JS-rendering hosts). Null = load or extract failed. */
+    private var lastLoadedUrl = ""
     private suspend fun loadAndExtract(url: String): ChapterExtract? {
-        val wv = webViewOrCreate()
+        lastLoadedUrl = url
+        val sess = sessionOrCreate()
         extractResult = null
         extractFailed = false
-        val tickBefore = loadTick
-        wv.loadUrl(url)
-        val loaded = withTimeoutOrNull(60_000) {
-            while (loadTick <= tickBefore && scope.isActive) delay(500)
-            true
-        }
-        if (loaded == null) return null // page never finished (locked/paused/dead host)
-        // extraction attempt 1 at ~1.2 s, retry at ~5 s
-        extractResult = null
-        delay(1200)
-        extractResult = evaluateExtract()
+        // Session.loadUrl handles page load + CF detection + JS evaluation.
+        // The extraction has a retry (some JS-rendering hosts need time).
+        val raw = withTimeoutOrNull(60_000) {
+            suspendCancellableCoroutine<String> { cont ->
+                sess.loadUrl(url, chapterExtractJs()) { res ->
+                    cont.resume(res)
+                }
+            }
+        } ?: return null // page never finished (locked/paused/dead host)
+        if (raw == "CF") return null
+        extractResult = parseChapterExtract(unwrapJsResult(raw))
         if (extractResult == null) {
+            // Retry extraction at ~5s for JS-rendering hosts
             delay(3800)
-            extractResult = evaluateExtract()
+            val retry = suspendCancellableCoroutine<String> { cont ->
+                sess.evaluateJavascript(chapterExtractJs()) { res -> cont.resume(res) }
+            }
+            extractResult = parseChapterExtract(retry)
         }
         return extractResult
-    }
-
-    private suspend fun evaluateExtract(): ChapterExtract? {
-        val wv = webView ?: return null
-        return suspendCancellableCoroutine { cont ->
-            wv.evaluateJavascript(chapterExtractJs()) { res ->
-                cont.resume(parseChapterExtract(res))
-            }
-        }
     }
 
     private suspend fun runBulk(job: BulkJob) {
@@ -208,8 +171,9 @@ class EpubBulkService : Service() {
             }
             status("starting")
 
+            var lastLoadedUrl = ""
             fun currentHost(): String? {
-                val url = webView?.url ?: return null
+                val url = lastLoadedUrl.ifBlank { return null }
                 return try {
                     java.net.URI(url).host
                 } catch (e: Exception) {
@@ -221,9 +185,9 @@ class EpubBulkService : Service() {
             suspend fun harvestCurrentPage(parentScope: Boolean) {
                 val host = currentHost() ?: return
                 val map = tocByHost.getOrPut(host) { HashMap() }
-                val wv = webView ?: return
-                val raw = suspendCancellableCoroutine { cont ->
-                    wv.evaluateJavascript(tocHarvestJs(parentScope)) { res -> cont.resume(res) }
+                val sess = session ?: return
+                val raw = suspendCancellableCoroutine<String> { cont ->
+                    sess.evaluateJavascript(tocHarvestJs(parentScope)) { res -> cont.resume(res) }
                 }
                 val before = map.size
                 parseTocHarvest(raw).forEach { link ->
@@ -249,7 +213,7 @@ class EpubBulkService : Service() {
                 val host = currentHost() ?: return
                 val map = tocByHost[host] ?: return
                 if (map.isNotEmpty()) return
-                val pageUrl = webView?.url ?: return
+                val pageUrl = lastLoadedUrl.ifBlank { return }
                 val seriesUrl = pageUrl.trimEnd('/').substringBeforeLast('/')
                 if (!seriesUrl.startsWith("http") || seriesUrl == pageUrl) return
                 status("reading ToC from the series page ($host)")
@@ -318,7 +282,7 @@ class EpubBulkService : Service() {
                     status("NU first-touch · ${chapter.label}")
                     val extract = loadAndExtract(chapter.url)
                     if (extract == null) {
-                        DebugLog.log("EPUB", "first-touch failed: ${chapter.label} at ${webView?.url}")
+                        DebugLog.log("EPUB", "first-touch failed: ${chapter.label} at ${chapter.url}")
                     }
                     if (extract != null) {
                         withContext(Dispatchers.IO) {

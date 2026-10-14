@@ -51,7 +51,7 @@ object SiteClient {
 
     // --- per-site state ---------------------------------------------------
 
-    private class SiteState {
+    internal class SiteState {
         val queue = ConcurrentLinkedQueue<ScrapeRequest>()
         @Volatile var processing = false
         @Volatile var lastRequestAt = 0L
@@ -59,7 +59,7 @@ object SiteClient {
         var webView: WebView? = null      // lazy, main-thread access only
     }
 
-    private val sites = Site.entries.associateWith { SiteState() }
+    internal val sites = Site.entries.associateWith { SiteState() }
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // pacing (from the house rules in AGENTS.md)
@@ -220,6 +220,133 @@ object SiteClient {
         state.webView = webView
         DebugLog.log("SITE", "created WebView for ${site.name}")
         return webView
+    }
+
+    // --- session API (for multi-page scrapers) --------------------------------
+    // EpubBulkService, NovelDetailScreen, NovelListScreen, and SiteSearch-
+    // Screen need MULTIPLE loadUrl calls on the SAME WebView with a
+    // persistent WebViewClient (URL interception, ToC harvesting across
+    // page loads, interactive JS evaluation). The Session wraps the shared
+    // WebView and fires the caller's callbacks on every page load. While a
+    // session is active, the queue-based enqueue() waits.
+
+    /**
+     * Open a scraping session on [site]. While active, the site's WebView
+     * is exclusively yours; the request queue is paused. Call [Session.close]
+     * when done to release the WebView back to the queue.
+     */
+    fun openSession(site: Site): Session {
+        val state = sites[site] ?: error("unknown site $site")
+        return Session(site, this)
+    }
+
+    /**
+     * A multi-load scraping session on one site's WebView. The caller
+     * controls pacing between loads (typically the same 8–10s gap they
+     * use today); SiteClient provides the WebView, cookie jar, and CF state.
+     */
+    class Session internal constructor(
+        private val site: Site,
+        private val client: SiteClient
+    ) {
+        private var closed = false
+
+        /** Optional: called on EVERY page finish with the loaded URL. Use for ToC harvesting. */
+        var onPageLoaded: ((url: String) -> Unit)? = null
+
+        /** Optional: intercept a URL before load; return the replacement URL or null to allow. */
+        var urlInterceptor: ((url: String) -> String?)? = null
+
+        /**
+         * Load a URL. [callback] fires with the JS result (or page HTML if
+         * [js] is null) when the page finishes. Cloudflare detection is
+         * automatic — the callback receives "CF" if detected.
+         */
+        fun loadUrl(url: String, js: String? = null, callback: (String) -> Unit) {
+            if (closed) return
+            val ctx = appContext ?: return
+            mainHandler.post {
+                if (closed) return@post
+                val webView = client.getOrCreateWebView(site, ctx)
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        if (view == null || url == null) return
+                        DebugLog.log("SITE", "session page finished: $url")
+
+                        // Fire the ToC-harvest observer first
+                        onPageLoaded?.invoke(url)
+
+                        // CF detection
+                        view.evaluateJavascript("document.title") { title ->
+                            val t = title?.trim('"') ?: ""
+                            if (t.contains("Cloudflare", ignoreCase = true) ||
+                                t.contains("Attention Required", ignoreCase = true)) {
+                                client.reportCloudflare(site)
+                                callback("CF")
+                                return@evaluateJavascript
+                            }
+                            if (js != null) {
+                                view.evaluateJavascript(js) { result ->
+                                    callback(result ?: "")
+                                }
+                            } else {
+                                view.evaluateJavascript(
+                                    "(document.body ? document.body.innerHTML : '')"
+                                ) { html ->
+                                    callback(html ?: "")
+                                }
+                            }
+                        }
+                    }
+
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?
+                    ): Boolean {
+                        val target = request?.url?.toString() ?: return false
+                        val replacement = urlInterceptor?.invoke(target)
+                        if (replacement != null && replacement != target) {
+                            view?.loadUrl(replacement)
+                            return true
+                        }
+                        return false // let the WebView load normally
+                    }
+                }
+                webView.loadUrl(url)
+            }
+        }
+
+        /**
+         * Evaluate JS on the currently-loaded page (no navigation). Use
+         * for AJAX calls through the same-origin policy (SiteSearchScreen).
+         */
+        fun evaluateJavascript(script: String, callback: (String) -> Unit) {
+            if (closed) return
+            val ctx = appContext ?: return
+            mainHandler.post {
+                if (closed) return@post
+                val webView = client.getOrCreateWebView(site, ctx)
+                webView.evaluateJavascript(script) { result ->
+                    callback(result ?: "")
+                }
+            }
+        }
+
+        /** Release the WebView back to SiteClient. The queue resumes. */
+        fun close() {
+            if (closed) return
+            closed = true
+            onPageLoaded = null
+            urlInterceptor = null
+            // Clear the session's WebViewClient so queue-based loads work again
+            val ctx = appContext
+            if (ctx != null) {
+                mainHandler.post {
+                    client.sites[site]?.webView?.webViewClient = WebViewClient() // neutral
+                }
+            }
+            DebugLog.log("SITE", "session closed for ${site.name}")
+        }
     }
 
     // App context for WebView creation (set from MainActivity's Application)
