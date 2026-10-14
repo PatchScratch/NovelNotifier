@@ -71,7 +71,8 @@ fun SyosetuHome(
     onOpenBookmarks: (String) -> Unit = {},
     onOpenCategories: () -> Unit = {},
     nsfwUnlocked: Boolean = false,
-    onToggleNsfw: () -> Unit = {}
+    onToggleNsfw: () -> Unit = {},
+    hiddenCategories: Set<String> = emptySet()
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -100,19 +101,25 @@ fun SyosetuHome(
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
+                    // SFW: hidden 分類 and their rows vanish; counts shrink.
+                    val visibleBookmarks =
+                        if (nsfwUnlocked) bookmarks
+                        else NsfwFilter.filterSyosetu(bookmarks, hiddenCategories, unlocked = false)
                     // NU-style switcher: All + one row per 分類. Opens the
                     // bookmark library screen (grid/list, covers) filtered.
-                    NavigationDrawerItem(
-                        label = { Text(t("All", "すべて") + " (${bookmarks.size}) ▦") },
-                        selected = false,
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onOpenBookmarks("")
-                        }
-                    )
-                    bookmarks.map { it.category }.filter { it.isNotBlank() }.distinct().forEach { cat ->
+                    if (visibleBookmarks.isNotEmpty()) {
                         NavigationDrawerItem(
-                            label = { Text("$cat (${bookmarks.count { it.category == cat }})") },
+                            label = { Text(t("All", "すべて") + " (${visibleBookmarks.size}) ▦") },
+                            selected = false,
+                            onClick = {
+                                scope.launch { drawerState.close() }
+                                onOpenBookmarks("")
+                            }
+                        )
+                    }
+                    visibleBookmarks.map { it.category }.filter { it.isNotBlank() }.distinct().forEach { cat ->
+                        NavigationDrawerItem(
+                            label = { Text("$cat (${visibleBookmarks.count { it.category == cat }})") },
                             selected = false,
                             onClick = {
                                 scope.launch { drawerState.close() }

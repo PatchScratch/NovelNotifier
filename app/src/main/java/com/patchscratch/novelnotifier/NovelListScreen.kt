@@ -107,6 +107,7 @@ fun NovelListScreen(
     nsfwUnlocked: Boolean = false,
     onToggleNsfw: () -> Unit = {},
     onOpenCategories: () -> Unit = {},
+    hiddenLists: Set<String> = emptySet(),
     pauseLocalCovers: Boolean = false
 ) {
     val context = LocalContext.current
@@ -167,6 +168,14 @@ fun NovelListScreen(
         return
     }
 
+    // SFW mode: titles living in a hidden reading list vanish. Derived from
+    // the snapshot's reverse index; re-derived when the flags change or a
+    // scrape updates the list set.
+    val hiddenTitles = remember(nsfwUnlocked, hiddenLists, vm.lists) {
+        if (nsfwUnlocked) emptySet()
+        else NsfwFilter.hiddenNuTitles(loadListSnapshot(context).novelsByList, hiddenLists)
+    }
+
     // Overlay saved cover URLs onto rows that only have a title + chapter.
     // Placeholder URLs count as "no cover" so they can be repaired.
     val shownNovels = (if (vm.selectedListId.isBlank()) rssNovels else vm.listNovels).map { novel ->
@@ -177,7 +186,8 @@ fun NovelListScreen(
             novel
         }
     }.filter { novel ->
-        searchQuery.isBlank() || novel.title.contains(searchQuery, ignoreCase = true)
+        (searchQuery.isBlank() || novel.title.contains(searchQuery, ignoreCase = true)) &&
+            novel.title !in hiddenTitles
     }.let { rows ->
         when (sortMode) {
             SORT_ALPHA -> rows.sortedBy { it.title.lowercase() }
@@ -264,10 +274,14 @@ fun NovelListScreen(
                         showListOptions = true
                     }
                 )
-                // One row per NU list. Cached lists paint immediately; empty lists scrape.
+                // One row per visible NU list. Hidden lists only render
+                // while NSFW mode is unlocked. Cached lists paint
+                // immediately; empty lists scrape.
+                val visibleLists = if (nsfwUnlocked) vm.lists
+                else vm.lists.filter { it.id !in hiddenLists }
                 LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(vm.lists.size) { index ->
-                        val list = vm.lists[index]
+                    items(visibleLists.size) { index ->
+                        val list = visibleLists[index]
                         NavigationDrawerItem(
                             label = { Text(list.name) },
                             selected = vm.selectedListId == list.id,

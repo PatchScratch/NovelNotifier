@@ -42,24 +42,11 @@ fun CategoriesScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+    val app = viewModel<AppViewModel>()
     val kaku = viewModel<KakuyomuViewModel>()
-    var hiddenLists by remember {
-        mutableStateOf(prefs.getStringSet("hidden_lists", emptySet()) ?: emptySet())
-    }
-    var hiddenSyosetu by remember {
-        mutableStateOf(prefs.getStringSet("syosetu_hidden_cats", emptySet()) ?: emptySet())
-    }
-
-    fun saveHiddenLists(next: Set<String>) {
-        hiddenLists = next
-        prefs.edit { putStringSet("hidden_lists", next) }
-    }
-
-    fun saveHiddenSyosetu(next: Set<String>) {
-        hiddenSyosetu = next
-        prefs.edit { putStringSet("syosetu_hidden_cats", next) }
-    }
+    // Live state from AppViewModel — flips here re-filter every surface.
+    val hiddenLists = app.hiddenLists
+    val hiddenSyosetu = app.hiddenSyosetuCats
 
     var newCatName by remember { mutableStateOf("") }
     var renameCat by remember { mutableStateOf<LocalCategory?>(null) }
@@ -130,7 +117,7 @@ fun CategoriesScreen(
                 name = list.name,
                 hidden = list.id in hiddenLists,
                 onHidden = {
-                    saveHiddenLists(
+                    app.updateHiddenLists(
                         if (it) hiddenLists + list.id else hiddenLists - list.id
                     )
                 }
@@ -151,7 +138,7 @@ fun CategoriesScreen(
                 onHidden = {
                     // Names, not ids: bookmarks carry only the category name,
                     // so a site-side rename orphans the flag (accepted).
-                    saveHiddenSyosetu(
+                    app.updateHiddenSyosetuCats(
                         if (it) hiddenSyosetu + cat.name else hiddenSyosetu - cat.name
                     )
                 }

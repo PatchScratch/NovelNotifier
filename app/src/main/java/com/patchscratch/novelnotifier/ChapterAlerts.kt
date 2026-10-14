@@ -57,7 +57,10 @@ data class ChapterUpdate(
 /** Stable per-series notification id (also the key in the persisted alert store). */
 fun ChapterUpdate.alertId(): Int = novel.seriesUrl.ifBlank { novel.title }.hashCode()
 
-/** False if the series bell is off, or every list containing [title] has notify off. */
+/** False if the series bell is off, every list containing [title] has
+ *  notify off, or the series lives in a hidden list (SFW mode — hidden
+ *  series never notify, since checks run while the app is backgrounded
+ *  and therefore locked). */
 fun shouldNotify(
     context: Context,
     title: String,
@@ -70,6 +73,9 @@ fun shouldNotify(
         rows.any { it.title.equals(title, ignoreCase = true) }
     }.keys
     if (listIds.isEmpty()) return true
+    if (listIds.any { it in loadIdSet(context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE), "hidden_lists") }) {
+        return false
+    }
     return listIds.any { it !in notifyOff }
 }
 

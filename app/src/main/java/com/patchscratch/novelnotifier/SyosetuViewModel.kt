@@ -118,9 +118,16 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
         try {
             ensureChapterChannel(getApplication())
             val updates = SyosetuFeeds.pollBookmarks(getApplication(), bookmarks)
-            if (updates.isNotEmpty()) {
-                postChapterNotifications(getApplication(), updates)
-                DebugLog.log("SYOSETU", "posted ${updates.size} update notifications")
+            // SFW: hidden 分類 never notify. Unlock state is in-memory and
+            // polls run in the background (locked), so hidden = never.
+            val hiddenCats = loadIdSet(prefs, "syosetu_hidden_cats")
+            val visible = if (hiddenCats.isEmpty()) updates
+            else updates.filter { u ->
+                bookmarks.none { bm -> bm.title == u.novel.title && bm.category in hiddenCats }
+            }
+            if (visible.isNotEmpty()) {
+                postChapterNotifications(getApplication(), visible)
+                DebugLog.log("SYOSETU", "posted ${visible.size} update notifications (${updates.size - visible.size} hidden)")
             }
         } catch (e: Exception) {
             DebugLog.log("SYOSETU", "feed poll skipped", e)

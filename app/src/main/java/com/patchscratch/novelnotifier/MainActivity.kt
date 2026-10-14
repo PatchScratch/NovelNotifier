@@ -159,6 +159,19 @@ fun NovelApp(
     // alone — never yank the user out of an auth flow. The reader, if open,
     // stays on top (Router.resetTo keeps it).
     fun openDeepLink(link: MainActivity.SeriesDeepLink) {
+        // SFW deep-link guard: a notification (or stale intent) must not be
+        // able to walk around the hide filter into a hidden series' detail.
+        if (!app.nsfwUnlocked &&
+            link.title in NsfwFilter.hiddenNuTitles(
+                loadListSnapshot(context).novelsByList, app.hiddenLists
+            )
+        ) {
+            nu.statusMessage = t(
+                "That series is in a hidden list — unlock to open it.",
+                "その作品は非表示リストにあります — ロック解除して開いてください。"
+            )
+            return
+        }
         nu.openFromNotification(link)
         router.resetTo(Route.NuDetail(link.url))
     }
@@ -406,7 +419,9 @@ fun NovelApp(
             onRemove = { bm ->
                 if (bm.userfavId.isNotBlank()) syosetu.removeBookmark(bm.userfavId)
             },
-            onBack = { router.pop() }
+            onBack = { router.pop() },
+            nsfwUnlocked = app.nsfwUnlocked,
+            hiddenCategories = app.hiddenSyosetuCats
         )
 
         is Route.KakuyomuLibrary -> KakuyomuBookmarksScreen(
@@ -423,7 +438,8 @@ fun NovelApp(
                 kakuyomu.addCategory(name)
                 val created = kakuyomu.categories.cats.lastOrNull()
                 if (created != null) kakuyomu.moveToCategory(workId, created.id)
-            }
+            },
+            nsfwUnlocked = app.nsfwUnlocked
         )
 
         Route.Categories -> CategoriesScreen(
@@ -464,7 +480,8 @@ fun NovelApp(
                 onOpenBookmarks = { cat -> router.push(Route.SyosetuLibrary(cat)) },
                 onOpenCategories = { router.push(Route.Categories) },
                 nsfwUnlocked = app.nsfwUnlocked,
-                onToggleNsfw = { toggleNsfw() }
+                onToggleNsfw = { toggleNsfw() },
+                hiddenCategories = app.hiddenSyosetuCats
             )
 
             "kakuyomu" -> KakuyomuHome(
@@ -525,6 +542,7 @@ fun NovelApp(
                     nsfwUnlocked = app.nsfwUnlocked,
                     onToggleNsfw = { toggleNsfw() },
                     onOpenCategories = { router.push(Route.Categories) },
+                    hiddenLists = app.hiddenLists,
                     pauseLocalCovers = app.syncStatus.startsWith("Running") ||
                         app.syncStatus.startsWith("Lists") ||
                         app.syncStatus.startsWith("Covers") ||

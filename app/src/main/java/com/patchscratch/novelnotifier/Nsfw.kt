@@ -20,6 +20,35 @@ import androidx.compose.ui.platform.LocalContext
  * AppViewModel memory: fresh processes and ON_STOP re-lock, so the app
  * always wakes up in SFW mode.
  */
+object NsfwFilter {
+
+    /**
+     * NU titles that live in any hidden reading list (from the snapshot's
+     * reverse index). Pure so tests can drive it with a fake map.
+     */
+    fun hiddenNuTitles(novelsByList: Map<String, List<Novel>>, hiddenListIds: Set<String>): Set<String> =
+        if (hiddenListIds.isEmpty()) emptySet()
+        else hiddenListIds.flatMap { id -> novelsByList[id].orEmpty().map { it.title } }.toSet()
+
+    fun filterNu(novels: List<Novel>, hiddenTitles: Set<String>, unlocked: Boolean): List<Novel> =
+        if (unlocked || hiddenTitles.isEmpty()) novels
+        else novels.filter { it.title !in hiddenTitles }
+
+    fun filterSyosetu(bookmarks: List<SyosetuBookmark>, hiddenCats: Set<String>, unlocked: Boolean): List<SyosetuBookmark> =
+        if (unlocked || hiddenCats.isEmpty()) bookmarks
+        else bookmarks.filter { it.category !in hiddenCats }
+
+    /** Kakuyomu works assigned to a hidden client-side category. */
+    fun hiddenKakuyomuWorkIds(cats: CategoryState): Set<String> {
+        val hiddenIds = cats.cats.filter { it.hidden }.map { it.id }.toSet()
+        if (hiddenIds.isEmpty()) return emptySet()
+        return cats.assign.filterValues { it in hiddenIds }.keys
+    }
+
+    fun filterKakuyomu(works: List<KakuyomuWork>, hiddenWorkIds: Set<String>, unlocked: Boolean): List<KakuyomuWork> =
+        if (unlocked || hiddenWorkIds.isEmpty()) works
+        else works.filter { it.id !in hiddenWorkIds }
+}
 
 /**
  * Drawer row for every site home. Always visible in both modes — the row

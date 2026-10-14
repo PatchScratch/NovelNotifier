@@ -102,25 +102,35 @@ fun KakuyomuHome(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                     )
                 } else {
+                    // SFW: hidden categories' rows vanish; the All count
+                    // excludes their works.
+                    val visible =
+                        if (nsfwUnlocked) bookmarks
+                        else NsfwFilter.filterKakuyomu(
+                            bookmarks, NsfwFilter.hiddenKakuyomuWorkIds(categories), unlocked = false
+                        )
                     // NU-style switcher: All + one row per used category.
                     // The library screen (grid/list with covers) holds the
                     // rows; the drawer navigates to a filtered view.
-                    NavigationDrawerItem(
-                        label = { Text(t("All", "すべて") + " (${bookmarks.size}) ▦") },
-                        selected = false,
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onOpenBookmarks("")
-                        }
-                    )
+                    if (visible.isNotEmpty()) {
+                        NavigationDrawerItem(
+                            label = { Text(t("All", "すべて") + " (${visible.size}) ▦") },
+                            selected = false,
+                            onClick = {
+                                scope.launch { drawerState.close() }
+                                onOpenBookmarks("")
+                            }
+                        )
+                    }
                     // Only categories that actually hold works show here;
                     // empty ones are managed in Categories.
                     categories.cats
-                        .filter { cat -> bookmarks.count { categories.assign[it.id] == cat.id } > 0 }
+                        .filter { cat -> !cat.hidden || nsfwUnlocked }
+                        .filter { cat -> visible.count { categories.assign[it.id] == cat.id } > 0 }
                         .forEach { cat ->
                             NavigationDrawerItem(
                                 label = {
-                                    Text("${cat.name} (${bookmarks.count { categories.assign[it.id] == cat.id }})")
+                                    Text("${cat.name} (${visible.count { categories.assign[it.id] == cat.id }})")
                                 },
                                 selected = false,
                                 onClick = {

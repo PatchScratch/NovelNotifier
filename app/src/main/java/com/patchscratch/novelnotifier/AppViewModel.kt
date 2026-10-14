@@ -124,6 +124,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         needsDeviceLock = false
     }
 
+    // --- hidden flags (drive the SFW row filters; persisted via prefs) ----
+
+    /** NU reading-list ids flagged hidden (StringSet pref "hidden_lists"). */
+    var hiddenLists by mutableStateOf(loadIdSet(prefs, "hidden_lists"))
+        private set
+
+    /** Syosetu 分類 names flagged hidden (pref "syosetu_hidden_cats"). */
+    var hiddenSyosetuCats by mutableStateOf(loadIdSet(prefs, "syosetu_hidden_cats"))
+        private set
+
+    fun updateHiddenLists(next: Set<String>) {
+        hiddenLists = next
+        prefs.edit { putStringSet("hidden_lists", next) }
+    }
+
+    fun updateHiddenSyosetuCats(next: Set<String>) {
+        hiddenSyosetuCats = next
+        prefs.edit { putStringSet("syosetu_hidden_cats", next) }
+    }
+
     init {
         // Phase 4a: centralised WebView/queue/pacing (progressive migration).
         SiteClient.initialize(app)

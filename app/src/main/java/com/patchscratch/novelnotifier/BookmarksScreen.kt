@@ -185,10 +185,15 @@ fun SyosetuBookmarksScreen(
     onBack: () -> Unit,
     categories: List<SyosetuCategory> = emptyList(),
     onChangeCategory: (SyosetuBookmark, Int) -> Unit = { _, _ -> },
-    onRemove: (SyosetuBookmark) -> Unit = {}
+    onRemove: (SyosetuBookmark) -> Unit = {},
+    nsfwUnlocked: Boolean = false,
+    hiddenCategories: Set<String> = emptySet()
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val shown = if (category.isBlank()) bookmarks else bookmarks.filter { it.category == category }
+    // SFW: hidden 分類 rows vanish even in the "All" view.
+    val base = if (nsfwUnlocked) bookmarks
+    else NsfwFilter.filterSyosetu(bookmarks, hiddenCategories, unlocked = false)
+    val shown = if (category.isBlank()) base else base.filter { it.category == category }
     fun open(bm: SyosetuBookmark) {
         // Minimal placeholder opens instantly if the API call fails; the
         // detail screen re-fetches the ToC live either way.
@@ -289,11 +294,15 @@ fun KakuyomuBookmarksScreen(
     categories: CategoryState = CategoryState(),
     categoryId: String = "",
     onMove: (workId: String, catId: String?) -> Unit = { _, _ -> },
-    onCreateAndMove: (workId: String, String) -> Unit = { _, _ -> }
+    onCreateAndMove: (workId: String, String) -> Unit = { _, _ -> },
+    nsfwUnlocked: Boolean = false
 ) {
     val catName = categories.cats.firstOrNull { it.id == categoryId }?.name ?: ""
-    val shown = if (categoryId.isBlank()) bookmarks
-    else bookmarks.filter { categories.assign[it.id] == categoryId }
+    // SFW: works assigned to a hidden category vanish from every view.
+    val all = if (nsfwUnlocked) bookmarks
+    else NsfwFilter.filterKakuyomu(bookmarks, NsfwFilter.hiddenKakuyomuWorkIds(categories), unlocked = false)
+    val shown = if (categoryId.isBlank()) all
+    else all.filter { categories.assign[it.id] == categoryId }
     var moveTo by remember { mutableStateOf<KakuyomuWork?>(null) }
 
     BookmarksBody(
