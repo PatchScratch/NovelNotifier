@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -336,7 +337,12 @@ fun SyosetuDetailScreen(
     bookmark: SyosetuBookmark? = null,
     categories: List<SyosetuCategory> = emptyList(),
     onChangeCategory: (Int) -> Unit = {},
-    onRemoveBookmark: () -> Unit = {}
+    onRemoveBookmark: () -> Unit = {},
+    // ★ add-form (detail-screen bookmarking; the picker needs the site's ids)
+    addForm: SyosetuAddBookmarkForm? = null,
+    addFormLoading: Boolean = false,
+    onLoadAddForm: () -> Unit = {},
+    onAddBookmark: (SyosetuAddBookmarkForm, Int) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     var toc by remember { mutableStateOf<SyosetuToc?>(null) }
@@ -346,6 +352,7 @@ fun SyosetuDetailScreen(
     // Cache may carry a richer row than the list passed in (full synopsis
     // after a bookmark-tile hydration) — render from it when present.
     var meta by remember(novel.ncode) { mutableStateOf(novel) }
+    var showBookmarkCard by remember { mutableStateOf(false) }
 
     // Instant render from the series cache when fresh; fetch only when
     // stale (>12h) or the row's lastUpdate moved (new episodes published).
@@ -433,6 +440,79 @@ fun SyosetuDetailScreen(
                         t("Updated", "最終更新") + " ${meta.lastUpdate.take(10)}",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    // NU-layout action row: filled button under the title
+                    // block (CHANGE LIST parity) opening the 分類 picker.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Button(onClick = {
+                            showBookmarkCard = !showBookmarkCard
+                            if (showBookmarkCard) onLoadAddForm()
+                        }) {
+                            Text(
+                                if (bookmark != null) t("★ BOOKMARKED", "★ ブックマーク済み")
+                                else t("★ BOOKMARK", "★ ブックマーク")
+                            )
+                        }
+                        if (bookmark != null && bookmark.category.isNotBlank()) {
+                            Text(
+                                bookmark.category,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(start = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (showBookmarkCard) {
+            item {
+                // NU's Change-list card pattern: inline choices, one tap.
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(t("Bookmark 分類", "ブックマーク分類"), style = MaterialTheme.typography.titleMedium)
+                        when {
+                            addFormLoading -> Text(
+                                t("Loading categories…", "分類を読み込み中…"),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            addForm == null -> Text(
+                                t("Could not load the form — tap ★ again to retry.", "フォームを読み込めませんでした — ★をもう一度タップして再試行。"),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            addForm!!.categories.isEmpty() -> Text(
+                                t("Log in from Settings to bookmark on Syosetu.", "設定からログインするとSyosetuでブックマークできます。"),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                            else -> addForm!!.categories.forEach { (id, name) ->
+                                TextButton(onClick = {
+                                    onAddBookmark(addForm!!, id)
+                                    showBookmarkCard = false
+                                }) {
+                                    Text((if (bookmark?.category == name) "✓ " else "") + name)
+                                }
+                            }
+                        }
+                        if (bookmark != null) {
+                            TextButton(onClick = {
+                                onRemoveBookmark()
+                                showBookmarkCard = false
+                            }) {
+                                Text(t("Remove bookmark", "ブックマーク解除"), color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        TextButton(onClick = { showBookmarkCard = false }) {
+                            Text(t("Close", "閉じる"))
+                        }
+                    }
                 }
             }
         }

@@ -447,6 +447,60 @@ suspend fun syosetuMoveBookmarkCategory(userfavId: String, newCategoryId: Int): 
 }
 
 /**
+ * The ★ modal's payload, parsed from a novel page: the js-bookmark_url
+ * input carries the addajax endpoint (favncode + CSRF token), and the
+ * modal's categoryid select lists the account's 分類 (populated only when
+ * logged in — logged-out pages return it empty).
+ */
+data class SyosetuAddBookmarkForm(
+    val addUrl: String,                        // full addajax URL incl ?token=
+    val categories: List<Pair<Int, String>>,   // the modal's categoryid select
+    val isnotice: Boolean,
+    val jyokyo: String                         // 2 public / 1 private
+)
+
+fun parseSyosetuAddBookmarkForm(html: String): SyosetuAddBookmarkForm? {
+    val url = Regex("""class="js-bookmark_url" value="([^"]+)"""").find(html)?.groupValues?.get(1)
+        ?: Regex("""value="([^"]+)" class="js-bookmark_url"""").find(html)?.groupValues?.get(1)
+        ?: return null
+    val cats = buildList {
+        val selStart = html.indexOf("js-category_select")
+        if (selStart >= 0) {
+            val selEnd = html.indexOf("</select>", selStart)
+            if (selEnd > selStart) {
+                Regex("""<option value="(\d+)"[^>]*>([^<]+)</option>""")
+                    .findAll(html.substring(selStart, selEnd))
+                    .forEach { m ->
+                        m.groupValues[1].toIntOrNull()?.let { id ->
+                            val name = m.groupValues[2].trim()
+                            if (name.isNotBlank()) add(id to name)
+                        }
+                    }
+            }
+        }
+    }
+    val isnotice = Regex("""name="isnotice"[^>]*checked""").containsMatchIn(html)
+    val jyokyo = Regex("""name="jyokyo"[^>]*value="(\d)"[^>]*checked""").find(html)?.groupValues?.get(1)
+        ?: "2"
+    return SyosetuAddBookmarkForm(url, cats, isnotice, jyokyo)
+}
+
+/**
+ * Add the novel to site bookmarks in the chosen 分類 — the ★ modal's own
+ * ajax submission (URL + token come from the novel page, fields mirror the
+ * settings form). Wayne-confirmed semantics 2026-10-15: site bookmark with
+ * a category picker, removal like Kakuyomu, site stays master.
+ */
+suspend fun syosetuAddBookmark(form: SyosetuAddBookmarkForm, categoryId: Int): Boolean {
+    val notice = if (form.isnotice) "&isnotice=1" else ""
+    return postSyosetuForm(
+        form.addUrl,
+        "jyokyo=" + form.jyokyo + notice + "&categoryid=" + categoryId,
+        ajax = true
+    )
+}
+
+/**
  * Reading position (しおり), verified from the site's own novel_bookmarkmenu.js:
  * opening episode N where N > the saved position silently POSTs
  *   no=<N>&primary=<userid_favncode>&token=<csrf>

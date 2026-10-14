@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -479,23 +480,6 @@ fun KakuyomuDetailScreen(
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
-                Spacer(modifier = Modifier.weight(1f))
-                // Local bookmark (device reading list) — the site's own follow
-                // (フォロー) needs an account; the drawer notes that.
-                TextButton(onClick = onToggleBookmark) {
-                    Text(
-                        if (bookmarked) t("⚑ Bookmarked", "⚑ ブックマーク済み") else t("⚑ Bookmark", "⚑ ブックマーク"),
-                        color = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                // Client-side category (move-only, single membership).
-                TextButton(onClick = { showMove = true }) {
-                    Text(
-                        t("Category", "カテゴリ") + ": " +
-                            (categories.cats.firstOrNull { it.id == categories.assign[work.id] }?.name
-                                ?: t("All", "すべて")) + " ▾"
-                    )
-                }
             }
         }
         item {
@@ -515,6 +499,26 @@ fun KakuyomuDetailScreen(
                         style = MaterialTheme.typography.headlineSmall
                     )
                     TranslatedHint(text = work.title, style = MaterialTheme.typography.bodySmall)
+                    // NU-layout action row (CHANGE LIST parity): bookmark
+                    // button + category picker live UNDER the title block,
+                    // never in the cramped header.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Button(onClick = onToggleBookmark) {
+                            Text(
+                                if (bookmarked) t("⚑ BOOKMARKED", "⚑ ブックマーク済み")
+                                else t("⚑ BOOKMARK", "⚑ ブックマーク")
+                            )
+                        }
+                        TextButton(onClick = { showMove = true }) {
+                            Text(
+                                (categories.cats.firstOrNull { it.id == categories.assign[work.id] }?.name
+                                    ?: t("All", "すべて")) + " ▾"
+                            )
+                        }
+                    }
                     Text(
                         "${work.author} ・ ${kakuyomuGenreName(work.genre)} ・ " +
                             kakuyomuEpisodeLabel(work.episodeCount) + " ・ " + kakuyomuStatusLabel(work.isCompleted),

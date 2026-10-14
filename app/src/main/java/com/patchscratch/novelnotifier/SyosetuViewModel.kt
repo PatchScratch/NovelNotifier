@@ -222,6 +222,66 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // --- detail-screen bookmarking (★ button, NU CHANGE-LIST parity) --------
+
+    /** The open detail's ★-modal payload (分類 ids+names, token, defaults). */
+    var addForm by mutableStateOf<SyosetuAddBookmarkForm?>(null)
+        private set
+    var addFormLoading by mutableStateOf(false)
+        private set
+
+    /** Fetch the novel page once so the picker can offer the site's 分類 ids. */
+    fun loadAddBookmarkForm(ncode: String) {
+        if (addFormLoading) return
+        viewModelScope.launch {
+            addFormLoading = true
+            addForm = null
+            try {
+                val html = fetchSyosetuWithSession("https://ncode.syosetu.com/${ncode.lowercase()}/")
+                addForm = parseSyosetuAddBookmarkForm(html)
+                if (addForm == null) {
+                    status = t("Could not read the bookmark form — try again", "ブックマークフォームを読めませんでした — 再試行してください")
+                } else if (addForm!!.categories.isEmpty()) {
+                    status = t("Log in from Settings to bookmark on Syosetu.", "設定からログインするとSyosetuでブックマークできます。")
+                }
+            } catch (e: Exception) {
+                DebugLog.log("SYOSETU", "add-form fetch failed", e)
+                status = t("Could not read the bookmark form — try again", "ブックマークフォームを読めませんでした — 再試行してください")
+            } finally {
+                addFormLoading = false
+            }
+        }
+    }
+
+    /** ★ with a 分類 choice: add on the site, then pull the master list. */
+    fun addBookmarkWithCategory(form: SyosetuAddBookmarkForm, categoryId: Int) {
+        viewModelScope.launch {
+            status = t("Adding bookmark…", "ブックマークを追加中…")
+            val ok = syosetuAddBookmark(form, categoryId)
+            status = if (ok) t("Bookmarked", "ブックマーク済み") else t("Add failed — try again", "追加に失敗しました — 再試行")
+            if (ok) resyncBookmarks()
+        }
+    }
+
+    /**
+     * ★ tap on an already-bookmarked novel. The remove form needs the
+     * userfavId; if the bookmark isn't synced yet (just added), sync first.
+     */
+    fun removeBookmarkByNcode(ncode: String) {
+        viewModelScope.launch {
+            var bm = bookmarks.firstOrNull { it.ncode.equals(ncode, ignoreCase = true) }
+            if (bm == null || bm.userfavId.isBlank()) {
+                resyncBookmarks()
+                bm = bookmarks.firstOrNull { it.ncode.equals(ncode, ignoreCase = true) }
+            }
+            if (bm == null || bm.userfavId.isBlank()) {
+                status = t("Not in your bookmarks", "ブックマークにありません")
+                return@launch
+            }
+            removeBookmark(bm.userfavId)
+        }
+    }
+
     // --- しおり (read position), from the reader callbacks ---------------------
 
     /** Auto-advance on episode open: no status chatter, silent mirror update. */

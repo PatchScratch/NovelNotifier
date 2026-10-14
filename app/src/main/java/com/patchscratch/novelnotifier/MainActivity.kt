@@ -391,9 +391,14 @@ fun NovelApp(
                         ?.let { bm -> syosetu.moveBookmark(bm.userfavId, catId) }
                 },
                 onRemoveBookmark = {
-                    syosetu.bookmarks.firstOrNull { it.url == novel.url }
-                        ?.let { bm -> syosetu.removeBookmark(bm.userfavId) }
+                    // By ncode: works even before the add has synced a
+                    // userfavId (it syncs, then removes).
+                    syosetu.removeBookmarkByNcode(novel.ncode)
                 },
+                addForm = syosetu.addForm,
+                addFormLoading = syosetu.addFormLoading,
+                onLoadAddForm = { syosetu.loadAddBookmarkForm(novel.ncode) },
+                onAddBookmark = { form, catId -> syosetu.addBookmarkWithCategory(form, catId) },
                 onBack = {
                     syosetu.closeDetail()
                     router.pop()
