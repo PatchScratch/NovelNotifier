@@ -67,20 +67,15 @@ import kotlinx.coroutines.delay
 /**
  * One series: INFO + RELEASES, CHANGE LIST, mark as read, ⋮ Refresh.
  *
- * How Compose state works here:
- *   `remember { mutableStateOf(...) }` keeps a value across redraws.
- *   `by` is a Kotlin *property delegate*. That is why we import getValue and
- *   setValue even though they never appear as function calls — do not delete them.
+ * The scrape lives in [NovelDetailViewModel] on a SiteClient Session; this
+ * screen is pure UI over VM state (Phase 4b). `by` delegates need the
+ * getValue/setValue imports even though they never appear as calls.
  *
  * Paint order:
- *   1. Load series_cache/<hash>.json if present so INFO/RELEASES appear immediately.
- *   2. First open downloads every RELEASES table page into cache (with a gap
- *      between pages so we do not skip or trip the site check).
- *   3. Later opens paint cache immediately. ⋮ Refresh re-fetches from page 1.
- *   4. RELEASES uses scroll-to-load if any pages are still missing.
- *
- * Hidden WebView is 1dp off-screen unless Cloudflare shows a check.
- * Then it expands so the user can complete the check. There is no bypass.
+ *   1. Load series_cache/<hash>.json if present so INFO/RELEASES appear
+ *      immediately — a complete fresh cache opens NO session at all.
+ *   2. Missing pages fill via scroll-to-load; ⋮ Refresh re-fetches from
+ *      page 1. Cloudflare escalates to the root ChallengeOverlay.
  *
  * CHANGE LIST: JS finds select#taskOption and fires a jQuery change event
  * so the site actually saves the move (a plain selectedIndex change is not enough).
