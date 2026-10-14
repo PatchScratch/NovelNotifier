@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Slider
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -222,8 +224,14 @@ fun ReaderScreen(
             }
         }
         if (spoken.isNotEmpty()) {
+            // Chapter label read directly — `chapter` is declared below
+            // (local functions must respect declaration order here).
+            val label = target.chapters.getOrNull(index)?.chapter.orEmpty()
             TtsController.setContext(context)
-            TtsController.start(context, spoken, 0)
+            TtsController.start(
+                context, spoken, 0,
+                title = "${target.seriesTitle} · ${label.ifBlank { "c${index + 1}" }}"
+            )
         }
     }
     var wordHit by remember(target) { mutableStateOf<JaDict.WordHit?>(null) }
@@ -1074,19 +1082,74 @@ fun ReaderScreen(
                                 Icon(Icons.Rounded.SkipNext, contentDescription = "Next paragraph")
                             }
                             Spacer(modifier = Modifier.weight(1f))
-                            // Progress + speed in a compact row
+                            // Progress + speed + sleep in a compact row
                             Text(
                                 "${ttsState.paragraph + 1} / ${ttsState.total}",
                                 style = MaterialTheme.typography.labelMedium
                             )
-                            // Speed: cycles presets
-                            val speedPresets = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-                            TextButton(onClick = {
-                                val idx = speedPresets.indexOfFirst { kotlin.math.abs(it - ttsState.speed) < 0.01f }
-                                val nextSp = speedPresets[(idx + 1) % speedPresets.size]
-                                TtsController.setSpeed(context, nextSp)
-                            }) {
-                                Text("${ttsState.speed}x", style = MaterialTheme.typography.labelMedium)
+                            // Speed: tap the label, drag the slider, applies on
+                            // release (setSpeed restarts the paragraph, so live
+                            // drag would stutter).
+                            var showSpeed by remember { mutableStateOf(false) }
+                            var speedDraft by remember(ttsState.engine) { mutableStateOf(ttsState.speed) }
+                            Box {
+                                TextButton(onClick = {
+                                    speedDraft = ttsState.speed
+                                    showSpeed = true
+                                }) {
+                                    Text("${ttsState.speed}x", style = MaterialTheme.typography.labelMedium)
+                                }
+                                DropdownMenu(
+                                    expanded = showSpeed,
+                                    onDismissRequest = { showSpeed = false }
+                                ) {
+                                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                                        Text(
+                                            t("Speed", "速度") + "  ${"%.2f".format(speedDraft)}x",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                        Slider(
+                                            value = speedDraft,
+                                            onValueChange = { speedDraft = it },
+                                            onValueChangeFinished = {
+                                                TtsController.setSpeed(context, (speedDraft * 20).toInt() / 20f)
+                                            },
+                                            valueRange = 0.5f..2.5f,
+                                            modifier = Modifier.width(220.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            // Sleep timer: pauses playback when it runs out.
+                            val sleepLeft by TtsController.sleepRemainingMs.collectAsState()
+                            var showSleep by remember { mutableStateOf(false) }
+                            Box {
+                                TextButton(onClick = { showSleep = true }) {
+                                    Text(
+                                        if (sleepLeft != null) "⏾ ${TtsController.formatSleep(sleepLeft ?: 0)}"
+                                        else "⏾",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showSleep,
+                                    onDismissRequest = { showSleep = false }
+                                ) {
+                                    listOf(0, 5, 15, 30, 60).forEach { min ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    if (min == 0) t("Off", "オフ")
+                                                    else t("${min} min", "${min}分")
+                                                )
+                                            },
+                                            onClick = {
+                                                TtsController.setSleepTimer(min)
+                                                showSleep = false
+                                            }
+                                        )
+                                    }
+                                }
                             }
                             IconButton(onClick = { TtsController.stop() }) {
                                 Icon(Icons.Rounded.Close, contentDescription = "Stop",

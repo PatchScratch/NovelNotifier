@@ -67,6 +67,10 @@
         <receiver
             android:name=".AlertDismissedReceiver"
             android:exported="false" />
+        <!-- Read-aloud media controls (shade / lockscreen / system media UI). -->
+        <receiver
+            android:name=".TtsMediaReceiver"
+            android:exported="false" />
         <receiver
             android:name=".BootReceiver"
             android:exported="false">

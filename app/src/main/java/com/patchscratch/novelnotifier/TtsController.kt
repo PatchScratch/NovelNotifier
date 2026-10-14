@@ -48,6 +48,19 @@ object TtsController {
     private val _state = MutableStateFlow(TtsState())
     val state: StateFlow<TtsState> = _state
 
+    /**
+     * Sleep timer: ms remaining, null = off. When it reaches zero while
+     * PLAYING, playback PAUSES (not stop — the @Voice convention: the
+     * position survives the night).
+     */
+    private val _sleepRemainingMs = MutableStateFlow<Long?>(null)
+    val sleepRemainingMs: StateFlow<Long?> = _sleepRemainingMs
+    private var sleepJob: Job? = null
+
+    /** What the media notification shows ("series · chapter"). */
+    var nowPlayingTitle: String = ""
+        private set
+
     private var paragraphs: List<String> = emptyList()
     private var scope: CoroutineScope? = null
     private var job: Job? = null
@@ -94,13 +107,15 @@ object TtsController {
     /**
      * Start speaking from [startIndex]. [paragraphList] is whatever the
      * reader's layout shows (JP, EN, or both — the caller decides).
+     * [title] rides the media notification ("series · chapter").
      */
-    fun start(context: Context, paragraphList: List<String>, startIndex: Int = 0) {
+    fun start(context: Context, paragraphList: List<String>, startIndex: Int = 0, title: String = "") {
         stop()
         if (paragraphList.isEmpty()) return
         initialize(context)
 
         paragraphs = paragraphList
+        nowPlayingTitle = title
         val engine = engineFromPrefs()
         val speed = speedFromPrefs()
         _state.value = TtsState(
@@ -110,7 +125,45 @@ object TtsController {
             engine = engine,
             speed = speed
         )
+        TtsMedia.attach(context, title)
         playCurrent(context)
+    }
+
+    /**
+     * Sleep timer: [minutes] <= 0 cancels. Counts down even while paused
+     * (it is a wall-clock bedtime, not a playback budget) but only pauses
+     * when actually PLAYING; a full stop() clears it.
+     */
+    fun setSleepTimer(minutes: Int) {
+        sleepJob?.cancel()
+        if (minutes <= 0) {
+            _sleepRemainingMs.value = null
+            return
+        }
+        _sleepRemainingMs.value = minutes * 60_000L
+        sleepJob = scope?.launch(Dispatchers.Default) {
+            val deadline = System.currentTimeMillis() + minutes * 60_000L
+            while (true) {
+                delay(1_000)
+                val left = deadline - System.currentTimeMillis()
+                if (left <= 0) break
+                _sleepRemainingMs.value = left
+            }
+            _sleepRemainingMs.value = null
+            if (_state.value.state == State.PLAYING) {
+                pause()
+                DebugLog.log("TTS", "sleep timer fired — paused at paragraph ${_state.value.paragraph}")
+            }
+        }
+    }
+
+    /** Milliseconds → "12:34" / "1:02:03" for the bar chip. */
+    fun formatSleep(ms: Long): String {
+        val totalSec = (ms / 1000).coerceAtLeast(0)
+        val h = totalSec / 3600
+        val m = (totalSec % 3600) / 60
+        val s = totalSec % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
     }
 
     /** Pause: stop playback, remember position. */
@@ -132,6 +185,9 @@ object TtsController {
     fun stop() {
         job?.cancel()
         job = null
+        sleepJob?.cancel()
+        sleepJob = null
+        _sleepRemainingMs.value = null
         stopEngine()
         _state.value = TtsState()   // resets to IDLE, paragraph = -1
     }
@@ -353,6 +409,7 @@ object TtsController {
     /** Clean shutdown — call from onCleared/onDestroy. */
     fun shutdown() {
         stop()
+        TtsMedia.release()
         try { androidTts?.shutdown() } catch (_: Exception) {}
         androidTts = null
         ttsReady = false
