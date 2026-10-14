@@ -7,41 +7,44 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The ★-modal parser, against the real novel-page markup (logged-out page
- * captured 2026-10-15; the categoryid select fills only when logged in).
+ * The ★-modal endpoint parser, against the real novel-page markup
+ * (logged-out page captured 2026-10-15). The 分類 list itself comes from
+ * the addajax JSONP payload at runtime, not the page HTML.
  */
 class SyosetuAddFormTest {
 
-    private fun page(categories: String = ""): String = """
+    private fun page(settingUrl: String = ""): String = """
         <div class="c-modal p-bookmark-modal">
           <input type="hidden" class="js-bookmark_url"
                  value="https://syosetu.com/favnovelmain/addajax/favncode/396277/no/0/?token=90a9a18924714009ccaf417011e16eef">
+          <input type="hidden" class="js-bookmark_setting_url" value="$settingUrl">
           <input type="checkbox" name="isnotice" value="1" id="bookmarkisnotice">
           <input type="radio" name="jyokyo" value="2" checked="checked" id="bookmark-jyokyo-1">
           <input type="radio" name="jyokyo" value="1" id="bookmark-jyokyo-2">
-          <select name="categoryid" class="js-category_select c-form__select">$categories</select>
-          <input type="hidden" name="token" value="90a9a18924714009ccaf417011e16eef">
+          <select name="categoryid" class="js-category_select c-form__select"></select>
         </div>
     """.trimIndent()
 
     @Test
-    fun parses_addUrl_token_defaults_emptyCategoriesWhenLoggedOut() {
-        val f = parseSyosetuAddBookmarkForm(page())!!
+    fun parses_addUrl_settingUrl_defaults() {
+        val f = parseSyosetuAddBookmarkForm(
+            page("https://syosetu.com/favnovelmain/updateajax/")
+        )!!
         assertEquals(
             "https://syosetu.com/favnovelmain/addajax/favncode/396277/no/0/?token=90a9a18924714009ccaf417011e16eef",
             f.addUrl
         )
-        assertTrue(f.categories.isEmpty())
+        assertEquals("https://syosetu.com/favnovelmain/updateajax/", f.settingUrl)
+        assertTrue(f.categories.isEmpty())   // JS-filled at runtime; payload supplies them
         assertFalse(f.isnotice)
-        assertEquals("2", f.jyokyo)   // public default
+        assertEquals("2", f.jyokyo)          // public default
+        assertTrue(f.freshToken.isBlank())   // until the payload fetch
     }
 
     @Test
-    fun parses_categoryOptions_whenLoggedIn() {
-        val f = parseSyosetuAddBookmarkForm(
-            page("""<option value="1" selected>読書中</option><option value="2">R18</option>""")
-        )!!
-        assertEquals(listOf(1 to "読書中", 2 to "R18"), f.categories)
+    fun settingUrl_fallsBackToCanonical() {
+        val f = parseSyosetuAddBookmarkForm(page(""))!!
+        assertEquals("https://syosetu.com/favnovelmain/updateajax/", f.settingUrl)
     }
 
     @Test

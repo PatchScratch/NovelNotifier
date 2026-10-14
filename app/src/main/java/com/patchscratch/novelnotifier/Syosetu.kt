@@ -447,16 +447,22 @@ suspend fun syosetuMoveBookmarkCategory(userfavId: String, newCategoryId: Int): 
 }
 
 /**
- * The ★ modal's payload, parsed from a novel page: the js-bookmark_url
- * input carries the addajax endpoint (favncode + CSRF token), and the
- * modal's categoryid select lists the account's 分類 (populated only when
- * logged in — logged-out pages return it empty).
+ * The ★ modal's endpoints, parsed from a novel page (2026-10-15, from the
+ * site's own novel_bookmarkmenu.js):
+ * 1. js-bookmark_url → GET (JSONP) returns the modal payload: the account's
+ *    分類, a FRESH CSRF token, and useridfavncode/xidfavncode.
+ * 2. js-bookmark_setting_url → GET (JSONP) with token + ids + jyokyo +
+ *    isnotice + categoryid performs the add (data.result == true).
  */
 data class SyosetuAddBookmarkForm(
-    val addUrl: String,                        // full addajax URL incl ?token=
-    val categories: List<Pair<Int, String>>,   // the modal's categoryid select
-    val isnotice: Boolean,
-    val jyokyo: String                         // 2 public / 1 private
+    val addUrl: String,          // favnovelmain/addajax/… incl ?token=
+    val settingUrl: String,      // favnovelmain/updateajax/
+    val categories: List<Pair<Int, String>> = emptyList(),
+    val freshToken: String = "",
+    val userIdfavncode: String? = null,   // narou novels
+    val xidfavncode: String? = null,      // R18 novels
+    val isnotice: Boolean = false,
+    val jyokyo: String = "2"
 )
 
 fun parseSyosetuAddBookmarkForm(html: String): SyosetuAddBookmarkForm? {
@@ -465,41 +471,97 @@ fun parseSyosetuAddBookmarkForm(html: String): SyosetuAddBookmarkForm? {
     val url = Regex("""class="js-bookmark_url"[^>]*value="([^"]+)"""").find(html)?.groupValues?.get(1)
         ?: Regex("""value="([^"]+)"[^>]*class="js-bookmark_url"""").find(html)?.groupValues?.get(1)
         ?: return null
-    val cats = buildList {
-        val selStart = html.indexOf("js-category_select")
-        if (selStart >= 0) {
-            val selEnd = html.indexOf("</select>", selStart)
-            if (selEnd > selStart) {
-                Regex("""<option value="(\d+)"[^>]*>([^<]+)</option>""")
-                    .findAll(html.substring(selStart, selEnd))
-                    .forEach { m ->
-                        m.groupValues[1].toIntOrNull()?.let { id ->
-                            val name = m.groupValues[2].trim()
-                            if (name.isNotBlank()) add(id to name)
-                        }
-                    }
-            }
-        }
-    }
+    val setting = Regex("""class="js-bookmark_setting_url"[^>]*value="([^"]+)"""").find(html)?.groupValues?.get(1)
+        ?: Regex("""value="([^"]+)"[^>]*class="js-bookmark_setting_url"""").find(html)?.groupValues?.get(1)
+        ?: "https://syosetu.com/favnovelmain/updateajax/"
     val isnotice = Regex("""name="isnotice"[^>]*checked""").containsMatchIn(html)
     val jyokyo = Regex("""name="jyokyo"[^>]*value="(\d)"[^>]*checked""").find(html)?.groupValues?.get(1)
         ?: "2"
-    return SyosetuAddBookmarkForm(url, cats, isnotice, jyokyo)
+    return SyosetuAddBookmarkForm(
+        addUrl = url,
+        settingUrl = setting,
+        isnotice = isnotice,
+        jyokyo = jyokyo
+    )
 }
 
 /**
- * Add the novel to site bookmarks in the chosen 分類 — the ★ modal's own
- * ajax submission (URL + token come from the novel page, fields mirror the
- * settings form). Wayne-confirmed semantics 2026-10-15: site bookmark with
- * a category picker, removal like Kakuyomu, site stays master.
+ * JSONP GET helper for the favnovelmain ajax endpoints: strips the
+ * callback wrapper and returns the inner JSON (null on failure).
+ */
+private suspend fun getSyosetuJsonp(url: String): org.json.JSONObject? =
+    withContext(Dispatchers.IO) {
+        try {
+            val conn = URL(url + (if ('?' in url) "&" else "?") + "callback=nn")
+                .openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 20_000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0")
+            conn.setRequestProperty("Referer", "https://ncode.syosetu.com/")
+            CookieManager.getInstance().getCookie("https://syosetu.com/")?.let {
+                conn.setRequestProperty("Cookie", it)
+            }
+            val raw = if (conn.responseCode in 200..299)
+                conn.inputStream.bufferedReader().use { it.readText() } else null
+            conn.disconnect()
+            raw?.let { body ->
+                val start = body.indexOf('{')
+                val end = body.lastIndexOf('}')
+                if (start in 0 until end) JSONObject(body.substring(start, end + 1)) else null
+            }
+        } catch (e: Exception) {
+            DebugLog.log("SYOSETU", "jsonp GET failed", e)
+            null
+        }
+    }
+
+/**
+ * Step 2 of the site's own flow: GET the addajax URL, which returns the
+ * modal payload — the account's 分類, the FRESH add token, and the novel's
+ * useridfavncode (narou) or xidfavncode (R18). Returns the enriched form
+ * (categories from the payload, not the page's JS-filled select).
+ */
+suspend fun fetchSyosetuBookmarkPayload(form: SyosetuAddBookmarkForm): SyosetuAddBookmarkForm {
+    val json = getSyosetuJsonp(form.addUrl) ?: return form
+    if (!json.optBoolean("result", false)) {
+        DebugLog.log("SYOSETU", "addajax payload result=false: " + json.optString("res_mes"))
+        return form
+    }
+    val cats = buildList {
+        json.optJSONObject("favnovelcategory")?.let { obj ->
+            obj.keys().forEach { key ->
+                val entry = obj.optJSONObject(key) ?: return@forEach
+                val id = entry.optInt("categoryid", -1)
+                val name = entry.optString("categoryname").trim()
+                if (id >= 0 && name.isNotBlank()) add(id to name)
+            }
+        }
+    }
+    return form.copy(
+        categories = cats,
+        freshToken = json.optString("favnovelmain_addend_token"),
+        userIdfavncode = json.optString("useridfavncode").ifBlank { null },
+        xidfavncode = json.optString("xidfavncode").ifBlank { null },
+        isnotice = json.optBoolean("isnotice", form.isnotice)
+    )
+}
+
+/**
+ * Step 3: the actual add — a JSONP GET to updateajax with the fresh
+ * token, the novel's ids, and the chosen 分類. data.result == true = added.
  */
 suspend fun syosetuAddBookmark(form: SyosetuAddBookmarkForm, categoryId: Int): Boolean {
-    val notice = if (form.isnotice) "&isnotice=1" else ""
-    return postSyosetuForm(
-        form.addUrl,
-        "jyokyo=" + form.jyokyo + notice + "&categoryid=" + categoryId,
-        ajax = true
-    )
+    if (form.freshToken.isBlank()) return false
+    val sb = StringBuilder("?token=").append(form.freshToken)
+    form.userIdfavncode?.let { sb.append("&useridfavncode=").append(it) }
+    form.xidfavncode?.let { sb.append("&xidfavncode=").append(it) }
+    sb.append("&jyokyo=").append(form.jyokyo)
+    if (form.isnotice) sb.append("&isnotice=1")
+    sb.append("&categoryid=").append(categoryId)
+    val json = getSyosetuJsonp(form.settingUrl + sb) ?: return false
+    val ok = json.optBoolean("result", false)
+    if (!ok) DebugLog.log("SYOSETU", "add result=false: " + json.optString("res_mes"))
+    return ok
 }
 
 /**

@@ -238,7 +238,13 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
             addForm = null
             try {
                 val html = fetchSyosetuWithSession("https://ncode.syosetu.com/${ncode.lowercase()}/")
-                addForm = parseSyosetuAddBookmarkForm(html)
+                val parsed = parseSyosetuAddBookmarkForm(html)
+                // Step 2 of the site's own flow: the addajax payload carries
+                // the 分類 list, a FRESH token, and the novel's ids — the
+                // page's select is JS-filled and always empty in raw HTML.
+                addForm = parsed?.let { fetchSyosetuBookmarkPayload(it) }?.takeIf {
+                    it.freshToken.isNotBlank()
+                }
                 if (addForm == null) {
                     status = t("Could not read the bookmark form — try again", "ブックマークフォームを読めませんでした — 再試行してください")
                 } else if (addForm!!.categories.isEmpty()) {
