@@ -1,12 +1,9 @@
 package com.patchscratch.novelnotifier
 
 import android.Manifest
-import org.json.JSONObject
-import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.webkit.CookieManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -17,41 +14,36 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
-import androidx.core.content.edit
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.patchscratch.novelnotifier.ui.theme.NovelNotifierTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.net.URL
-import kotlin.time.Duration.Companion.seconds
 
 /**
- * App entry + navigation. This file does not draw the list or series page.
+ * App entry + navigation shell (Phase 4b: state lives in ViewModels).
  *
  * MainActivity — Android launcher. Calls NovelApp().
- * NovelApp     — holds shared state (RSS, prefs, queues) and picks one screen:
- *                Login, Settings, Edit Lists, reading list, or series detail.
+ * NovelApp     — collects ViewModel state and picks one screen from the
+ *                Router's stack: Login, Settings, Edit Lists, reading
+ *                list, series detail, or reader.
  *
  * Data flow:
- *   SharedPreferences (Prefs.kt) + JSON files (Cache.kt)
- *   → RSS fetch here
- *   → NovelListScreen / NovelDetailScreen
- *   → SyncEngineService / UpdateCheckWorker for background work
+ *   AppViewModel (router, site workspace, sync-status poll)
+ *   NuViewModel / SyosetuViewModel / KakuyomuViewModel (per-site stores,
+ *   persisted via SharedPreferences in Prefs.kt + JSON files in Cache.kt)
+ *   → screens below → SyncEngineService / UpdateCheckWorker for background
  *
- * getValue / setValue are used by the `by` keyword (property delegates).
- * Android Studio may grey them out — they are not unused. Do not delete them.
+ * getValue is used by `by` delegates across this file and the ViewModels.
+ * Android Studio may grey it out — it is not unused. Do not delete it.
  */
 
 class MainActivity : ComponentActivity() {
@@ -90,10 +82,10 @@ class MainActivity : ComponentActivity() {
                 .getString("ui_lang", UiLang.EN) ?: UiLang.EN
             // Hoisted so Settings can re-theme the whole app without a restart.
             // customTheme is the imported JSON theme; reloaded on every import.
-            var themeMode by remember {
-                mutableStateOf(loadThemeMode(getSharedPreferences("novel_prefs", MODE_PRIVATE)))
+            var themeMode by androidx.compose.runtime.remember {
+                androidx.compose.runtime.mutableStateOf(loadThemeMode(getSharedPreferences("novel_prefs", MODE_PRIVATE)))
             }
-            var customTheme by remember { mutableStateOf<CustomTheme?>(loadCustomTheme(this)) }
+            var customTheme by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<CustomTheme?>(loadCustomTheme(this)) }
             NovelNotifierTheme(mode = themeMode, custom = customTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -133,89 +125,41 @@ fun NovelApp(
     onCustomThemeReady: (CustomTheme?) -> Unit = {}
 ) {
     val context = LocalContext.current
-    val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { applySavedCookies(prefs) }
-    // Phase 4a: centralised WebView/queue/pacing (progressive migration)
-    LaunchedEffect(Unit) { SiteClient.initialize(context) }
+    val app = viewModel<AppViewModel>()
+    val nu = viewModel<NuViewModel>()
+    val syosetu = viewModel<SyosetuViewModel>()
+    val kakuyomu = viewModel<KakuyomuViewModel>()
+    val readerVm = viewModel<ReaderViewModel>()
+    val router = app.router
 
-    // --- persisted UI state ---
-    var novels by remember { mutableStateOf(emptyList<Novel>()) }
-    var statusMessage by remember { mutableStateOf("Log in from Settings, then pull down to load your lists") }
-    var selectedNovel by remember { mutableStateOf<Novel?>(null) }
-    var showSettings by remember { mutableStateOf(false) }
-    var showXlateFiles by remember { mutableStateOf(false) }
-    var showLoginWeb by remember { mutableStateOf(false) }
-    var showEditLists by remember { mutableStateOf(false) }
-    var readingLists by remember { mutableStateOf(emptyList<ReadingList>()) }
-    var readTitles by remember {
-        mutableStateOf(prefs.getStringSet("read_titles", emptySet()) ?: emptySet())
-    }
-    var lastRead by remember { mutableStateOf(loadLastRead(prefs)) }
-    var coverCache by remember { mutableStateOf(loadCoverCache(prefs)) }
-    var notifyOff by remember { mutableStateOf(loadIdSet(prefs, "list_notify_off")) }
-    var updateOff by remember { mutableStateOf(loadIdSet(prefs, "list_update_off")) }
-    var seriesNotifyOff by remember { mutableStateOf(loadIdSet(prefs, "series_notify_off")) }
-    var rssUrl by remember { mutableStateOf(prefs.getString("rss_url", "") ?: "") }
-    var checkHours by remember { mutableIntStateOf(prefs.getInt("check_hours", 12)) }
-    var refreshKey by remember { mutableIntStateOf(0) }
-    var rssRetries by remember { mutableIntStateOf(0) }
-    var isRefreshing by remember { mutableStateOf(false) }
-    var chapterFetchQueue by remember { mutableStateOf(emptyList<Novel>()) }
-    var syncStatus by remember { mutableStateOf(SyncEngineService.statusText(context)) }
-    var showOnboarding by remember { mutableStateOf(false) }
-    var showSearch by remember { mutableStateOf(false) }
-    var showDiscover by remember { mutableStateOf(false) }
-    var readerTarget by remember { mutableStateOf<ReaderTarget?>(null) } // in-app reader (Phase 3.1)
-    // --- Syosetu provider (slice 1) ---
-    var activeSite by remember { mutableStateOf(prefs.getString("active_site", "nu") ?: "nu") }
-    var settingsSite by remember { mutableStateOf("nu") } // which site's settings section to show
-    var syosetuNovel by remember { mutableStateOf<SyosetuNovel?>(null) }
-    var kakuyomuWork by remember { mutableStateOf<KakuyomuWork?>(null) }
-    var kakuyomuR18 by remember { mutableStateOf(prefs.getBoolean("kakuyomu_r18", false)) }
-    var kakuyomuBookmarks by remember { mutableStateOf(loadKakuyomuBookmarks(prefs)) }
-    // Bookmark library screens: Syosetu category ("" = all, null = closed);
-    // Kakuyomu boolean.
-    var syosetuBookmarkCat by remember { mutableStateOf<String?>(null) }
-    var showKakuyomuBookmarks by remember { mutableStateOf(false) }
-    var showKakuyomuLogin by remember { mutableStateOf(false) }
-    var kakuyomuLoggedIn by remember { mutableStateOf(prefs.getBoolean("kakuyomu_logged_in", false)) }
-    var kakuyomuStatus by remember { mutableStateOf("") }
-    var showSyosetuLogin by remember { mutableStateOf(false) }
-    var syosetuLoggedIn by remember {
-        mutableStateOf(prefs.getBoolean("syosetu_logged_in", false))
-    }
-    var syosetuBookmarks by remember { mutableStateOf<List<SyosetuBookmark>>(emptyList()) }
-    var syosetuCategories by remember { mutableStateOf<List<SyosetuCategory>>(emptyList()) }
-    var syosetuStatus by remember { mutableStateOf("") }
-    var syosetuR18 by remember {
-        mutableStateOf(prefs.getBoolean("syosetu_r18", false))
-    }
-    // Which R18 sisters are visible (nocgenre 1/2/3); all on by default.
-    var syosetuSubsites by remember {
-        mutableStateOf(prefs.getStringSet("syosetu_subsites", setOf("1", "2", "3"))?.mapNotNull { it.toIntOrNull() }?.toSet() ?: setOf(1, 2, 3))
-    }
-    var loginState by remember {
-        mutableStateOf(
-            if (prefs.getString("nu_cookies", "").isNullOrBlank()) "Not logged in"
-            else "Logged in to Novel Updates"
-        )
-    }
-
-    // Settings → Prefetch missing covers: cover-only queue on the sync engine.
-    fun startCoverSync() {
-        scope.launch {
-            val jobs = withContext(Dispatchers.IO) {
-                SyncQueue.build(context, priorityListIds = emptySet(), coversOnly = true)
-            }
-            if (jobs.isEmpty()) {
-                syncStatus = "All cached series already have covers"
-            } else {
-                SyncEngineService.startWith(context, jobs)
-                syncStatus = SyncEngineService.statusText(context)
-                if (syncStatus != "Idle") statusMessage = syncStatus
-            }
+    // Foreground tracking gates AppViewModel's queue auto-resume (Android
+    // 12+ forbids background foreground-service starts).
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            app.setForeground(event != Lifecycle.Event.ON_STOP)
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // First-run guide (fresh login + empty library + onboarding not done).
+    LaunchedEffect(Unit) {
+        if (nu.needsOnboarding()) router.push(Route.Onboarding)
+    }
+
+    // A notification tap lands on the NU series detail page. Login is left
+    // alone — never yank the user out of an auth flow. The reader, if open,
+    // stays on top (Router.resetTo keeps it).
+    fun openDeepLink(link: MainActivity.SeriesDeepLink) {
+        nu.openFromNotification(link)
+        router.resetTo(Route.NuDetail(link.url))
+    }
+
+    // Cold start first (volatile parked by onCreate), then live taps while running.
+    LaunchedEffect(Unit) {
+        MainActivity.openSeriesRequested?.let { openDeepLink(it) }
+        MainActivity.openSeriesRequests.collect { openDeepLink(it) }
     }
 
     // Android 13+ must grant POST_NOTIFICATIONS before the sync engine can show its counter.
@@ -223,540 +167,95 @@ fun NovelApp(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted || Build.VERSION.SDK_INT < 33) {
-            startCoverSync()
+            app.startCoverSync(nu)
         } else {
-            syncStatus = "Notification permission needed for background sync"
+            app.onNotifyPermissionDenied()
         }
     }
 
-    // Fresh login + empty library + onboarding not done yet → guide the first download.
-    LaunchedEffect(Unit) {
-        val prefsSnapshot = withContext(Dispatchers.IO) {
-            val snap = loadListSnapshot(context)
-            Triple(
-                snap.lists.isNotEmpty(),
-                snap.novelsByList.values.any { it.isNotEmpty() },
-                prefs.getBoolean("onboarding_done", false)
-            )
-        }
-        val (hasLists, hasRows, onboarded) = prefsSnapshot
-        val loggedOut = prefs.getString("nu_cookies", "").isNullOrBlank()
-        showOnboarding = !loggedOut && !onboarded && !(hasLists && hasRows)
-    }
+    // System back fallback. Screens with their own BackHandler (reader,
+    // login screens, the list-options dialog) intercept first and route
+    // through the same pop callbacks.
+    BackHandler(enabled = router.canGoBack) { router.pop() }
 
-    // The engine writes status to prefs. Poll so Settings can show the counter,
-    // and auto-resume a queue whose service died mid-run (reboot / task killer /
-    // CF pause) — but only while the app is in the FOREGROUND: Android 12+
-    // crashes background apps that start foreground services.
-    var appForeground by remember { mutableStateOf(true) }
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            appForeground = event != androidx.lifecycle.Lifecycle.Event.ON_STOP
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(2.seconds)
-            val latest = SyncEngineService.statusText(context)
-            if (latest != syncStatus) syncStatus = latest
-            if (appForeground && latest.startsWith("Running") && !SyncEngineService.engineAlive) {
-                val pending = withContext(Dispatchers.IO) { SyncQueue.pending(context) }
-                if (pending.isNotEmpty()) SyncEngineService.resume(context)
-            }
-            // The session-expired notification asks for the login screen.
-            if (MainActivity.openLoginRequested) {
-                MainActivity.openLoginRequested = false
-                showLoginWeb = true
-            }
-            coverCache = loadCoverCache(prefs)
-        }
-    }
-
-    fun rememberCover(title: String, url: String) {
-        if (url.isBlank() || isPlaceholderCover(url)) return
-        val updated = coverCache + (title to url)
-        coverCache = updated
-        saveCoverCache(prefs, updated)
-        selectedNovel = selectedNovel?.let {
-            if (it.title == title) it.copy(coverUrl = url) else it
-        }
-    }
-
-    // Tapping a chapter alert lands here: open that series' detail page. The
-    // detail screen loads everything else (lists, releases, cover) itself, so
-    // a title + URL + chapter is enough to construct the entry Novel. Login is
-    // left alone — never yank the user out of an auth flow.
-    fun openFromNotification(link: MainActivity.SeriesDeepLink) {
-        MainActivity.openSeriesRequested = null
-        showSettings = false
-        showSearch = false
-        showDiscover = false
-        showEditLists = false
-        showOnboarding = false
-        selectedNovel = Novel(
-            title = link.title,
-            latestChapter = link.chapter,
-            seriesUrl = link.url,
-            coverUrl = coverCache[link.title].orEmpty()
-        )
-    }
-
-
-    /**
-     * Shared bookmark-page sync: reads the (possibly renamed) category
-     * selector, then fetches each category with bookmarks so rows carry the
-     * user's real category names — the drawer lists them like NU lists.
-     * Falls back to plain single-page parsing when no selector is found.
-     */
-    suspend fun syncSyosetuBookmarkPage(html: String): List<SyosetuBookmark> {
-        if (html.isBlank()) return emptyList()
-        val cats = parseSyosetuCategories(html)
-        if (cats.isEmpty()) return parseSyosetuBookmarks(html)
-        withContext(Dispatchers.IO) { saveSyosetuCategories(context, cats) }
-        DebugLog.log("SYOSETU", "categories: " + cats.joinToString { c -> c.name + "(" + c.count + ")" })
-        val rows = mutableListOf<SyosetuBookmark>()
-        cats.filter { it.count > 0 }.forEach { c ->
-            val page = fetchSyosetuWithSession(
-                "https://syosetu.com/favnovelmain/list/?nowcategory=" + c.id + "&order=updated_at"
-            )
-            if (page.isNotBlank()) rows += parseSyosetuBookmarks(page, c.name)
-        }
-        // Nothing per-category (selector with all-zero counts / a redesign)
-        // → keep the plain page's rows.
-        val final = rows.ifEmpty { parseSyosetuBookmarks(html) }
-        // Enrich the category list with every renamed name from ONE
-        // settings page (its select lists all 分類; the list page's
-        // selector only shows categories that hold bookmarks).
-        final.firstOrNull { it.userfavId.isNotBlank() }?.let { first ->
-            try {
-                val page = fetchSyosetuWithSession(
-                    "https://syosetu.com/favnovelmain/updateinput/useridfavncode/" + first.userfavId + "/"
-                )
-                parseSyosetuBookmarkSettings(page)?.categoryNames?.takeIf { it.isNotEmpty() }?.let { names ->
-                    val merged = names.map { (id, name) ->
-                        val known = cats.firstOrNull { it.id == id }
-                        SyosetuCategory(id, name, known?.count ?: 0)
-                    }
-                    withContext(Dispatchers.IO) { saveSyosetuCategories(context, merged) }
-                }
-            } catch (e: Exception) {
-                DebugLog.log("SYOSETU", "category name enrichment skipped", e)
-            }
-        }
-        return final
-    }
-
-    suspend fun resyncSyosetuBookmarks() {
-        syosetuBookmarks = withContext(Dispatchers.IO) { loadSyosetuBookmarks(context) }
-        syosetuCategories = withContext(Dispatchers.IO) { loadSyosetuCategories(context) }
-        try {
-            val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
-            val fresh = syncSyosetuBookmarkPage(html)
-            if (fresh.isNotEmpty()) {
-                withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, fresh) }
-                syosetuBookmarks = fresh
-            }
-            // reload AFTER the sync — it enriches categories.json with every
-            // renamed 分類 from the settings page
-            syosetuCategories = withContext(Dispatchers.IO) { loadSyosetuCategories(context) }
-        } catch (e: Exception) {
-            DebugLog.log("SYOSETU", "bookmark refresh skipped", e)
-        }
-    }
-
-    LaunchedEffect(syosetuLoggedIn) {
-        if (syosetuLoggedIn) {
-            resyncSyosetuBookmarks()
-            // Author-Atom poll (NU parity): notify bookmarked series with
-            // new episodes. Runs after the bookmark refresh so baselines
-            // see fresh rows.
-            try {
-                ensureChapterChannel(context)
-                val updates = SyosetuFeeds.pollBookmarks(context, syosetuBookmarks)
-                if (updates.isNotEmpty()) {
-                    postChapterNotifications(context, updates)
-                    DebugLog.log("SYOSETU", "posted ${updates.size} update notifications")
-                }
-            } catch (e: Exception) {
-                DebugLog.log("SYOSETU", "feed poll skipped", e)
-            }
-        }
-    }
-
-    // Cold start first (volatile parked by onCreate), then live taps while running.
-    LaunchedEffect(Unit) {
-        MainActivity.openSeriesRequested?.let { openFromNotification(it) }
-        MainActivity.openSeriesRequests.collect { openFromNotification(it) }
-    }
-
-    // RSS is the cheap change detector. Pull-to-refresh and Check now bump refreshKey.
-        LaunchedEffect(rssUrl, refreshKey) {
-        if (rssUrl.isBlank()) {
-            // No RSS feed configured — the home list loads from the site cache
-            // and background checks walk the reading lists instead (see UpdateCheck).
-            novels = emptyList()
-            isRefreshing = false
-            return@LaunchedEffect
-        }
-        isRefreshing = true
-        statusMessage = "Loading Novel Updates feed..."
-        try {
-            val xml = withContext(Dispatchers.IO) {
-                val connection = URL(rssUrl).openConnection()
-                connection.connectTimeout = 15_000
-                connection.readTimeout = 20_000
-                connection.setRequestProperty(
-                    "User-Agent",
-                    "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0"
-                )
-                connection.getInputStream().bufferedReader().use { it.readText() }
-            }
-            val titles = parseRssTitles(xml)
-            DebugLog.log("RSS", "fetched ${titles.size} items")
-            rssRetries = 0
-            if (titles.isNotEmpty()) {
-                novels = titles.take(20).map { rawTitle ->
-                    val parsed = novelFromRssTitle(rawTitle)
-                    parsed.copy(coverUrl = coverCache[parsed.title].orEmpty())
-                }
-                val due = withContext(Dispatchers.IO) { rssUpdatesToFetch(context, novels) }
-                chapterFetchQueue = due
-                // Cross-device read sync: apply the read-activity feed alongside.
-                val readUrl = prefs.getString("rss_read_url", "").orEmpty()
-                if (readUrl.isNotBlank()) {
-                    try {
-                        val applied = withContext(Dispatchers.IO) {
-                            applyReadFeed(
-                                prefs,
-                                parseRssItems(fetchRssXml(readUrl)).map { novelFromRssTitle(it.title) to it.pubDateMillis }
-                            )
-                        }
-                        if (applied > 0) {
-                            lastRead = loadLastRead(prefs)
-                            DebugLog.log("READSYNC", "app-open applied $applied read chapters")
-                        }
-                    } catch (e: Exception) {
-                        DebugLog.log("READSYNC", "app-open read feed failed", e)
-                    }
-                }
-                statusMessage = if (due.isEmpty()) {
-                    "Loaded Novel Updates feed (${titles.size} items)"
-                } else {
-                    "Feed loaded · ${due.size} series have new chapters"
-                }
-            } else {
-                statusMessage = "Feed loaded, but no titles found"
-            }
-        } catch (e: Exception) {
-            DebugLog.log("RSS", "fetch failed", e)
-            statusMessage = "Could not load feed: ${e.message}"
-            // Cold starts can outrun the network (Wi-Fi still waking with the
-            // screen off). Back off and try again, up to three times.
-            if (rssRetries < 3) {
-                rssRetries += 1
-                delay((5L * rssRetries).seconds)
-                refreshKey += 1
-            }
-        }
-        isRefreshing = false
-    }
-
-    fun markAsRead(title: String) {
-        val updated = readTitles + title
-        readTitles = updated
-        prefs.edit { putStringSet("read_titles", updated) }
-    }
-
-    fun setLastRead(title: String, chapter: String, url: String, read: Boolean) {
-        lastRead = if (read) lastRead + (title to (chapter to url)) else lastRead - title
-        saveLastRead(prefs, lastRead)
-    }
-
-    fun toggleSeriesNotify(title: String) {
-        seriesNotifyOff = if (title in seriesNotifyOff) seriesNotifyOff - title else seriesNotifyOff + title
-        prefs.edit { putStringSet("series_notify_off", seriesNotifyOff) }
-    }
-
-    fun saveSettings(newUrl: String, newHours: Int) {
-        rssUrl = newUrl.trim()
-        checkHours = newHours
-        prefs.edit {
-            putString("rss_url", rssUrl)
-            putInt("check_hours", checkHours)
-        }
-        showSettings = false
-        scheduleUpdateChecks(context, checkHours)
-    }
-
-    LaunchedEffect(checkHours) {
-        scheduleUpdateChecks(context, checkHours)
-    }
-
-    fun onSyosetuLoggedIn() {
-        syosetuLoggedIn = true
-        showSyosetuLogin = false
-        prefs.edit { putBoolean("syosetu_logged_in", true) }
-        syosetuStatus = "Logged in to Syosetu"
-    }
-
-    /**
-     * Kakuyomu bookmark sync, the user's NU model: bookmarks made in-app are
-     * ADDED to the site (push local-only follows), then the site's list is
-     * MASTER — it replaces local state. Site-side removals therefore win;
-     * in-app unfollows already removed both sides.
-     */
-    fun syncKakuyomuBookmarks(quiet: Boolean = false) {
-        scope.launch {
-            if (!quiet) kakuyomuStatus = t("Syncing bookmarks…", "ブックマークを同期中…")
-            try {
-                val visitor = fetchKakuyomuVisitor()
-                if (visitor == null) {
-                    kakuyomuLoggedIn = false
-                    prefs.edit { putBoolean("kakuyomu_logged_in", false) }
-                    kakuyomuStatus = t("Not logged in — session expired, log in again.", "ログインしていません — セッション失効、再ログインしてください。")
-                    return@launch
-                }
-                val site = fetchKakuyomuFollows(visitor.screenName)
-                val local = loadKakuyomuBookmarks(prefs)
-                val siteIds = site.map { it.id }.toSet()
-                val toPush = local.filter { it.id !in siteIds }
-                var pushed = 0
-                toPush.forEach { work ->
-                    if (kakuyomuFollow(work.id)) pushed++
-                    DebugLog.log("KAKUYOMU", "pushed follow ${work.id}")
-                }
-                val merged = mergeKakuyomuBookmarks(local, site, toPush.map { it.id }.toSet())
-                saveKakuyomuBookmarks(prefs, merged)
-                kakuyomuBookmarks = merged
-                kakuyomuStatus = t(
-                    "Synced ${merged.size} bookmarked works (${pushed} followed on Kakuyomu)",
-                    "${merged.size}作品を同期（${pushed}件をカクヨムでフォロー）"
-                )
-                DebugLog.log("KAKUYOMU", "bookmark sync: ${merged.size} works, pushed $pushed")
-            } catch (e: Exception) {
-                DebugLog.log("KAKUYOMU", "bookmark sync failed", e)
-                if (!quiet) kakuyomuStatus = t("Sync failed: ", "同期失敗: ") + (e.message ?: "")
-            }
-        }
-    }
-
-    fun switchSite(site: String) {
-        activeSite = site
-        prefs.edit { putString("active_site", site) }
-    }
-
-    // Kakuyomu bookmark self-heal, one quiet sync per open when logged in:
-    // pushes bookmarks made offline to the site, pulls the site's master list.
-    LaunchedEffect(kakuyomuLoggedIn) {
-        if (kakuyomuLoggedIn) syncKakuyomuBookmarks(quiet = true)
-    }
-
-    fun onLoggedIn(cookieHeader: String) {
-        loginState = "Logged in to Novel Updates"
-        prefs.edit { putString("nu_cookies", cookieHeader) }
-        showLoginWeb = false
-        // A parked sync queue (session expiry) resumes with the fresh session.
-        scope.launch {
-            if (withContext(Dispatchers.IO) { SyncQueue.pending(context) }.isNotEmpty()) {
-                SyncEngineService.resume(context)
-            }
-        }
-        if (!prefs.getBoolean("onboarding_done", false)) {
-            showOnboarding = true
-        } else {
-            showSettings = true
-        }
-    }
-
-    fun onLoggedOut() {
-        loginState = "Not logged in"
-        prefs.edit { remove("nu_cookies") }
-        CookieManager.getInstance().removeAllCookies(null)
-        CookieManager.getInstance().flush()
-    }
-
-    val selectedWithCover = selectedNovel?.let { novel ->
-        val cached = usableCoverUrl(coverCache[novel.title])
+    // Cover-enriched detail payload (never let a blank site cover win over
+    // one we already have cached).
+    val selectedWithCover = nu.selected?.let { novel ->
+        val cached = usableCoverUrl(nu.coverCache[novel.title])
         if (cached.isNotBlank() && usableCoverUrl(novel.coverUrl).isBlank()) novel.copy(coverUrl = cached) else novel
     }
 
-    // System back returns to the previous screen instead of leaving the app.
-    // Login overlays Settings, so close it the way its Cancel button does.
-    BackHandler(
-        enabled = readerTarget != null || showLoginWeb || showSettings || showEditLists || showOnboarding || showXlateFiles ||
-            selectedNovel != null || syosetuNovel != null || kakuyomuWork != null ||
-            syosetuBookmarkCat != null || showKakuyomuBookmarks || showKakuyomuLogin
-    ) {
-        when {
-            showXlateFiles -> showXlateFiles = false
-            readerTarget != null -> readerTarget = null
-            syosetuNovel != null -> syosetuNovel = null
-            kakuyomuWork != null -> kakuyomuWork = null
-            syosetuBookmarkCat != null -> syosetuBookmarkCat = null
-            showKakuyomuBookmarks -> showKakuyomuBookmarks = false
-            showKakuyomuLogin -> showKakuyomuLogin = false
-            showLoginWeb -> {
-                showLoginWeb = false
-                showSettings = true
-            }
-            showSettings -> showSettings = false
-            showEditLists -> showEditLists = false
-            showSearch -> showSearch = false
-            showDiscover -> showDiscover = false
-            showOnboarding -> showOnboarding = false
-            selectedNovel != null -> selectedNovel = null
-        }
-    }
-
-    // Only one screen is composed at a time. Order matters: the reader is
-    // the topmost surface; login overlays settings.
-    when {
-        showXlateFiles && readerTarget != null -> XlateFilesScreen(
-            context = context,
-            seriesUrl = readerTarget!!.seriesUrl,
-            seriesTitle = readerTarget!!.seriesTitle,
-            onBack = { showXlateFiles = false }
-        )
-        readerTarget != null -> {
-            val shioriBm = syosetuBookmarks.firstOrNull { it.url == readerTarget!!.seriesUrl }
-            val shioriPos = shioriBm?.let { maxOf(it.shioriPos, 0) } ?: -1
-            ReaderScreen(
-                target = readerTarget!!,
-                onBack = { readerTarget = null },
-                onOpenXlateFiles = { showXlateFiles = true },
-                shioriPos = shioriPos,
-                onShioriAuto = { ep ->
-                    val bm = shioriBm ?: return@ReaderScreen
-                    if (bm.userfavId.isNotBlank()) scope.launch {
-                        val ok = syosetuUpdateShiori(bm.userfavId, ep)
-                        if (ok) {
-                            // keep the local mirror in step so re-composition
-                            // doesn't re-fire the same advance
-                            syosetuBookmarks = syosetuBookmarks.map {
-                                if (it.ncode == bm.ncode) it.copy(shioriPos = ep) else it
-                            }
-                            withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, syosetuBookmarks) }
-                        }
-                    }
-                },
-                onShioriManual = { ep ->
-                    val bm = shioriBm ?: return@ReaderScreen
-                    if (bm.userfavId.isNotBlank()) scope.launch {
-                        syosetuStatus = "Setting しおり…"
-                        val ok = syosetuUpdateShiori(bm.userfavId, ep)
-                        syosetuStatus = if (ok) "しおり set to episode " + ep else "Set failed — try again"
-                        if (ok) {
-                            syosetuBookmarks = syosetuBookmarks.map {
-                                if (it.ncode == bm.ncode) it.copy(shioriPos = ep) else it
-                            }
-                            withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, syosetuBookmarks) }
-                        }
-                    }
-                },
-                kakuyomuHistory = prefs.getBoolean("kakuyomu_logged_in", false) &&
-                    readerTarget!!.seriesUrl.contains("kakuyomu.jp"),
-                onKakuyomuHistory = { episodeId, ordinal, manual ->
-                    scope.launch {
-                        val ok = kakuyomuRecordReadingHistory(episodeId, "p" + ordinal)
-                        if (manual) {
-                            kakuyomuStatus = if (ok) "Reading position set" else "Set failed — try again"
-                        }
-                    }
-                }
+    // Only one screen is composed at a time: the top of the router stack.
+    when (val route = router.top) {
+        Route.XlateFiles -> {
+            val target = readerVm.target
+            if (target != null) XlateFilesScreen(
+                context = context,
+                seriesUrl = target.seriesUrl,
+                seriesTitle = target.seriesTitle,
+                onBack = { router.pop() }
             )
         }
-        showLoginWeb -> LoginWebScreen(
-            onLoggedIn = { cookies -> onLoggedIn(cookies) },
-            onCancel = {
-                showLoginWeb = false
-                showSettings = true
-            }
-        )
-        showSettings -> SettingsScreen(
-            site = settingsSite,
-            kakuyomuR18 = kakuyomuR18,
-            onKakuyomuR18 = { on ->
-                kakuyomuR18 = on
-                prefs.edit { putBoolean("kakuyomu_r18", on) }
-            },
-            kakuyomuLoggedIn = kakuyomuLoggedIn,
-            kakuyomuStatus = kakuyomuStatus,
-            onKakuyomuLogin = {
-                // Settings composes BEFORE the login branch in the when-block —
-                // close it first or it swallows the navigation.
-                showSettings = false
-                showKakuyomuLogin = true
-            },
-            onKakuyomuLogout = {
-                kakuyomuLoggedIn = false
-                prefs.edit { putBoolean("kakuyomu_logged_in", false) }
-                kakuyomuStatus = t("Logged out — bookmarks stay on this device.", "ログアウトしました — ブックマークは端末に残ります。")
-            },
-            onKakuyomuSync = { syncKakuyomuBookmarks() },
-            currentUrl = rssUrl,
-            onSyosetuLogin = {
-                // Settings composes BEFORE the login branch in the when-block —
-                // leaving it open swallows the navigation entirely.
-                showSettings = false
-                showSyosetuLogin = true
-            },
-            onSyosetuLogout = {
-                syosetuLoggedIn = false
-                syosetuBookmarks = emptyList()
-                prefs.edit { putBoolean("syosetu_logged_in", false) }
-            },
-            onSyosetuSync = {
-                scope.launch {
-                    syosetuStatus = "Syncing bookmarks…"
-                    try {
-                        val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
-                        val found = syncSyosetuBookmarkPage(html)
-                        if (found.isNotEmpty()) {
-                            withContext(Dispatchers.IO) { saveSyosetuBookmarks(context, found) }
-                            syosetuBookmarks = found
-                            syosetuStatus = "Synced ${found.size} bookmarked novels"
-                            DebugLog.log("SYOSETU", "bookmark sync: ${found.size} rows")
-                        } else {
-                            syosetuStatus = "No bookmarks found — check you are logged in"
-                            // DebugLog strips non-ASCII (JP pages log empty) —
-                            // dump raw hrefs instead for scraper tuning.
-                            val hrefs = Regex("href=\"([^\"]{4,120})\"")
-                                .findAll(html).map { it.groupValues[1] }.toList()
-                            val ncodeHrefs = hrefs.filter { it.contains("ncode") }.take(12)
-                            val ncodeCount = hrefs.count { it.contains("ncode") }
-                            DebugLog.log("SYOSETU", "0 rows; total hrefs=${hrefs.size}, ncode=$ncodeCount")
-                            // exact markup around the first novel link, non-ASCII
-                            // folded to '.' so DebugLog keeps it
-                            val i = html.indexOf("ncode.syosetu.com")
-                            if (i >= 0) {
-                                val ctx = html.substring(maxOf(0, i - 150), minOf(i + 250, html.length))
-                                DebugLog.log("SYOSETU", "ctx: " + ctx.replace(Regex("[^\\x20-\\x7E]"), "."))
-                            }
-                        }
-                    } catch (e: Exception) {
-                        syosetuStatus = "Sync failed: ${e.message}"
-                        DebugLog.log("SYOSETU", "bookmark sync failed", e)
+
+        Route.Reader -> {
+            val target = readerVm.target
+            if (target != null) {
+                val shioriBm = syosetu.bookmarks.firstOrNull { it.url == target.seriesUrl }
+                val shioriPos = shioriBm?.let { maxOf(it.shioriPos, 0) } ?: -1
+                ReaderScreen(
+                    target = target,
+                    onBack = {
+                        readerVm.close()
+                        router.pop()
+                    },
+                    onOpenXlateFiles = { router.push(Route.XlateFiles) },
+                    shioriPos = shioriPos,
+                    onShioriAuto = { ep ->
+                        shioriBm?.let { syosetu.updateShioriAuto(it, ep) }
+                    },
+                    onShioriManual = { ep ->
+                        shioriBm?.let { syosetu.updateShioriManual(it, ep) }
+                    },
+                    kakuyomuHistory = kakuyomu.loggedIn && target.seriesUrl.contains("kakuyomu.jp"),
+                    onKakuyomuHistory = { episodeId, ordinal, manual ->
+                        kakuyomu.recordReadingHistory(episodeId, ordinal, manual)
                     }
-                }
+                )
+            }
+        }
+
+        Route.NuLogin -> LoginWebScreen(
+            onLoggedIn = { cookies ->
+                nu.onLoggedIn(cookies)
+                router.replace(
+                    if (!nu.isOnboardingDone()) Route.Onboarding else Route.Settings
+                )
             },
-            syosetuLoggedIn = syosetuLoggedIn,
-            syosetuStatus = syosetuStatus,
-            syosetuR18 = syosetuR18,
-            onSyosetuR18 = { on ->
-                syosetuR18 = on
-                prefs.edit { putBoolean("syosetu_r18", on) }
-            },
-            syosetuSubsites = syosetuSubsites,
-            onSyosetuSubsites = { set ->
-                syosetuSubsites = set
-                prefs.edit { putStringSet("syosetu_subsites", set.map { it.toString() }.toSet()) }
-            },
-            currentHours = checkHours,
-            loginState = loginState,
-            syncStatus = syncStatus,
+            onCancel = { router.replace(Route.Settings) }
+        )
+
+        Route.Settings -> SettingsScreen(
+            site = app.settingsSite,
+            kakuyomuR18 = kakuyomu.r18,
+            onKakuyomuR18 = { on -> kakuyomu.updateR18(on) },
+            kakuyomuLoggedIn = kakuyomu.loggedIn,
+            kakuyomuStatus = kakuyomu.status,
+            onKakuyomuLogin = { router.replace(Route.KakuyomuLogin) },
+            onKakuyomuLogout = { kakuyomu.onLoggedOut() },
+            onKakuyomuSync = { kakuyomu.syncBookmarks() },
+            currentUrl = nu.rssUrl,
+            onSyosetuLogin = { router.replace(Route.SyosetuLogin) },
+            onSyosetuLogout = { syosetu.onLoggedOut() },
+            onSyosetuSync = { syosetu.syncNow() },
+            syosetuLoggedIn = syosetu.loggedIn,
+            syosetuStatus = syosetu.status,
+            syosetuR18 = syosetu.r18,
+            onSyosetuR18 = { on -> syosetu.updateR18(on) },
+            syosetuSubsites = syosetu.subsites,
+            onSyosetuSubsites = { set -> syosetu.updateSubsites(set) },
+            currentHours = nu.checkHours,
+            loginState = nu.loginState,
+            syncStatus = app.syncStatus,
             onThemeChange = onThemeChange,
             onCustomThemeReady = onCustomThemeReady,
             onStartCoverSync = {
@@ -766,281 +265,254 @@ fun NovelApp(
                 ) {
                     notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 } else {
-                    startCoverSync()
+                    app.startCoverSync(nu)
                 }
             },
-            onStopCoverSync = {
-                SyncEngineService.stop(context)
-                syncStatus = "Stopped"
-            },
+            onStopCoverSync = { app.stopCoverSync() },
             onCheckNow = {
-                showSettings = false
-                scope.launch {
-                    statusMessage = "Checking feed..."
-                    statusMessage = runUpdateCheck(context)
-                    refreshKey += 1
-                }
+                router.pop()
+                app.checkNow(nu)
             },
-            onSave = { url, hours -> saveSettings(url, hours) },
-            onStartLogin = {
-                showSettings = false
-                showLoginWeb = true
+            onSave = { url, hours ->
+                nu.saveSettings(url, hours)
+                router.pop()
             },
-            onLoggedOut = { onLoggedOut() },
-            onCancel = { showSettings = false }
+            onStartLogin = { router.replace(Route.NuLogin) },
+            onLoggedOut = { nu.onLoggedOut() },
+            onCancel = { router.pop() }
         )
-        showEditLists -> EditListsScreen(onBack = { showEditLists = false })
-        showOnboarding -> OnboardingScreen(
-            onFinished = { showOnboarding = false },
-            onOpenSettings = {
-                showOnboarding = false
-                showSettings = true
-            }
-        )
-        showSearch -> SiteSearchScreen(
-            onOpenSeries = { found ->
-                selectedNovel = found
-                showSearch = false
-            },
-            onBack = { showSearch = false }
-        )
-        showDiscover -> DiscoverScreen(
-            onOpenSeries = { found ->
-                selectedNovel = found
-                showDiscover = false
-            },
-            onBack = { showDiscover = false }
-        )
-        // Bookmark library screens live BELOW the novel branches so opening
-        // a work keeps the library underneath — back returns to it.
-        kakuyomuWork != null -> KakuyomuDetailScreen(
-            work = kakuyomuWork!!,
-            bookmarked = kakuyomuBookmarks.any { it.id == kakuyomuWork!!.id },
-            onToggleBookmark = {
-                val id = kakuyomuWork!!.id
-                val adding = kakuyomuBookmarks.none { it.id == id }
-                kakuyomuBookmarks =
-                    if (adding) listOf(kakuyomuWork!!) + kakuyomuBookmarks
-                    else kakuyomuBookmarks.filterNot { it.id == id }
-                saveKakuyomuBookmarks(prefs, kakuyomuBookmarks)
-                // Logged in, the site follows the bookmark: adding ⚑ follows
-                // on Kakuyomu, removing unfollows. Fire-and-forget with the
-                // outcome logged; the next sync reconciles any failure.
-                if (kakuyomuLoggedIn) {
-                    scope.launch {
-                        val ok = if (adding) kakuyomuFollow(id) else kakuyomuUnfollow(id)
-                        DebugLog.log("KAKUYOMU", "site ${if (adding) "follow" else "unfollow"} $id → $ok")
-                    }
-                }
-            },
-            onBack = { kakuyomuWork = null },
-            onOpenReader = { chapters, startAt ->
-                readerTarget = ReaderTarget(
-                    seriesTitle = kakuyomuWork!!.title,
-                    seriesUrl = kakuyomuWork!!.url,
-                    chapters = chapters,
-                    startIndex = startAt.coerceAtLeast(0),
-                    meta = kakuyomuWork!!.toBookMeta()
-                )
-            }
-        )
-        syosetuNovel != null -> SyosetuDetailScreen(
-            novel = syosetuNovel!!,
-            bookmark = syosetuBookmarks.firstOrNull { it.url == syosetuNovel!!.url },
-            categories = syosetuCategories,
-            onChangeCategory = { catId ->
-                val bm = syosetuBookmarks.firstOrNull { it.url == syosetuNovel!!.url }
-                if (bm != null && bm.userfavId.isNotBlank()) {
-                    scope.launch {
-                        syosetuStatus = "Moving bookmark…"
-                        val ok = syosetuMoveBookmarkCategory(bm.userfavId, catId)
-                        syosetuStatus = if (ok) "Bookmark moved" else "Move failed — try again"
-                        if (ok) resyncSyosetuBookmarks()
-                    }
-                }
-            },
-            onRemoveBookmark = {
-                val bm = syosetuBookmarks.firstOrNull { it.url == syosetuNovel!!.url }
-                if (bm != null && bm.userfavId.isNotBlank()) {
-                    scope.launch {
-                        syosetuStatus = "Removing bookmark…"
-                        val ok = syosetuDeleteBookmark(bm.userfavId)
-                        syosetuStatus = if (ok) "Bookmark removed" else "Remove failed — try again"
-                        if (ok) resyncSyosetuBookmarks()
-                    }
-                }
-            },
-            onBack = { syosetuNovel = null },
-            onOpenReader = { chapters, startAt ->
-                readerTarget = ReaderTarget(
-                    seriesTitle = syosetuNovel!!.title,
-                    seriesUrl = syosetuNovel!!.url,
-                    chapters = chapters,
-                    startIndex = startAt.coerceAtLeast(0),
-                    meta = syosetuNovel!!.toBookMeta()
-                )
-            }
-        )
-        // Bookmark library screens (grid/list with covers), site-flavored —
-        // after the novel branches so a work opened from the library keeps
-        // the library underneath (back returns to it, not to Discover).
-        syosetuBookmarkCat != null -> SyosetuBookmarksScreen(
-            bookmarks = syosetuBookmarks,
-            category = syosetuBookmarkCat!!,
-            onOpenNovel = { novel -> syosetuNovel = novel },
-            categories = syosetuCategories,
-            onChangeCategory = { bm, catId ->
-                if (bm.userfavId.isNotBlank()) scope.launch {
-                    syosetuStatus = "Moving bookmark…"
-                    val ok = syosetuMoveBookmarkCategory(bm.userfavId, catId)
-                    syosetuStatus = if (ok) "Bookmark moved" else "Move failed — try again"
-                    if (ok) resyncSyosetuBookmarks()
-                }
-            },
-            onRemove = { bm ->
-                if (bm.userfavId.isNotBlank()) scope.launch {
-                    syosetuStatus = "Removing bookmark…"
-                    val ok = syosetuDeleteBookmark(bm.userfavId)
-                    syosetuStatus = if (ok) "Bookmark removed" else "Remove failed — try again"
-                    if (ok) resyncSyosetuBookmarks()
-                }
-            },
-            onBack = { syosetuBookmarkCat = null }
-        )
-        showKakuyomuBookmarks -> KakuyomuBookmarksScreen(
-            bookmarks = kakuyomuBookmarks,
-            onOpenWork = { work -> kakuyomuWork = work },
-            onBack = { showKakuyomuBookmarks = false }
-        )
-        showSyosetuLogin -> SyosetuLoginScreen(
-            onLoggedIn = { onSyosetuLoggedIn() },
-            onCancel = { showSyosetuLogin = false }
-        )
-        showKakuyomuLogin -> KakuyomuLoginScreen(
-            onLoggedIn = {
-                showKakuyomuLogin = false
-                kakuyomuLoggedIn = true
-                prefs.edit { putBoolean("kakuyomu_logged_in", true) }
-                kakuyomuStatus = t("Logged in to Kakuyomu", "カクヨムにログインしました")
-                syncKakuyomuBookmarks()
-            },
-            onCancel = { showKakuyomuLogin = false }
-        )
-        // Syosetu workspace home (its own drawer); NU home falls through.
-        activeSite == "syosetu" && selectedWithCover == null -> SyosetuHome(
-            activeSite = activeSite,
-            onSwitchSite = { switchSite(it) },
-            onOpenSettings = {
-                settingsSite = "syosetu"
-                showSettings = true
-            },
-            onOpenNovel = { novel -> syosetuNovel = novel },
-            loggedIn = syosetuLoggedIn,
-            bookmarks = syosetuBookmarks,
-            r18Enabled = syosetuR18,
-            enabledSubsites = syosetuSubsites,
-            onOpenBookmarks = { cat -> syosetuBookmarkCat = cat }
-        )
-        // Kakuyomu workspace home; NU home falls through.
-        activeSite == "kakuyomu" && selectedWithCover == null -> KakuyomuHome(
-            activeSite = activeSite,
-            onSwitchSite = { switchSite(it) },
-            onOpenSettings = {
-                settingsSite = "kakuyomu"
-                showSettings = true
-            },
-            onOpenWork = { work -> kakuyomuWork = work },
-            r18Enabled = kakuyomuR18,
-            bookmarks = kakuyomuBookmarks,
-            onOpenBookmarks = { showKakuyomuBookmarks = true },
-            loggedIn = kakuyomuLoggedIn
-        )
-        selectedWithCover == null -> {
-            if (chapterFetchQueue.isNotEmpty()) {
-                SeriesChapterFetcher(
-                    queue = chapterFetchQueue,
-                    onFinished = { title, ok ->
-                        chapterFetchQueue = chapterFetchQueue.filterNot { it.title == title }
-                        if (ok) statusMessage = "Merged new chapters for $title"
-                    }
-                )
-            }
-            NovelListScreen(
-                rssNovels = novels,
-                rssStatus = statusMessage,
-                checkHours = checkHours,
-                loginState = loginState,
-                readTitles = readTitles,
-                lastRead = lastRead,
-                coverCache = coverCache,
-                notifyOff = notifyOff,
-                updateOff = updateOff,
-                isRefreshing = isRefreshing,
-                onRefresh = { refreshKey += 1 },
-                onNovelClick = { novel -> selectedNovel = novel },
-                onCoverFound = { title, url -> rememberCover(title, url) },
-                onListsLoaded = { parsed -> if (parsed.isNotEmpty()) readingLists = parsed },
-                onRssUrlFound = { url ->
-                    rssUrl = url
-                    prefs.edit { putString("rss_url", url) }
-                    statusMessage = "RSS feed connected — chapter checks enabled"
-                },
-                onReadFeedFound = { url ->
-                    prefs.edit { putString("rss_read_url", url) }
-                    statusMessage = "Read sync enabled — marks carry between devices"
-                },
-                onOpenSearch = { showSearch = true },
-                onOpenDiscover = { showDiscover = true },
-                activeSite = activeSite,
-                onSwitchSite = { switchSite(it) },
 
-                onOpenSettings = {
-                    settingsSite = "nu"
-                    showSettings = true
+        Route.EditLists -> EditListsScreen(onBack = { router.pop() })
+
+        Route.Onboarding -> OnboardingScreen(
+            onFinished = { router.pop() },
+            onOpenSettings = { router.replace(Route.Settings) }
+        )
+
+        Route.Search -> SiteSearchScreen(
+            onOpenSeries = { found ->
+                nu.openDetail(found)
+                router.replace(Route.NuDetail(found.seriesUrl))
+            },
+            onBack = { router.pop() }
+        )
+
+        Route.Discover -> DiscoverScreen(
+            onOpenSeries = { found ->
+                nu.openDetail(found)
+                router.replace(Route.NuDetail(found.seriesUrl))
+            },
+            onBack = { router.pop() }
+        )
+
+        is Route.KakuyomuDetail -> {
+            val work = kakuyomu.selectedWork
+            if (work != null) KakuyomuDetailScreen(
+                work = work,
+                bookmarked = kakuyomu.bookmarks.any { it.id == work.id },
+                onToggleBookmark = { kakuyomu.toggleBookmark(work) },
+                onBack = {
+                    kakuyomu.closeDetail()
+                    router.pop()
                 },
-                onEditLists = { showEditLists = true },
-                onSaveListOptions = { newNotifyOff, newUpdateOff ->
-                    notifyOff = newNotifyOff
-                    updateOff = newUpdateOff
-                    prefs.edit {
-                        putStringSet("list_notify_off", newNotifyOff)
-                        putStringSet("list_update_off", newUpdateOff)
-                    }
-                },
-                onLastReads = { incoming ->
-                    lastRead = mergeLastReads(lastRead, incoming)
-                    saveLastRead(prefs, lastRead)
-                },
-                pauseLocalCovers = syncStatus.startsWith("Running") ||
-                    syncStatus.startsWith("Lists") ||
-                    syncStatus.startsWith("Covers") ||
-                    syncStatus.startsWith("Chapters") ||
-                    syncStatus.contains("waiting") ||
-                    syncStatus.contains("resuming")
+                onOpenReader = { chapters, startAt ->
+                    readerVm.open(
+                        ReaderTarget(
+                            seriesTitle = work.title,
+                            seriesUrl = work.url,
+                            chapters = chapters,
+                            startIndex = startAt.coerceAtLeast(0),
+                            meta = work.toBookMeta()
+                        )
+                    )
+                    router.push(Route.Reader)
+                }
             )
         }
-        else -> NovelDetailScreen(
-            novel = selectedWithCover,
-            lastRead = lastRead[selectedWithCover.title],
-            notifyOn = selectedWithCover.title !in seriesNotifyOff,
-            availableLists = readingLists,
-            onMarkRead = { markAsRead(selectedWithCover.title) },
-            onSetLastRead = { chapter, url, read ->
-                setLastRead(selectedWithCover.title, chapter, url, read)
+
+        is Route.SyosetuDetail -> {
+            val novel = syosetu.selected
+            if (novel != null) SyosetuDetailScreen(
+                novel = novel,
+                bookmark = syosetu.bookmarks.firstOrNull { it.url == novel.url },
+                categories = syosetu.categories,
+                onChangeCategory = { catId ->
+                    syosetu.bookmarks.firstOrNull { it.url == novel.url }
+                        ?.let { bm -> syosetu.moveBookmark(bm.userfavId, catId) }
+                },
+                onRemoveBookmark = {
+                    syosetu.bookmarks.firstOrNull { it.url == novel.url }
+                        ?.let { bm -> syosetu.removeBookmark(bm.userfavId) }
+                },
+                onBack = {
+                    syosetu.closeDetail()
+                    router.pop()
+                },
+                onOpenReader = { chapters, startAt ->
+                    readerVm.open(
+                        ReaderTarget(
+                            seriesTitle = novel.title,
+                            seriesUrl = novel.url,
+                            chapters = chapters,
+                            startIndex = startAt.coerceAtLeast(0),
+                            meta = novel.toBookMeta()
+                        )
+                    )
+                    router.push(Route.Reader)
+                }
+            )
+        }
+
+        is Route.SyosetuLibrary -> SyosetuBookmarksScreen(
+            bookmarks = syosetu.bookmarks,
+            category = route.category,
+            onOpenNovel = { novel ->
+                syosetu.openDetail(novel)
+                router.push(Route.SyosetuDetail(novel.url))
             },
-            onToggleNotify = { toggleSeriesNotify(selectedWithCover.title) },
-            onCoverFound = { url -> rememberCover(selectedWithCover.title, url) },
-            onOpenReader = { chapters, startAt, meta ->
-                readerTarget = ReaderTarget(
-                    seriesTitle = selectedWithCover.title,
-                    seriesUrl = selectedWithCover.seriesUrl,
-                    chapters = chapters,
-                    startIndex = if (startAt >= 0) startAt else 0,
-                    meta = meta
-                )
+            categories = syosetu.categories,
+            onChangeCategory = { bm, catId ->
+                if (bm.userfavId.isNotBlank()) syosetu.moveBookmark(bm.userfavId, catId)
             },
-            onBackClick = { selectedNovel = null }
+            onRemove = { bm ->
+                if (bm.userfavId.isNotBlank()) syosetu.removeBookmark(bm.userfavId)
+            },
+            onBack = { router.pop() }
         )
+
+        Route.KakuyomuLibrary -> KakuyomuBookmarksScreen(
+            bookmarks = kakuyomu.bookmarks,
+            onOpenWork = { work ->
+                kakuyomu.openDetail(work)
+                router.push(Route.KakuyomuDetail(work.id))
+            },
+            onBack = { router.pop() }
+        )
+
+        Route.SyosetuLogin -> SyosetuLoginScreen(
+            onLoggedIn = {
+                syosetu.onLoggedIn()
+                router.pop()
+            },
+            onCancel = { router.pop() }
+        )
+
+        Route.KakuyomuLogin -> KakuyomuLoginScreen(
+            onLoggedIn = {
+                kakuyomu.onLoggedIn()
+                router.pop()
+            },
+            onCancel = { router.pop() }
+        )
+
+        Route.Home -> when (app.activeSite) {
+            "syosetu" -> SyosetuHome(
+                activeSite = app.activeSite,
+                onSwitchSite = { app.switchSite(it) },
+                onOpenSettings = { app.openSettings("syosetu") },
+                onOpenNovel = { novel ->
+                    syosetu.openDetail(novel)
+                    router.push(Route.SyosetuDetail(novel.url))
+                },
+                loggedIn = syosetu.loggedIn,
+                bookmarks = syosetu.bookmarks,
+                r18Enabled = syosetu.r18,
+                enabledSubsites = syosetu.subsites,
+                onOpenBookmarks = { cat -> router.push(Route.SyosetuLibrary(cat)) }
+            )
+
+            "kakuyomu" -> KakuyomuHome(
+                activeSite = app.activeSite,
+                onSwitchSite = { app.switchSite(it) },
+                onOpenSettings = { app.openSettings("kakuyomu") },
+                onOpenWork = { work ->
+                    kakuyomu.openDetail(work)
+                    router.push(Route.KakuyomuDetail(work.id))
+                },
+                r18Enabled = kakuyomu.r18,
+                bookmarks = kakuyomu.bookmarks,
+                onOpenBookmarks = { router.push(Route.KakuyomuLibrary) },
+                loggedIn = kakuyomu.loggedIn
+            )
+
+            else -> {
+                if (nu.chapterFetchQueue.isNotEmpty()) {
+                    SeriesChapterFetcher(
+                        queue = nu.chapterFetchQueue,
+                        onFinished = { title, ok -> nu.onChapterFetchFinished(title, ok) }
+                    )
+                }
+                NovelListScreen(
+                    rssNovels = nu.novels,
+                    rssStatus = nu.statusMessage,
+                    checkHours = nu.checkHours,
+                    loginState = nu.loginState,
+                    readTitles = nu.readTitles,
+                    lastRead = nu.lastRead,
+                    coverCache = nu.coverCache,
+                    notifyOff = nu.notifyOff,
+                    updateOff = nu.updateOff,
+                    isRefreshing = nu.isRefreshing,
+                    onRefresh = { nu.refresh() },
+                    onNovelClick = { novel ->
+                        nu.openDetail(novel)
+                        router.push(Route.NuDetail(novel.seriesUrl))
+                    },
+                    onCoverFound = { title, url -> nu.rememberCover(title, url) },
+                    onListsLoaded = { parsed -> nu.onListsLoaded(parsed) },
+                    onRssUrlFound = { url -> nu.onRssUrlFound(url) },
+                    onReadFeedFound = { url -> nu.onReadFeedFound(url) },
+                    onOpenSearch = { router.push(Route.Search) },
+                    onOpenDiscover = { router.push(Route.Discover) },
+                    activeSite = app.activeSite,
+                    onSwitchSite = { app.switchSite(it) },
+                    onOpenSettings = { app.openSettings("nu") },
+                    onEditLists = { router.push(Route.EditLists) },
+                    onSaveListOptions = { newNotifyOff, newUpdateOff ->
+                        nu.saveListOptions(newNotifyOff, newUpdateOff)
+                    },
+                    onLastReads = { incoming -> nu.mergeIncomingLastReads(incoming) },
+                    pauseLocalCovers = app.syncStatus.startsWith("Running") ||
+                        app.syncStatus.startsWith("Lists") ||
+                        app.syncStatus.startsWith("Covers") ||
+                        app.syncStatus.startsWith("Chapters") ||
+                        app.syncStatus.contains("waiting") ||
+                        app.syncStatus.contains("resuming")
+                )
+            }
+        }
+
+        is Route.NuDetail -> {
+            val novel = selectedWithCover
+            if (novel != null) NovelDetailScreen(
+                novel = novel,
+                lastRead = nu.lastRead[novel.title],
+                notifyOn = novel.title !in nu.seriesNotifyOff,
+                availableLists = nu.readingLists,
+                onMarkRead = { nu.markAsRead(novel.title) },
+                onSetLastRead = { chapter, url, read ->
+                    nu.setLastRead(novel.title, chapter, url, read)
+                },
+                onToggleNotify = { nu.toggleSeriesNotify(novel.title) },
+                onCoverFound = { url -> nu.rememberCover(novel.title, url) },
+                onOpenReader = { chapters, startAt, meta ->
+                    readerVm.open(
+                        ReaderTarget(
+                            seriesTitle = novel.title,
+                            seriesUrl = novel.seriesUrl,
+                            chapters = chapters,
+                            startIndex = if (startAt >= 0) startAt else 0,
+                            meta = meta
+                        )
+                    )
+                    router.push(Route.Reader)
+                },
+                onBackClick = {
+                    nu.closeDetail()
+                    router.pop()
+                }
+            )
+        }
     }
 }
 
