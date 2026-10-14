@@ -276,16 +276,30 @@ fun SyosetuBookmarksScreen(
     }
 }
 
-/** Kakuyomu bookmark library — real covers where the work provides one. */
+/**
+ * Kakuyomu bookmark library — real covers where the work provides one.
+ * categoryId "" shows all; otherwise works assigned to that client-side
+ * category. Long-press a row to move it between categories.
+ */
 @Composable
 fun KakuyomuBookmarksScreen(
     bookmarks: List<KakuyomuWork>,
     onOpenWork: (KakuyomuWork) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    categories: CategoryState = CategoryState(),
+    categoryId: String = "",
+    onMove: (workId: String, catId: String?) -> Unit = { _, _ -> },
+    onCreateAndMove: (workId: String, String) -> Unit = { _, _ -> }
 ) {
+    val catName = categories.cats.firstOrNull { it.id == categoryId }?.name ?: ""
+    val shown = if (categoryId.isBlank()) bookmarks
+    else bookmarks.filter { categories.assign[it.id] == categoryId }
+    var moveTo by remember { mutableStateOf<KakuyomuWork?>(null) }
+
     BookmarksBody(
-        heading = t("Bookmarks", "ブックマーク") + " (${bookmarks.size})",
-        rows = bookmarks.map { work ->
+        heading = if (categoryId.isBlank()) t("Bookmarks", "ブックマーク") + " (${shown.size})"
+        else "$catName (${shown.size})",
+        rows = shown.map { work ->
             BookmarkRow(
                 title = work.title,
                 subtitle = work.author,
@@ -298,6 +312,20 @@ fun KakuyomuBookmarksScreen(
             "No bookmarks yet — open a work and tap ⚑ Bookmark.",
             "ブックマークがありません — 作品を開いて⚑ブックマークをタップしてください。"
         ),
-        onBack = onBack
+        onBack = onBack,
+        onManageRow = { row ->
+            moveTo = shown.firstOrNull { it.url == row.seriesUrl }
+        }
     )
+
+    moveTo?.let { work ->
+        CategoryMoveDialog(
+            workId = work.id,
+            current = categories.cats.firstOrNull { it.id == categories.assign[work.id] },
+            cats = categories.cats,
+            onMove = { catId -> onMove(work.id, catId) },
+            onCreateAndMove = { name -> onCreateAndMove(work.id, name) },
+            onDismiss = { moveTo = null }
+        )
+    }
 }

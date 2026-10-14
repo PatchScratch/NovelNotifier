@@ -99,6 +99,30 @@ class KakuyomuViewModel(app: Application) : AndroidViewModel(app) {
         status = t("Logged out — bookmarks stay on this device.", "ログアウトしました — ブックマークは端末に残ります。")
     }
 
+    // --- client-side categories (flat-follow sites; see CategoryStore) ---
+
+    /** Live mirror of categories.json; every mutator persists immediately. */
+    var categories by mutableStateOf(CategoryStore.load(getApplication()))
+        private set
+
+    private fun saveCats(next: CategoryState) {
+        categories = next
+        CategoryStore.save(getApplication(), next)
+    }
+
+    fun addCategory(name: String) = saveCats(CategoryStore.add(categories, name))
+    fun renameCategory(id: String, name: String) = saveCats(CategoryStore.rename(categories, id, name))
+    fun deleteCategory(id: String) = saveCats(CategoryStore.delete(categories, id))
+    fun setCategoryHidden(id: String, hidden: Boolean) =
+        saveCats(CategoryStore.setHidden(categories, id, hidden))
+
+    fun moveToCategory(workId: String, catId: String?) =
+        saveCats(CategoryStore.move(categories, workId, catId))
+
+    fun categoryOf(workId: String): LocalCategory? =
+        categories.assign[workId]?.let { id -> categories.cats.firstOrNull { it.id == id } }
+
+
     fun updateR18(on: Boolean) {
         r18 = on
         prefs.edit { putBoolean("kakuyomu_r18", on) }

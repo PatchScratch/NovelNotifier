@@ -106,6 +106,7 @@ fun NovelListScreen(
     onLastReads: (Map<String, Pair<String, String>>) -> Unit = {},
     nsfwUnlocked: Boolean = false,
     onToggleNsfw: () -> Unit = {},
+    onOpenCategories: () -> Unit = {},
     pauseLocalCovers: Boolean = false
 ) {
     val context = LocalContext.current
@@ -278,6 +279,14 @@ fun NovelListScreen(
                     }
                 }
                 HorizontalDivider()
+                NavigationDrawerItem(
+                    label = { Text(t("Categories  ⚙", "カテゴリ  ⚙")) },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenCategories()
+                    }
+                )
                 NsfwToggleRow(unlocked = nsfwUnlocked, onToggle = onToggleNsfw)
                 NavigationDrawerItem(
                     label = { Text("Settings") },

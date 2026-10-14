@@ -332,6 +332,14 @@ fun NovelApp(
                 work = work,
                 bookmarked = kakuyomu.bookmarks.any { it.id == work.id },
                 onToggleBookmark = { kakuyomu.toggleBookmark(work) },
+                categories = kakuyomu.categories,
+                onMove = { workId, catId -> kakuyomu.moveToCategory(workId, catId) },
+                onCreateAndMove = { workId, name ->
+                    kakuyomu.addCategory(name)
+                    // addCategory generated the id; move needs it after.
+                    val created = kakuyomu.categories.cats.lastOrNull()
+                    if (created != null) kakuyomu.moveToCategory(workId, created.id)
+                },
                 onBack = {
                     kakuyomu.closeDetail()
                     router.pop()
@@ -401,12 +409,26 @@ fun NovelApp(
             onBack = { router.pop() }
         )
 
-        Route.KakuyomuLibrary -> KakuyomuBookmarksScreen(
+        is Route.KakuyomuLibrary -> KakuyomuBookmarksScreen(
             bookmarks = kakuyomu.bookmarks,
             onOpenWork = { work ->
                 kakuyomu.openDetail(work)
                 router.push(Route.KakuyomuDetail(work.id))
             },
+            onBack = { router.pop() },
+            categories = kakuyomu.categories,
+            categoryId = route.categoryId,
+            onMove = { workId, catId -> kakuyomu.moveToCategory(workId, catId) },
+            onCreateAndMove = { workId, name ->
+                kakuyomu.addCategory(name)
+                val created = kakuyomu.categories.cats.lastOrNull()
+                if (created != null) kakuyomu.moveToCategory(workId, created.id)
+            }
+        )
+
+        Route.Categories -> CategoriesScreen(
+            nuLists = nu.readingLists,
+            syosetuCategories = syosetu.categories,
             onBack = { router.pop() }
         )
 
@@ -440,6 +462,7 @@ fun NovelApp(
                 r18Enabled = syosetu.r18,
                 enabledSubsites = syosetu.subsites,
                 onOpenBookmarks = { cat -> router.push(Route.SyosetuLibrary(cat)) },
+                onOpenCategories = { router.push(Route.Categories) },
                 nsfwUnlocked = app.nsfwUnlocked,
                 onToggleNsfw = { toggleNsfw() }
             )
@@ -454,7 +477,9 @@ fun NovelApp(
                 },
                 r18Enabled = kakuyomu.r18,
                 bookmarks = kakuyomu.bookmarks,
-                onOpenBookmarks = { router.push(Route.KakuyomuLibrary) },
+                categories = kakuyomu.categories,
+                onOpenBookmarks = { catId -> router.push(Route.KakuyomuLibrary(catId)) },
+                onOpenCategories = { router.push(Route.Categories) },
                 loggedIn = kakuyomu.loggedIn,
                 nsfwUnlocked = app.nsfwUnlocked,
                 onToggleNsfw = { toggleNsfw() }
@@ -499,6 +524,7 @@ fun NovelApp(
                     onLastReads = { incoming -> nu.mergeIncomingLastReads(incoming) },
                     nsfwUnlocked = app.nsfwUnlocked,
                     onToggleNsfw = { toggleNsfw() },
+                    onOpenCategories = { router.push(Route.Categories) },
                     pauseLocalCovers = app.syncStatus.startsWith("Running") ||
                         app.syncStatus.startsWith("Lists") ||
                         app.syncStatus.startsWith("Covers") ||

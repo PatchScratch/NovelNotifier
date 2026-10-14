@@ -34,7 +34,8 @@ object BackupManager {
         "layout_mode", "sort_mode",
         "theme_mode", "stack_notifications",
         "custom_theme_name",
-        "kakuyomu_bookmarks"
+        "kakuyomu_bookmarks",
+        "hidden_lists", "syosetu_hidden_cats"
     )
 
     /** Pure so tests can verify the credentials-exclusion rule. */
@@ -107,6 +108,10 @@ object BackupManager {
             listOfNotNull(customThemeFile.takeIf { it.exists() }).forEach {
                 put("data/custom_theme.json", it.readBytes())
             }
+            // Client-side Kakuyomu categories (assignments + hidden flags).
+            listOfNotNull(context.filesDir.resolve("categories.json").takeIf { it.exists() }).forEach {
+                put("data/categories.json", it.readBytes())
+            }
             context.filesDir.resolve("series_cache").listFiles().orEmpty().forEach {
                 put("data/series_cache/${it.name}", it.readBytes())
             }
@@ -142,6 +147,10 @@ object BackupManager {
                     }
                     name == "data/custom_theme.json" -> {
                         context.filesDir.resolve("custom_theme.json").writeBytes(zip.readBytes())
+                        restoredFiles++
+                    }
+                    name == "data/categories.json" -> {
+                        context.filesDir.resolve("categories.json").writeBytes(zip.readBytes())
                         restoredFiles++
                     }
                     name.startsWith("data/series_cache/") -> {

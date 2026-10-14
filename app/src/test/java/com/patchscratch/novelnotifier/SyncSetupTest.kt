@@ -158,6 +158,26 @@ class SyncSetupTest {
         assertEquals(false, json.optBoolean("stack_notifications", true))
     }
 
+    // --- SFW/NSFW hiding flags must travel between devices ---
+
+    @Test
+    fun backupPrefs_carriesHiddenFlagsAndNothingElseNew() {
+        val json = BackupManager.backupPrefsJson(
+            mapOf(
+                "hidden_lists" to setOf("2"),
+                "syosetu_hidden_cats" to setOf("R18")
+            )
+        )
+        val lists = json.optJSONArray("hidden_lists")
+        assertEquals(1, lists.length())
+        assertEquals("2", lists.optString(0))
+        val cats = json.optJSONArray("syosetu_hidden_cats")
+        assertEquals(1, cats.length())
+        assertEquals("R18", cats.optString(0))
+        // Unlock state itself never persists — the mode starts locked.
+        assertFalse(json.has("nsfw_unlocked"))
+    }
+
     // --- backup export regression: mixed-type prefs must not crash ---
     // v1.1..v1.2 shipped a ClassCastException: the export snapshot read every
     // ported key as a StringSet, so a String theme_mode (or Boolean stack

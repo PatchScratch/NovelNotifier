@@ -69,6 +69,7 @@ fun SyosetuHome(
     r18Enabled: Boolean = false,
     enabledSubsites: Set<Int> = setOf(1, 2, 3),
     onOpenBookmarks: (String) -> Unit = {},
+    onOpenCategories: () -> Unit = {},
     nsfwUnlocked: Boolean = false,
     onToggleNsfw: () -> Unit = {}
 ) {
@@ -99,19 +100,25 @@ fun SyosetuHome(
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
-                    // Opens the bookmark library screen (grid/list, covers)
-                    // instead of just closing the drawer.
-                    TextButton(onClick = {
-                        scope.launch { drawerState.close() }
-                        onOpenBookmarks("")
-                    }) { Text(t("All", "すべて") + " (${bookmarks.size}) ▦") }
-                    bookmarks.map { it.category }.filter { it.isNotBlank() }.distinct().forEach { cat ->
-                        TextButton(onClick = {
+                    // NU-style switcher: All + one row per 分類. Opens the
+                    // bookmark library screen (grid/list, covers) filtered.
+                    NavigationDrawerItem(
+                        label = { Text(t("All", "すべて") + " (${bookmarks.size}) ▦") },
+                        selected = false,
+                        onClick = {
                             scope.launch { drawerState.close() }
-                            onOpenBookmarks(cat)
-                        }) {
-                            Text("$cat (${bookmarks.count { it.category == cat }})")
+                            onOpenBookmarks("")
                         }
+                    )
+                    bookmarks.map { it.category }.filter { it.isNotBlank() }.distinct().forEach { cat ->
+                        NavigationDrawerItem(
+                            label = { Text("$cat (${bookmarks.count { it.category == cat }})") },
+                            selected = false,
+                            onClick = {
+                                scope.launch { drawerState.close() }
+                                onOpenBookmarks(cat)
+                            }
+                        )
                     }
                 } else {
                     Text(
@@ -120,6 +127,14 @@ fun SyosetuHome(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
+                NavigationDrawerItem(
+                    label = { Text(t("Categories  ⚙", "カテゴリ  ⚙")) },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenCategories()
+                    }
+                )
                 NavigationDrawerItem(
                     label = { Text(t("Settings  ⚙", "設定  ⚙")) },
                     selected = false,

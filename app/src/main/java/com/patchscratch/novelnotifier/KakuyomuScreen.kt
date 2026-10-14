@@ -56,7 +56,9 @@ fun KakuyomuHome(
     onOpenWork: (KakuyomuWork) -> Unit,
     r18Enabled: Boolean = false,
     bookmarks: List<KakuyomuWork> = emptyList(),
-    onOpenBookmarks: () -> Unit = {},
+    categories: CategoryState = CategoryState(),
+    onOpenBookmarks: (String) -> Unit = {},
+    onOpenCategories: () -> Unit = {},
     loggedIn: Boolean = false,
     nsfwUnlocked: Boolean = false,
     onToggleNsfw: () -> Unit = {}
@@ -100,16 +102,33 @@ fun KakuyomuHome(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                     )
                 } else {
+                    // NU-style switcher: All + one row per used category.
                     // The library screen (grid/list with covers) holds the
-                    // list; the drawer just opens it.
+                    // rows; the drawer navigates to a filtered view.
                     NavigationDrawerItem(
-                        label = { Text(t("Bookmarks", "ブックマーク") + " (${bookmarks.size}) ▦") },
+                        label = { Text(t("All", "すべて") + " (${bookmarks.size}) ▦") },
                         selected = false,
                         onClick = {
                             scope.launch { drawerState.close() }
-                            onOpenBookmarks()
+                            onOpenBookmarks("")
                         }
                     )
+                    // Only categories that actually hold works show here;
+                    // empty ones are managed in Categories.
+                    categories.cats
+                        .filter { cat -> bookmarks.count { categories.assign[it.id] == cat.id } > 0 }
+                        .forEach { cat ->
+                            NavigationDrawerItem(
+                                label = {
+                                    Text("${cat.name} (${bookmarks.count { categories.assign[it.id] == cat.id }})")
+                                },
+                                selected = false,
+                                onClick = {
+                                    scope.launch { drawerState.close() }
+                                    onOpenBookmarks(cat.id)
+                                }
+                            )
+                        }
                 }
                 Text(
                     if (loggedIn) t(
@@ -121,6 +140,14 @@ fun KakuyomuHome(
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text(t("Categories  ⚙", "カテゴリ  ⚙")) },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenCategories()
+                    }
                 )
                 NavigationDrawerItem(
                     label = { Text(t("Settings  ⚙", "設定  ⚙")) },
@@ -400,13 +427,17 @@ fun KakuyomuDetailScreen(
     onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit,
     onBack: () -> Unit = {},
     bookmarked: Boolean = false,
-    onToggleBookmark: () -> Unit = {}
+    onToggleBookmark: () -> Unit = {},
+    categories: CategoryState = CategoryState(),
+    onMove: (workId: String, catId: String?) -> Unit = { _, _ -> },
+    onCreateAndMove: (workId: String, name: String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     var detail by remember { mutableStateOf<KakuyomuWorkDetail?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    var showMove by remember { mutableStateOf(false) }
 
     LaunchedEffect(work.id) {
         loading = true
@@ -445,6 +476,14 @@ fun KakuyomuDetailScreen(
                     Text(
                         if (bookmarked) t("⚑ Bookmarked", "⚑ ブックマーク済み") else t("⚑ Bookmark", "⚑ ブックマーク"),
                         color = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                // Client-side category (move-only, single membership).
+                TextButton(onClick = { showMove = true }) {
+                    Text(
+                        t("Category", "カテゴリ") + ": " +
+                            (categories.cats.firstOrNull { it.id == categories.assign[work.id] }?.name
+                                ?: t("All", "すべて")) + " ▾"
                     )
                 }
             }
@@ -570,5 +609,16 @@ fun KakuyomuDetailScreen(
                 Text("${list.indexOf(ep) + 1}. ${ep.title}", style = MaterialTheme.typography.bodyMedium)
             }
         }
+    }
+
+    if (showMove) {
+        CategoryMoveDialog(
+            workId = work.id,
+            current = categories.cats.firstOrNull { it.id == categories.assign[work.id] },
+            cats = categories.cats,
+            onMove = { catId -> onMove(work.id, catId) },
+            onCreateAndMove = { name -> onCreateAndMove(work.id, name) },
+            onDismiss = { showMove = false }
+        )
     }
 }
