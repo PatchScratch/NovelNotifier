@@ -51,6 +51,7 @@ fun ListOptionsScreen(
     shScanRunning: Boolean = false,
     onToggleShScan: () -> Unit = {}
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var draftNotifyOff by remember { mutableStateOf(notifyOff) }
     var draftUpdateOff by remember { mutableStateOf(updateOff) }
     var draftHidden by remember { mutableStateOf(hiddenLists) }
@@ -152,8 +153,21 @@ fun ListOptionsScreen(
                 item {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                     Text(
-                        text = "Scribble Hub",
+                        text = "Diagnostics",
                         style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    TextButton(onClick = {
+                        if (!HostProbeService.probeAlive) HostProbeService.start(context)
+                    }) {
+                        Text(if (HostProbeService.probeAlive) "Probe running — see notification"
+                            else "Probe translator sites (one chapter per site)")
+                    }
+                    Text(
+                        text = "Walks every host your cached series link to and runs the " +
+                            "real extraction on a chapter — the report (host_probe_report.json) " +
+                            "feeds the anti-copy-protection hardening.",
+                        style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
                     Text(

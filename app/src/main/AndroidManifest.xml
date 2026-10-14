@@ -71,6 +71,11 @@
         <receiver
             android:name=".TtsMediaReceiver"
             android:exported="false" />
+        <!-- Translator-host hardening probe (overnight census). -->
+        <service
+            android:name=".HostProbeService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <receiver
             android:name=".BootReceiver"
             android:exported="false">
