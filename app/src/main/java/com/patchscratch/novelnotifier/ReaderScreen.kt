@@ -31,6 +31,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.IconButton
@@ -444,6 +445,7 @@ fun ReaderScreen(
             }
             TextButton(onClick = { showMenu = true }) { Text("⋮") }
             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                // ---- Display ----------------------------------------------------
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -478,26 +480,34 @@ fun ReaderScreen(
                         saveReaderSerif(prefs, serif)
                     }
                 )
+                // One row: smaller / current size / larger (was two items).
                 DropdownMenuItem(
-                    text = { Text(t("Text smaller (A−)", "文字を小さく (A−)")) },
-                    onClick = {
-                        fontSize = (fontSize - 1).coerceIn(12, 28)
-                        saveReaderFontSize(prefs, fontSize)
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text(t("Text larger (A+)", "文字を大きく (A+)")) },
+                    text = {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            TextButton(onClick = {
+                                fontSize = (fontSize - 1).coerceIn(12, 28)
+                                saveReaderFontSize(prefs, fontSize)
+                            }) { Text("A−") }
+                            Text("${fontSize}sp", style = MaterialTheme.typography.bodyMedium)
+                            TextButton(onClick = {
+                                fontSize = (fontSize + 1).coerceIn(12, 28)
+                                saveReaderFontSize(prefs, fontSize)
+                            }) { Text("A+") }
+                        }
+                    },
                     onClick = {
                         fontSize = (fontSize + 1).coerceIn(12, 28)
                         saveReaderFontSize(prefs, fontSize)
                     }
                 )
                 DropdownMenuItem(
-                    text = {
-                        Text(if (offlineEnabled) t("Offline for this series: ON", "このシリーズのオフライン: ON") else t("Offline for this series: OFF", "このシリーズのオフライン: OFF"))
-                    },
-                    onClick = { showMenu = false; toggleOfflineForSeries() }
+                    text = { Text(if (jsOn) t("JavaScript: ON (tap to disable)", "JavaScript: ON（タップで無効）") else t("JavaScript: OFF (tap to enable)", "JavaScript: OFF（タップで有効）")) },
+                    onClick = { showMenu = false; toggleJs() }
                 )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+
+                // ---- Translation -------------------------------------------------
                 // AI translation: current chapter through the configured
                 // OpenAI-compatible endpoint. Needs the API key from Settings.
                 val xlateKey = prefs.getString("xlate_key", "").orEmpty()
@@ -603,52 +613,6 @@ fun ReaderScreen(
                         }
                     )
                 }
-                if (offlineEnabled && target.chapters.size > 0) {
-                    if (EpubBulkService.running(context)) {
-                        DropdownMenuItem(
-                            text = { Text(t("Stop background download", "バックグラウンド取得を停止")) },
-                            onClick = { showMenu = false; EpubBulkService.stop(context) }
-                        )
-                    } else {
-                        DropdownMenuItem(
-                            text = { Text(t("Download all", "全話ダウンロード") + " (${target.chapters.size})") },
-                            onClick = {
-                                showMenu = false
-                                if (android.os.Build.VERSION.SDK_INT >= 33 &&
-                                    androidx.core.content.ContextCompat.checkSelfPermission(
-                                        context, android.Manifest.permission.POST_NOTIFICATIONS
-                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    // Fresh installs lose the grant (uninstall wipes it);
-                                    // the progress notification needs it. Download starts
-                                    // on grant.
-                                    bulkPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                                } else {
-                                    startBackgroundBulk()
-                                }
-                            }
-                        )
-                    }
-                }
-                if (savedOffline) {
-                    DropdownMenuItem(
-                        text = { Text("✓ " + t("Saved offline", "保存済み") + " ($epubCount)") },
-                        onClick = { showMenu = false }
-                    )
-                } else if (extractResult != null) {
-                    DropdownMenuItem(
-                        text = { Text(t("Save this chapter offline", "この章をオフライン保存")) },
-                        onClick = { showMenu = false; saveChapterOffline() }
-                    )
-                }
-                DropdownMenuItem(
-                    text = { Text(if (jsOn) t("JavaScript: ON (tap to disable)", "JavaScript: ON（タップで無効）") else t("JavaScript: OFF (tap to enable)", "JavaScript: OFF（タップで有効）")) },
-                    onClick = { showMenu = false; toggleJs() }
-                )
-                DropdownMenuItem(
-                    text = { Text(t("Translation files (prompt/glossary/voices)…", "翻訳ファイル（プロンプト/用語集/声）…")) },
-                    onClick = { showMenu = false; onOpenXlateFiles() }
-                )
                 // Paragraph layout, switchable right here (Settings holds the
                 // saved default): both / Japanese only / English only.
                 DropdownMenuItem(
@@ -666,56 +630,6 @@ fun ReaderScreen(
                             "both" -> "jp"; "jp" -> "en"; else -> "both"
                         }
                         prefs.edit { putString("xlate_layout", xlateLayout) }
-                    }
-                )
-                if (shioriPos >= 0) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                t("Set しおり to this chapter (", "しおりをこの話に設定（") +
-                                    chapterNum(chapter.chapter) + t(")", "）")
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            onShioriManual(chapterNum(chapter.chapter))
-                        }
-                    )
-                }
-                if (kakuyomuHistory && kakuyomuEpisodeIdFromUrl(chapter.url) != null) {
-                    DropdownMenuItem(
-                        text = { Text(t("Set reading position here", "ここまで読んだことにする")) },
-                        onClick = {
-                            showMenu = false
-                            kakuyomuEpisodeIdFromUrl(chapter.url)?.let {
-                                onKakuyomuHistory(it, chapterNum(chapter.chapter), true)
-                            }
-                        }
-                    )
-                }
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            when (ttsState.state) {
-                                TtsController.State.PLAYING -> t("Stop speaking", "読み上げ停止")
-                                TtsController.State.PAUSED -> t("Resume speaking", "読み上げ再開")
-                                else -> t("Speak chapter", "この話を読み上げる")
-                            }
-                        )
-                    },
-                    onClick = {
-                        showMenu = false
-                        when (ttsState.state) {
-                            TtsController.State.PLAYING -> {
-                                TtsController.stop()
-                            }
-                            TtsController.State.PAUSED -> {
-                                TtsController.resume(context)
-                            }
-                            else -> {
-                                startSpeaking()
-                            }
-                        }
                     }
                 )
                 // Bulk twin of Download all: every STORED chapter through the
@@ -743,13 +657,119 @@ fun ReaderScreen(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text(t("Reload", "再読み込み")) },
-                    onClick = { showMenu = false; loadKey += 1 }
+                    text = { Text(t("Translation files (prompt/glossary/voices)…", "翻訳ファイル（プロンプト/用語集/声）…")) },
+                    onClick = { showMenu = false; onOpenXlateFiles() }
                 )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+
+                // ---- Read aloud --------------------------------------------------
                 DropdownMenuItem(
-                    text = { Text(t("Open in browser", "ブラウザで開く")) },
-                    onClick = { showMenu = false; openExternally() }
+                    text = {
+                        Text(
+                            when (ttsState.state) {
+                                TtsController.State.PLAYING -> t("Stop speaking", "読み上げ停止")
+                                TtsController.State.PAUSED -> t("Resume speaking", "読み上げ再開")
+                                else -> t("Speak chapter", "この話を読み上げる")
+                            }
+                        )
+                    },
+                    onClick = {
+                        showMenu = false
+                        when (ttsState.state) {
+                            TtsController.State.PLAYING -> {
+                                TtsController.stop()
+                            }
+                            TtsController.State.PAUSED -> {
+                                TtsController.resume(context)
+                            }
+                            else -> {
+                                startSpeaking()
+                            }
+                        }
+                    }
                 )
+
+                // ---- Reading position (per-site markers; group hidden when
+                // neither site applies to this series) ---------------------------
+                val showShiori = shioriPos >= 0
+                val showKakuyomuMark = kakuyomuHistory && kakuyomuEpisodeIdFromUrl(chapter.url) != null
+                if (showShiori || showKakuyomuMark) {
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                    if (showShiori) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    t("Set しおり to this chapter (", "しおりをこの話に設定（") +
+                                        chapterNum(chapter.chapter) + t(")", "）")
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onShioriManual(chapterNum(chapter.chapter))
+                            }
+                        )
+                    }
+                    if (showKakuyomuMark) {
+                        DropdownMenuItem(
+                            text = { Text(t("Set reading position here", "ここまで読んだことにする")) },
+                            onClick = {
+                                showMenu = false
+                                kakuyomuEpisodeIdFromUrl(chapter.url)?.let {
+                                    onKakuyomuHistory(it, chapterNum(chapter.chapter), true)
+                                }
+                            }
+                        )
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+
+                // ---- Offline library ----------------------------------------------
+                DropdownMenuItem(
+                    text = {
+                        Text(if (offlineEnabled) t("Offline for this series: ON", "このシリーズのオフライン: ON") else t("Offline for this series: OFF", "このシリーズのオフライン: OFF"))
+                    },
+                    onClick = { showMenu = false; toggleOfflineForSeries() }
+                )
+                if (savedOffline) {
+                    DropdownMenuItem(
+                        text = { Text("✓ " + t("Saved offline", "保存済み") + " ($epubCount)") },
+                        onClick = { showMenu = false }
+                    )
+                } else if (extractResult != null) {
+                    DropdownMenuItem(
+                        text = { Text(t("Save this chapter offline", "この章をオフライン保存")) },
+                        onClick = { showMenu = false; saveChapterOffline() }
+                    )
+                }
+                if (offlineEnabled && target.chapters.size > 0) {
+                    if (EpubBulkService.running(context)) {
+                        DropdownMenuItem(
+                            text = { Text(t("Stop background download", "バックグラウンド取得を停止")) },
+                            onClick = { showMenu = false; EpubBulkService.stop(context) }
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = { Text(t("Download all", "全話ダウンロード") + " (${target.chapters.size})") },
+                            onClick = {
+                                showMenu = false
+                                if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                                    androidx.core.content.ContextCompat.checkSelfPermission(
+                                        context, android.Manifest.permission.POST_NOTIFICATIONS
+                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    // Fresh installs lose the grant (uninstall wipes it);
+                                    // the progress notification needs it. Download starts
+                                    // on grant.
+                                    bulkPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    startBackgroundBulk()
+                                }
+                            }
+                        )
+                    }
+                }
                 if (epubCount > 0) {
                     DropdownMenuItem(
                         text = {
@@ -778,6 +798,18 @@ fun ReaderScreen(
                         }
                     )
                 }
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+
+                // ---- Page ---------------------------------------------------------
+                DropdownMenuItem(
+                    text = { Text(t("Reload", "再読み込み")) },
+                    onClick = { showMenu = false; loadKey += 1 }
+                )
+                DropdownMenuItem(
+                    text = { Text(t("Open in browser", "ブラウザで開く")) },
+                    onClick = { showMenu = false; openExternally() }
+                )
             }
         }
         if (progress in 1..99 && !showText) LinearProgressIndicator(
