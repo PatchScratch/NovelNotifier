@@ -197,10 +197,11 @@ button on their page (all three sites). Art is generated from the title,
 genre and synopsis in light-novel cover style — with the title and author
 rendered as cover typography that matches the artwork — and stored exactly
 like a downloaded cover, so grids, backups and transfers treat it
-identically. Typical image models run **~$0.02–0.05 per cover** (default
-Nano Banana 2.1, ~$0.04, chosen for lighter content filtering — Seedream
-rejected suggestive synopses — and best in-image typography); the prompt is
-yours to customise. Series info
+identically. Typical cost is **~$0.02 per cover** (default Seedream 5
+Flash, $0.018); when Seedream refuses a synopsis through content
+moderation, generation automatically retries once on Nano Banana 2.1
+(~$0.04), which passes suggestive material and renders the title/author
+typography better. The prompt is yours to customise. Series info
 (synopses, tags) translates for free on-device via ML Kit — see Settings.
 
 ## Roadmap

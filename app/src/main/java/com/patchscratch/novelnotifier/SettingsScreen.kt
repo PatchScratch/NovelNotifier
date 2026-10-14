@@ -471,8 +471,8 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth()
         )
         Text(
-            t("Model used by “Generate cover (AI)” on a series page. Only appears for series without a site cover. Typical OpenRouter image models run about $0.02–0.05 per cover.",
-                "シリーズ画面の「カバーを生成（AI）」で使うモデルです。サイトカバーのないシリーズにのみ表示されます。OpenRouterの画像モデルは通常1枚約$0.02–0.05です。"),
+            t("Model used by “Generate cover (AI)” on a series page. Only appears for series without a site cover. If this model refuses a cover through content moderation, a more tolerant fallback model (Nano Banana 2.1) retries automatically. Typical cost $0.02–0.05 per cover.",
+                "シリーズ画面の「カバーを生成（AI）」で使うモデルです。サイトカバーのないシリーズにのみ表示されます。このモデルが表紙を規制で拒否した場合、より寛容なフォールバックモデル（Nano Banana 2.1）が自動で再試行します。通常1枚約$0.02–0.05です。"),
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
         )

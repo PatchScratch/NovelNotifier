@@ -3,6 +3,7 @@ package com.patchscratch.novelnotifier
 import java.util.Base64
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -107,5 +108,37 @@ class CoverGenTest {
     fun friendlyError_plainNetworkFailureHasFallback() {
         assertEquals("Network request failed", CoverGenClient.friendlyError(""))
         assertTrue(CoverGenClient.friendlyError("java.net.ConnectException").contains("ConnectException"))
+    }
+
+    // --- shouldFallback: when to escalate to FALLBACK_MODEL ---
+
+    @Test
+    fun shouldFallback_moderationRefusalsEscalate() {
+        // The exact live failure from Wayne's phone: Seedream 400.
+        val livePayload = """{"error":{"message":"Seedream blocked this request through content moderation.","code":400,"metadata":{"provider_name":"Seed"}}}"""
+        assertTrue(CoverGenClient.shouldFallback(400, livePayload))
+        assertTrue(CoverGenClient.shouldFallback(400, """{"error":{"message":"Your prompt was flagged by our safety systems."}}"""))
+        assertTrue(CoverGenClient.shouldFallback(400, """{"error":{"message":"request prohibited"}}"""))
+    }
+
+    @Test
+    fun shouldFallback_providerOutagesEscalate() {
+        assertTrue(CoverGenClient.shouldFallback(500, ""))
+        assertTrue(CoverGenClient.shouldFallback(503, "upstream down"))
+    }
+
+    @Test
+    fun shouldFallback_accountAndRequestErrorsDoNotEscalate() {
+        assertFalse(CoverGenClient.shouldFallback(401, "bad key"))      // both models need the same key
+        assertFalse(CoverGenClient.shouldFallback(402, "no credits"))
+        assertFalse(CoverGenClient.shouldFallback(429, "slow down"))
+        assertFalse(CoverGenClient.shouldFallback(400, """{"error":{"message":"Invalid aspect_ratio"}}""")) // our bug, not moderation
+        assertFalse(CoverGenClient.shouldFallback(200, ""))             // malformed success
+    }
+
+    @Test
+    fun modelLadder_seedreamDefault_nanoBananaFallback() {
+        assertEquals("bytedance-seed/seedream-5-0-flash", CoverGenClient.DEFAULT_MODEL)
+        assertEquals("google/gemini-nano-banana-2.1", CoverGenClient.FALLBACK_MODEL)
     }
 }

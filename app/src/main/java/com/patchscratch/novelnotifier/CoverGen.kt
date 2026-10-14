@@ -38,11 +38,13 @@ import java.net.URL
  */
 object CoverGenClient {
 
-    // Default picked for tolerance + typography: Seedream's moderation
-    // hard-rejects suggestive (ecchi) synopses with HTTP 400, while Nano
-    // Banana passes them and renders the in-image title/author lettering
-    // better. ~$0.04 per 1K cover (~2x Seedream flash) — measured 2026-10-14.
-    const val DEFAULT_MODEL = "google/gemini-nano-banana-2.1"
+    // Cover model ladder. Seedream is the cheap default ($0.018/cover) but
+    // its moderation hard-rejects suggestive (ecchi) synopses with a 400;
+    // when it does, generation retries once on Nano Banana, which passes
+    // them (~$0.04) and renders the in-image typography better. Only
+    // definitive refusals escalate — see shouldFallback.
+    const val DEFAULT_MODEL = "bytedance-seed/seedream-5-0-flash"
+    const val FALLBACK_MODEL = "google/gemini-nano-banana-2.1"
 
     // --- request shaping (pure) -----------------------------------------------
 
@@ -143,7 +145,27 @@ object CoverGenClient {
     /** One cover through the provider, with the failure reason on loss. */
     sealed class CoverResult {
         data class Success(val image: ByteArray, val ext: String) : CoverResult()
-        data class Failure(val reason: String) : CoverResult()
+
+        /** [canFallback] marks failures worth retrying on [FALLBACK_MODEL]. */
+        data class Failure(val reason: String, val canFallback: Boolean = false) : CoverResult()
+    }
+
+    /**
+     * Whether a failed attempt should be retried on [FALLBACK_MODEL]: true
+     * only for definitive provider-side trouble — a content-moderation
+     * refusal (Seedream rejects ecchi synopses) or a 5xx outage. Account
+     * problems (key/credits/rate limit) hit both models equally, and
+     * network errors are ambiguous, so those surface to the user instead
+     * of double-billing a second attempt.
+     */
+    fun shouldFallback(status: Int, body: String): Boolean {
+        if (status in 500..599) return true
+        if (status != 400) return false
+        val b = body.lowercase()
+        return listOf(
+            "content moderation", "content policy", "safety system", "prohibited",
+            "flagged", "inappropriate", "sensitive content"
+        ).any { it in b }
     }
 
     /**
@@ -171,26 +193,52 @@ object CoverGenClient {
         }
     }
 
-    /** One cover through the provider; reason rides the Failure. */
+    /**
+     * One cover through the model ladder: the requested model, then
+     * [FALLBACK_MODEL] once if it refused (see [shouldFallback]). When both
+     * fail the reasons are combined so the dialog tells the whole story.
+     */
     suspend fun generate(endpointBase: String, apiKey: String, model: String, prompt: String): CoverResult =
         withContext(Dispatchers.IO) {
-            val raw = try {
-                post("$endpointBase/images", apiKey, requestBody(model, prompt))
-            } catch (e: Exception) {
-                DebugLog.log("COVERGEN", "request failed", e)
-                return@withContext CoverResult.Failure(friendlyError(e.message))
+            val first = attempt(endpointBase, apiKey, model, prompt)
+            if (first !is CoverResult.Failure || !first.canFallback || model == FALLBACK_MODEL) first
+            else {
+                DebugLog.log("COVERGEN", "$model refused (${first.reason.take(120)}); retrying on $FALLBACK_MODEL")
+                when (val second = attempt(endpointBase, apiKey, FALLBACK_MODEL, prompt)) {
+                    is CoverResult.Success -> second
+                    is CoverResult.Failure -> CoverResult.Failure(
+                        ("${first.reason} — fallback $FALLBACK_MODEL also failed: ${second.reason}").take(320),
+                        canFallback = false
+                    )
+                }
             }
-            val parsed = parseReply(raw)
-            if (parsed == null) {
-                DebugLog.log("COVERGEN", "no image in reply: ${raw.take(160)}")
-                return@withContext CoverResult.Failure(
-                    friendlyError(raw.ifBlank { "Provider sent no image" })
-                )
-            }
-            val cost = JSONObject(raw).optJSONObject("usage")?.optDouble("cost") ?: -1.0
-            DebugLog.log("COVERGEN", "image ok (${parsed.first.size}B, cost=$cost)")
-            CoverResult.Success(parsed.first, parsed.second)
         }
+
+    private fun attempt(endpointBase: String, apiKey: String, model: String, prompt: String): CoverResult {
+        val raw = try {
+            post("$endpointBase/images", apiKey, requestBody(model, prompt))
+        } catch (e: HttpError) {
+            DebugLog.log("COVERGEN", "HTTP ${e.status} via $model: ${e.body.take(160)}")
+            return CoverResult.Failure(friendlyError(e.message), shouldFallback(e.status, e.body))
+        } catch (e: Exception) {
+            DebugLog.log("COVERGEN", "request failed via $model", e)
+            return CoverResult.Failure(friendlyError(e.message))
+        }
+        val parsed = parseReply(raw)
+        if (parsed == null) {
+            DebugLog.log("COVERGEN", "no image in reply via $model: ${raw.take(160)}")
+            return CoverResult.Failure(
+                friendlyError(raw.ifBlank { "Provider sent no image" })
+            )
+        }
+        val cost = JSONObject(raw).optJSONObject("usage")?.optDouble("cost") ?: -1.0
+        DebugLog.log("COVERGEN", "image ok via $model (${parsed.first.size}B, cost=$cost)")
+        return CoverResult.Success(parsed.first, parsed.second)
+    }
+
+    /** HTTP failure carrying status + body so callers can classify it. */
+    private class HttpError(val status: Int, val body: String) :
+        java.io.IOException("covergen HTTP $status: ${body.take(200)}")
 
     private fun post(url: String, apiKey: String, body: String): String {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -208,7 +256,7 @@ object CoverGenClient {
         val stream = if (status in 200..299) conn.inputStream else conn.errorStream
         val raw = stream?.bufferedReader()?.use { it.readText() } ?: ""
         conn.disconnect()
-        if (status !in 200..299) throw java.io.IOException("covergen HTTP $status: ${raw.take(200)}")
+        if (status !in 200..299) throw HttpError(status, raw)
         return raw
     }
 }
