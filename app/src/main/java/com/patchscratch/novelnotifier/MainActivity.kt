@@ -455,9 +455,13 @@ fun NovelApp(
             syosetuCategories = syosetu.categories,
             onBack = { router.pop() },
             onEditCategories = {
+                // No standalone editor URL exists (verified the hard way:
+                // /favnovelmain/editcategory/ 404s with a live session).
+                // Per Syosetu's help, category names are edited from the
+                // 「カテゴリ名編集」 control at the top of the bookmark list.
                 router.push(
                     Route.EditLists(
-                        url = "https://syosetu.com/favnovelmain/editcategory/",
+                        url = "https://syosetu.com/favnovelmain/list/",
                         title = t("Edit 分類", "分類編集")
                     )
                 )

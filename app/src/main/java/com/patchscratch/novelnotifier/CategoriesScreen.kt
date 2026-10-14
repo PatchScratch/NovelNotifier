@@ -127,13 +127,16 @@ fun CategoriesScreen(
                 )
             }
             // Same affordance as NU's Lists window: edit on the site itself.
+            // There is no standalone editor page — Syosetu's category-name
+            // editing lives behind the 「カテゴリ名編集」 control at the top
+            // of the bookmark list (helpcenter 118: 10 categories, 15 chars).
             TextButton(onClick = onEditCategories) {
                 Text(t("Edit categories on syosetu.com  ↗", "syosetu.comでカテゴリを編集  ↗"))
             }
             Text(
                 t(
-                    "Create, rename or delete 分類 on the site; the next bookmark sync picks up changes.",
-                    "分類の作成・名前変更・削除はサイト上で行います。次回のブックマーク同期で反映されます。"
+                    "Opens your bookmark list — tap 「カテゴリ名編集」 at the top to rename 分類 (up to 10, 15 characters each). The next bookmark sync picks up changes.",
+                    "ブックマーク一覧を開きます — 上部の「カテゴリ名編集」から分類名を変更できます（最大10個、各15文字まで）。次回のブックマーク同期で反映されます。"
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(bottom = 8.dp)
