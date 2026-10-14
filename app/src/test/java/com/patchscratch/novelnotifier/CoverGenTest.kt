@@ -82,4 +82,30 @@ class CoverGenTest {
         val blank = JSONObject().put("data", org.json.JSONArray().put(JSONObject().put("b64_json", ""))).toString()
         assertNull(CoverGenClient.parseReply(blank))
     }
+
+    // --- friendlyError: the user-facing failure reason (Wayne's oversight
+    // report 2026-10-14: cover failures showed no reason) ---
+
+    @Test
+    fun friendlyError_surfacesProviderModerationMessage() {
+        // The exact live failure from Wayne's phone: Seedream 400.
+        val reason = CoverGenClient.friendlyError(
+            """covergen HTTP 400: {"error":{"message":"Seedream blocked this request through content moderation.","code":400,"metadata":{"provider_name":"Seed"}}}"""
+        )
+        assertTrue(reason.contains("Seedream blocked this request through content moderation"))
+    }
+
+    @Test
+    fun friendlyError_classifiesActionableCodes() {
+        assertTrue(CoverGenClient.friendlyError("covergen HTTP 401: {}").contains("API key rejected"))
+        assertTrue(CoverGenClient.friendlyError("covergen HTTP 402: no credits").contains("out of credits"))
+        assertTrue(CoverGenClient.friendlyError("covergen HTTP 429: slow down").contains("Rate limited"))
+        assertTrue(CoverGenClient.friendlyError("covergen HTTP 503: upstream down").contains("Provider error"))
+    }
+
+    @Test
+    fun friendlyError_plainNetworkFailureHasFallback() {
+        assertEquals("Network request failed", CoverGenClient.friendlyError(""))
+        assertTrue(CoverGenClient.friendlyError("java.net.ConnectException").contains("ConnectException"))
+    }
 }

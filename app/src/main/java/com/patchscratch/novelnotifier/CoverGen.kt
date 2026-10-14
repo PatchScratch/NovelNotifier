@@ -136,22 +136,56 @@ object CoverGenClient {
         }
     }
 
-    /** One cover through the provider; null = failure. */
-    suspend fun generate(endpointBase: String, apiKey: String, model: String, prompt: String): Pair<ByteArray, String>? =
+    /** One cover through the provider, with the failure reason on loss. */
+    sealed class CoverResult {
+        data class Success(val image: ByteArray, val ext: String) : CoverResult()
+        data class Failure(val reason: String) : CoverResult()
+    }
+
+    /**
+     * Human-readable failure reason from a provider error. Providers put a
+     * JSON body with error.message in HTTP failures (e.g. Seedream's
+     * content-moderation rejection) — surface that text, classified when
+     * the status code says something the user can act on.
+     */
+    fun friendlyError(raw: String?): String {
+        val msg = raw.orEmpty()
+        val providerMsg = try {
+            val start = msg.indexOf('{')
+            if (start >= 0) JSONObject(msg.substring(start)).optJSONObject("error")?.optString("message") else null
+        } catch (_: Exception) {
+            null
+        }
+        val detail = (providerMsg ?: msg).replace(Regex("\\s+"), " ").trim().take(160)
+        val code = Regex("HTTP (\\d{3})").find(msg)?.groupValues?.get(1)?.toIntOrNull()
+        return when (code) {
+            401, 403 -> "API key rejected (check Settings) — $detail"
+            402 -> "Provider account out of credits — $detail"
+            429 -> "Rate limited — try again shortly. $detail"
+            in 500..599 -> "Provider error — try again later. $detail"
+            else -> detail.ifBlank { "Network request failed" }
+        }
+    }
+
+    /** One cover through the provider; reason rides the Failure. */
+    suspend fun generate(endpointBase: String, apiKey: String, model: String, prompt: String): CoverResult =
         withContext(Dispatchers.IO) {
             val raw = try {
                 post("$endpointBase/images", apiKey, requestBody(model, prompt))
             } catch (e: Exception) {
                 DebugLog.log("COVERGEN", "request failed", e)
-                null
-            } ?: return@withContext null
-            val parsed = parseReply(raw)
-            if (parsed == null) DebugLog.log("COVERGEN", "no image in reply: ${raw.take(160)}")
-            else {
-                val cost = JSONObject(raw).optJSONObject("usage")?.optDouble("cost") ?: -1.0
-                DebugLog.log("COVERGEN", "image ok (${parsed.first.size}B, cost=$cost)")
+                return@withContext CoverResult.Failure(friendlyError(e.message))
             }
-            parsed
+            val parsed = parseReply(raw)
+            if (parsed == null) {
+                DebugLog.log("COVERGEN", "no image in reply: ${raw.take(160)}")
+                return@withContext CoverResult.Failure(
+                    friendlyError(raw.ifBlank { "Provider sent no image" })
+                )
+            }
+            val cost = JSONObject(raw).optJSONObject("usage")?.optDouble("cost") ?: -1.0
+            DebugLog.log("COVERGEN", "image ok (${parsed.first.size}B, cost=$cost)")
+            CoverResult.Success(parsed.first, parsed.second)
         }
 
     private fun post(url: String, apiKey: String, body: String): String {
@@ -196,43 +230,54 @@ fun GenerateCoverButton(
     if (apiKey.isBlank()) return  // feature appears once the AI key exists
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
-    var failed by remember { mutableStateOf(false) }
+    var failReason by remember { mutableStateOf<String?>(null) }
+
+    fun run() {
+        busy = true; failReason = null
+        scope.launch {
+            val model = prefs.getString("xlate_cover_model", CoverGenClient.DEFAULT_MODEL).orEmpty()
+                .ifBlank { CoverGenClient.DEFAULT_MODEL }
+            when (val result = CoverGenClient.generate(
+                prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
+                apiKey, model,
+                CoverGenClient.promptFor(
+                    title, author, genre, synopsis,
+                    prefs.getString("xlate_cover_prompt", "").orEmpty()
+                )
+            )) {
+                is CoverGenClient.CoverResult.Success -> {
+                    CoverStore.saveGenerated(context, seriesUrl, result.image, result.ext)
+                    onGenerated()
+                }
+                is CoverGenClient.CoverResult.Failure ->
+                    failReason = result.reason
+            }
+            busy = false
+        }
+    }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         TextButton(
             enabled = !busy,
-            onClick = {
-                busy = true; failed = false
-                scope.launch {
-                    val model = prefs.getString("xlate_cover_model", CoverGenClient.DEFAULT_MODEL).orEmpty()
-                        .ifBlank { CoverGenClient.DEFAULT_MODEL }
-                    val result = CoverGenClient.generate(
-                        prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
-                        apiKey, model,
-                        CoverGenClient.promptFor(
-                            title, author, genre, synopsis,
-                            prefs.getString("xlate_cover_prompt", "").orEmpty()
-                        )
-                    )
-                    busy = false
-                    if (result == null) {
-                        failed = true
-                    } else {
-                        CoverStore.saveGenerated(context, seriesUrl, result.first, result.second)
-                        onGenerated()
-                    }
-                }
-            }
+            onClick = { run() }
         ) {
             Text(
                 when {
                     busy -> t("Generating cover…", "カバー生成中…")
-                    failed -> t("Cover failed — retry (AI)", "カバー生成失敗 — 再試行（AI）")
+                    failReason != null -> t("Cover failed — retry (AI)", "カバー生成失敗 — 再試行（AI）")
                     CoverStore.isGenerated(context, seriesUrl) -> t("Regenerate cover (AI)", "カバーを再生成（AI）")
                     else -> t("Generate cover (AI)", "カバーを生成（AI）")
                 }
             )
         }
         if (busy) CircularProgressIndicator(modifier = Modifier.padding(start = 8.dp).size(18.dp))
+    }
+    failReason?.let { reason ->
+        ErrorDialog(
+            title = t("Cover generation failed", "カバー生成に失敗しました"),
+            message = reason,
+            onRetry = { run() },
+            onDismiss = { failReason = null }
+        )
     }
 }

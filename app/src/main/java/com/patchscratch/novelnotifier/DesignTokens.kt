@@ -39,3 +39,39 @@ object Touch {
     val minTarget = 48.dp
     val iconButton = 40.dp  // visual size (ripple exceeds to 48dp)
 }
+
+/**
+ * Standard failure dialog (Wayne's preference, 2026-10-14: popups over
+ * inline error text, to keep the layout clean). Shows the provider's
+ * reason verbatim; optional Retry re-runs the failed action.
+ */
+@androidx.compose.runtime.Composable
+fun ErrorDialog(
+    title: String,
+    message: String,
+    onRetry: (() -> Unit)? = null,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { androidx.compose.material3.Text(title) },
+        text = {
+            androidx.compose.material3.Text(
+                message,
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+            )
+        },
+        confirmButton = {
+            onRetry?.let {
+                androidx.compose.material3.TextButton(onClick = it) {
+                    androidx.compose.material3.Text(t("Retry", "再試行"))
+                }
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                androidx.compose.material3.Text(t("Close", "閉じる"))
+            }
+        }
+    )
+}
