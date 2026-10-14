@@ -1000,44 +1000,63 @@ fun ReaderScreen(
                     tonalElevation = 3.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        IconButton(onClick = { TtsController.prev(context) }, modifier = Modifier.size(40.dp)) {
-                            Icon(Icons.Rounded.SkipPrevious, contentDescription = "Previous paragraph")
-                        }
-                        IconButton(onClick = { TtsController.togglePlayPause(context) }, modifier = Modifier.size(44.dp)) {
-                            if (ttsState.state == TtsController.State.PLAYING) {
-                                Icon(Icons.Rounded.Pause, contentDescription = "Pause",
-                                    modifier = Modifier.size(28.dp))
-                            } else {
-                                Icon(Icons.Rounded.PlayArrow, contentDescription = "Play",
-                                    modifier = Modifier.size(28.dp))
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        // Main control row — @Voice pattern: play/pause center-dominant
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                        ) {
+                            IconButton(onClick = { TtsController.prev(context) }) {
+                                Icon(Icons.Rounded.SkipPrevious, contentDescription = "Previous paragraph")
+                            }
+                            // Play/Pause — FilledIconButton for visual dominance
+                            // Dominant play/pause — filled circle (@Voice pattern)
+                            Surface(
+                                onClick = { TtsController.togglePlayPause(context) },
+                                shape = androidx.compose.foundation.shape.CircleShape,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 12.dp).size(52.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    if (ttsState.state == TtsController.State.PLAYING) {
+                                        Icon(Icons.Rounded.Pause, contentDescription = "Pause",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(32.dp))
+                                    } else {
+                                        Icon(Icons.Rounded.PlayArrow, contentDescription = "Play",
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(32.dp))
+                                    }
+                                }
+                            }
+                            IconButton(onClick = { TtsController.next(context) }) {
+                                Icon(Icons.Rounded.SkipNext, contentDescription = "Next paragraph")
+                            }
+                            Spacer(modifier = Modifier.weight(1f))
+                            // Progress + speed in a compact row
+                            Text(
+                                "${ttsState.paragraph + 1} / ${ttsState.total}",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            // Speed: cycles presets
+                            val speedPresets = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+                            TextButton(onClick = {
+                                val idx = speedPresets.indexOfFirst { kotlin.math.abs(it - ttsState.speed) < 0.01f }
+                                val nextSp = speedPresets[(idx + 1) % speedPresets.size]
+                                TtsController.setSpeed(context, nextSp)
+                            }) {
+                                Text("${ttsState.speed}x", style = MaterialTheme.typography.labelMedium)
+                            }
+                            IconButton(onClick = { TtsController.stop() }) {
+                                Icon(Icons.Rounded.Close, contentDescription = "Stop",
+                                    tint = MaterialTheme.colorScheme.error)
                             }
                         }
-                        IconButton(onClick = { TtsController.next(context) }, modifier = Modifier.size(40.dp)) {
-                            Icon(Icons.Rounded.SkipNext, contentDescription = "Next paragraph")
-                        }
-                        Text(
-                            "${ttsState.paragraph + 1}/${ttsState.total}",
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(horizontal = 4.dp)
+                        // Thin progress bar
+                        LinearProgressIndicator(
+                            progress = { if (ttsState.total > 0) (ttsState.paragraph + 1f) / ttsState.total else 0f },
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                         )
-                        Spacer(modifier = Modifier.weight(1f))
-                        val speedPresets = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-                        TextButton(onClick = {
-                            val idx = speedPresets.indexOfFirst { kotlin.math.abs(it - ttsState.speed) < 0.01f }
-                            val nextSp = speedPresets[(idx + 1) % speedPresets.size]
-                            TtsController.setSpeed(context, nextSp)
-                        }) {
-                            Text("${ttsState.speed}x", style = MaterialTheme.typography.labelMedium)
-                        }
-                        IconButton(onClick = { TtsController.stop() }, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.Rounded.Close, contentDescription = "Stop speaking", tint = MaterialTheme.colorScheme.error)
-                        }
                     }
                 }
             }
