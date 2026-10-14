@@ -460,8 +460,10 @@ data class SyosetuAddBookmarkForm(
 )
 
 fun parseSyosetuAddBookmarkForm(html: String): SyosetuAddBookmarkForm? {
-    val url = Regex("""class="js-bookmark_url" value="([^"]+)"""").find(html)?.groupValues?.get(1)
-        ?: Regex("""value="([^"]+)" class="js-bookmark_url"""").find(html)?.groupValues?.get(1)
+    // Attribute order/whitespace varies across site revisions — match
+    // either direction with anything (but ">") between.
+    val url = Regex("""class="js-bookmark_url"[^>]*value="([^"]+)"""").find(html)?.groupValues?.get(1)
+        ?: Regex("""value="([^"]+)"[^>]*class="js-bookmark_url"""").find(html)?.groupValues?.get(1)
         ?: return null
     val cats = buildList {
         val selStart = html.indexOf("js-category_select")
