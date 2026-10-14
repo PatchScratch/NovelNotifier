@@ -11,6 +11,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
@@ -56,11 +58,21 @@ object SiteClient {
         @Volatile var processing = false
         @Volatile var lastRequestAt = 0L
         @Volatile var cloudflareUntil = 0L
+        @Volatile var sessionActive = false
         var webView: WebView? = null      // lazy, main-thread access only
     }
 
     internal val sites = Site.entries.associateWith { SiteState() }
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Non-null when a site's Cloudflare block is persistent (repeated within
+     * the cooldown window) and needs the USER to solve the challenge. The
+     * root-level ChallengeOverlay collects this; it clears via
+     * [clearCloudflare] once the user passes the check.
+     */
+    private val _cfNeeded = MutableStateFlow<Site?>(null)
+    val cfNeeded: StateFlow<Site?> = _cfNeeded
 
     // pacing (from the house rules in AGENTS.md)
     private const val STANDARD_GAP_MS = 10_000L
@@ -80,24 +92,42 @@ object SiteClient {
         pump(site)
     }
 
-    /** True when the site has pending or in-flight requests. */
+    /** True when the site has pending or in-flight requests or an open session. */
     fun isBusy(site: Site): Boolean {
         val state = sites[site] ?: return false
-        return state.processing || state.queue.isNotEmpty()
+        return state.processing || state.sessionActive || state.queue.isNotEmpty()
     }
 
     /** Cloudflare encountered — apply escalating cooldown. */
     fun reportCloudflare(site: Site) {
         val state = sites[site] ?: return
         val now = System.currentTimeMillis()
-        val cooldown = if (now - state.cloudflareUntil < 60_000) {
+        val repeat = now - state.cloudflareUntil < 60_000
+        val cooldown = if (repeat) {
             // Repeat CF within a minute → escalate
             CF_GAP_MS * 3   // 60s
         } else {
             CF_GAP_MS       // 20s
         }
         state.cloudflareUntil = now + cooldown
+        // A repeat means pacing alone won't clear it — surface the challenge.
+        if (repeat && _cfNeeded.value == null) {
+            _cfNeeded.value = site
+            DebugLog.log("SITE", "persistent Cloudflare on ${site.name} — challenge needed")
+        }
         DebugLog.log("SITE", "Cloudflare on ${site.name}, cooldown ${cooldown / 1000}s")
+    }
+
+    /**
+     * The user passed the Cloudflare challenge (detected by the root
+     * ChallengeOverlay) — drop the cooldown so the queue resumes immediately
+     * and clear the challenge flag.
+     */
+    fun clearCloudflare(site: Site) {
+        val state = sites[site] ?: return
+        state.cloudflareUntil = 0L
+        if (_cfNeeded.value == site) _cfNeeded.value = null
+        DebugLog.log("SITE", "Cloudflare cleared for ${site.name}")
     }
 
     // --- queue pump ---------------------------------------------------------
@@ -105,6 +135,9 @@ object SiteClient {
     private fun pump(site: Site) {
         val state = sites[site] ?: return
         if (state.processing) return
+        // A Session owns the WebView exclusively — leave the queued requests
+        // untouched; close() pumps again to resume.
+        if (state.sessionActive) return
         val next = state.queue.poll() ?: return
 
         val now = System.currentTimeMillis()
@@ -136,6 +169,17 @@ object SiteClient {
 
     // --- WebView execution -----------------------------------------------------
 
+    // Title heuristics: the shared helper plus the literal "cloudflare"
+    // the older inline check used to catch.
+    private fun isCfTitle(t: String) =
+        isCloudflareTitle(t) || t.contains("cloudflare", ignoreCase = true)
+
+    // One round-trip when no custom JS is requested: CF probe, then body
+    // HTML. CF_DETECT_JS ends with a top-level `return 'CF'`, so it must
+    // sit inside this wrapper's function scope to be valid JS.
+    internal val PROBE_AND_EXTRACT_JS =
+        "(function(){\n$CF_DETECT_JS\nreturn (document.body ? document.body.innerHTML : '');\n})()"
+
     private fun execute(site: Site, request: ScrapeRequest, done: (ScrapeRequest.Result) -> Unit) {
         mainHandler.post {
             val context = appContext ?: run {
@@ -150,25 +194,23 @@ object SiteClient {
                     if (url == null || view == null) return
                     DebugLog.log("SITE", "page finished: $url")
 
-                    // Cloudflare detection (same logic as Parsers.kt)
+                    // Cloudflare detection: title/URL heuristics first, then
+                    // the content probe (custom payloads embed CF_DETECT_JS
+                    // and return 'CF' themselves).
                     view.evaluateJavascript("document.title") { title ->
                         val t = title?.trim('"') ?: ""
-                        if (t.contains("Cloudflare", ignoreCase = true) ||
-                            t.contains("Attention Required", ignoreCase = true)) {
+                        if (isCfTitle(t) || isCloudflareUrl(url)) {
                             reportCloudflare(site)
                             deferred.complete("")
                             return@evaluateJavascript
                         }
-                        // Normal page — run optional JS then extract
-                        if (request.js != null) {
-                            view.evaluateJavascript(request.js) { jsResult ->
+                        val runJs = request.js ?: PROBE_AND_EXTRACT_JS
+                        view.evaluateJavascript(runJs) { jsResult ->
+                            if (unwrapJsResult(jsResult) == "CF") {
+                                reportCloudflare(site)
+                                deferred.complete("")
+                            } else {
                                 deferred.complete(jsResult ?: "")
-                            }
-                        } else {
-                            view.evaluateJavascript(
-                                "(document.body ? document.body.innerHTML : '')"
-                            ) { html ->
-                                deferred.complete(html ?: "")
                             }
                         }
                     }
@@ -213,7 +255,10 @@ object SiteClient {
         val webView = WebView(context.applicationContext).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            settings.userAgentString = "Mozilla/5.0 (Linux; Android 14) NovelNotifier/1.0"
+            // Same UA the screens use: Cloudflare fingerprints the UA, so
+            // the shared scraper must not differ from what the user solves
+            // the challenge with.
+            settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
         }
@@ -237,6 +282,13 @@ object SiteClient {
      */
     fun openSession(site: Site): Session {
         val state = sites[site] ?: error("unknown site $site")
+        state.sessionActive = true
+        if (state.processing) {
+            // An in-flight queue request may still complete; its client gets
+            // replaced by the session's first load. Its own timeout still
+            // settles its callback — log it so the overlap is visible.
+            DebugLog.log("SITE", "session opened on ${site.name} while a request is in flight")
+        }
         return Session(site, this)
     }
 
@@ -257,10 +309,14 @@ object SiteClient {
         /** Optional: intercept a URL before load; return the replacement URL or null to allow. */
         var urlInterceptor: ((url: String) -> String?)? = null
 
+        /** The WebView's current URL, or null if none yet (same read the old in-screen scrapers did). */
+        fun currentUrl(): String? = client.sites[site]?.webView?.url
+
         /**
          * Load a URL. [callback] fires with the JS result (or page HTML if
          * [js] is null) when the page finishes. Cloudflare detection is
-         * automatic — the callback receives "CF" if detected.
+         * automatic — the callback receives "CF" if detected (title/URL
+         * heuristics plus the CF_DETECT_JS content probe).
          */
         fun loadUrl(url: String, js: String? = null, callback: (String) -> Unit) {
             if (closed) return
@@ -276,24 +332,22 @@ object SiteClient {
                         // Fire the ToC-harvest observer first
                         onPageLoaded?.invoke(url)
 
-                        // CF detection
+                        // CF detection: title/URL heuristics, then the
+                        // content probe (custom payloads return 'CF' themselves).
                         view.evaluateJavascript("document.title") { title ->
                             val t = title?.trim('"') ?: ""
-                            if (t.contains("Cloudflare", ignoreCase = true) ||
-                                t.contains("Attention Required", ignoreCase = true)) {
+                            if (client.isCfTitle(t) || isCloudflareUrl(url)) {
                                 client.reportCloudflare(site)
                                 callback("CF")
                                 return@evaluateJavascript
                             }
-                            if (js != null) {
-                                view.evaluateJavascript(js) { result ->
+                            val runJs = js ?: client.PROBE_AND_EXTRACT_JS
+                            view.evaluateJavascript(runJs) { result ->
+                                if (unwrapJsResult(result) == "CF") {
+                                    client.reportCloudflare(site)
+                                    callback("CF")
+                                } else {
                                     callback(result ?: "")
-                                }
-                            } else {
-                                view.evaluateJavascript(
-                                    "(document.body ? document.body.innerHTML : '')"
-                                ) { html ->
-                                    callback(html ?: "")
                                 }
                             }
                         }
@@ -338,6 +392,8 @@ object SiteClient {
             closed = true
             onPageLoaded = null
             urlInterceptor = null
+            val state = client.sites[site]
+            state?.sessionActive = false
             // Clear the session's WebViewClient so queue-based loads work again
             val ctx = appContext
             if (ctx != null) {
@@ -346,6 +402,7 @@ object SiteClient {
                 }
             }
             DebugLog.log("SITE", "session closed for ${site.name}")
+            if (state != null && state.queue.isNotEmpty()) client.pump(site)
         }
     }
 

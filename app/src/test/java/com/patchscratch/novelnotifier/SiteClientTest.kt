@@ -51,4 +51,30 @@ class SiteClientTest {
         SiteClient.reportCloudflare(SiteClient.Site.NU)
         SiteClient.reportCloudflare(SiteClient.Site.NU) // escalation path
     }
+
+    @Test
+    fun `persistent cloudflare raises cfNeeded and clearCloudflare resets it`() {
+        SiteClient.clearCloudflare(SiteClient.Site.NU) // isolate from other tests
+        // A single report is treated as transient pacing, not user-actionable.
+        SiteClient.reportCloudflare(SiteClient.Site.NU)
+        assertEquals(null, SiteClient.cfNeeded.value)
+        // A repeat within the escalation window = persistent → challenge.
+        SiteClient.reportCloudflare(SiteClient.Site.NU)
+        assertEquals(SiteClient.Site.NU, SiteClient.cfNeeded.value)
+        SiteClient.clearCloudflare(SiteClient.Site.NU)
+        assertEquals(null, SiteClient.cfNeeded.value)
+    }
+
+    @Test
+    fun `probe and extract script wraps the cf probe in a function scope`() {
+        // CF_DETECT_JS ends with a top-level `return 'CF'` — it is only valid
+        // JS inside the wrapper's function body. Pin the wrapper shape so a
+        // future edit can't silently strand the return outside a function.
+        val js = SiteClient.PROBE_AND_EXTRACT_JS
+        assertTrue(js.startsWith("(function(){"))
+        assertTrue(js.contains("function nuIsCf()"))
+        assertTrue(js.contains("if (nuIsCf()) return 'CF'"))
+        assertTrue(js.contains("return (document.body ? document.body.innerHTML : '')"))
+        assertTrue(js.trimEnd().endsWith("})()"))
+    }
 }
