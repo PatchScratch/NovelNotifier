@@ -1,5 +1,6 @@
 package com.patchscratch.novelnotifier
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -1270,12 +1271,22 @@ fun ReaderScreen(
                             val sleepLeft by TtsController.sleepRemainingMs.collectAsState()
                             var showSleep by remember { mutableStateOf(false) }
                             Box {
+                                // Material moon, not a unicode glyph — Samsung's
+                                // font has no U+23FE (rendered as a tofu box).
                                 TextButton(onClick = { showSleep = true }) {
-                                    Text(
-                                        if (sleepLeft != null) "⏾ ${TtsController.formatSleep(sleepLeft ?: 0)}"
-                                        else "⏾",
-                                        style = MaterialTheme.typography.labelMedium
+                                    Icon(
+                                        Icons.Rounded.Bedtime,
+                                        contentDescription = "Sleep timer",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = if (sleepLeft != null) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurface
                                     )
+                                    if (sleepLeft != null) {
+                                        Text(
+                                            "  " + TtsController.formatSleep(sleepLeft ?: 0),
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
                                 }
                                 DropdownMenu(
                                     expanded = showSleep,

@@ -118,17 +118,17 @@ object TtsMedia {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(TtsController.nowPlayingTitle.ifBlank { "Read aloud" })
             .setContentText(
-                (if (playing) "▶ " else "⏸ ") +
+                (if (playing) "Playing " else "Paused ") +
                     (if (st.total > 0) "${st.paragraph + 1} / ${st.total}" else "")
             )
             .setOngoing(playing)
             .setSilent(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
-            .addAction(0, "⏮", action(ctx, ACTION_PREV, 4))
-            .addAction(0, if (playing) "⏸" else "▶", toggle)
-            .addAction(0, "⏭", next)
-            .addAction(0, "✕", stop)
+            .addAction(0, "Prev", action(ctx, ACTION_PREV, 4))
+            .addAction(0, if (playing) "Pause" else "Play", toggle)
+            .addAction(0, "Next", next)
+            .addAction(0, "Stop", stop)
             .setStyle(
                 androidx.media.app.NotificationCompat.MediaStyle()
                     .setMediaSession(sess.sessionToken)
