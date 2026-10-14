@@ -71,8 +71,10 @@ object SiteClient {
      * root-level ChallengeOverlay collects this; it clears via
      * [clearCloudflare] once the user passes the check.
      */
-    private val _cfNeeded = MutableStateFlow<Site?>(null)
-    val cfNeeded: StateFlow<Site?> = _cfNeeded
+    data class CfChallenge(val site: Site, val url: String)
+
+    private val _cfNeeded = MutableStateFlow<CfChallenge?>(null)
+    val cfNeeded: StateFlow<CfChallenge?> = _cfNeeded
 
     // pacing (from the house rules in AGENTS.md)
     private const val STANDARD_GAP_MS = 10_000L
@@ -99,7 +101,7 @@ object SiteClient {
     }
 
     /** Cloudflare encountered — apply escalating cooldown. */
-    fun reportCloudflare(site: Site) {
+    fun reportCloudflare(site: Site, blockedUrl: String? = null) {
         val state = sites[site] ?: return
         val now = System.currentTimeMillis()
         val repeat = now - state.cloudflareUntil < 60_000
@@ -112,10 +114,16 @@ object SiteClient {
         state.cloudflareUntil = now + cooldown
         // A repeat means pacing alone won't clear it — surface the challenge.
         if (repeat && _cfNeeded.value == null) {
-            _cfNeeded.value = site
+            _cfNeeded.value = CfChallenge(site, blockedUrl ?: site.homeUrl())
             DebugLog.log("SITE", "persistent Cloudflare on ${site.name} — challenge needed")
         }
         DebugLog.log("SITE", "Cloudflare on ${site.name}, cooldown ${cooldown / 1000}s")
+    }
+
+    private fun Site.homeUrl(): String = when (this) {
+        Site.NU -> "https://www.novelupdates.com/"
+        Site.SYOSETU -> "https://syosetu.com/"
+        Site.KAKUYOMU -> "https://kakuyomu.jp/"
     }
 
     /**
@@ -126,7 +134,7 @@ object SiteClient {
     fun clearCloudflare(site: Site) {
         val state = sites[site] ?: return
         state.cloudflareUntil = 0L
-        if (_cfNeeded.value == site) _cfNeeded.value = null
+        if (_cfNeeded.value?.site == site) _cfNeeded.value = null
         DebugLog.log("SITE", "Cloudflare cleared for ${site.name}")
     }
 
@@ -200,14 +208,14 @@ object SiteClient {
                     view.evaluateJavascript("document.title") { title ->
                         val t = title?.trim('"') ?: ""
                         if (isCfTitle(t) || isCloudflareUrl(url)) {
-                            reportCloudflare(site)
+                            reportCloudflare(site, request.url)
                             deferred.complete("")
                             return@evaluateJavascript
                         }
                         val runJs = request.js ?: PROBE_AND_EXTRACT_JS
                         view.evaluateJavascript(runJs) { jsResult ->
                             if (unwrapJsResult(jsResult) == "CF") {
-                                reportCloudflare(site)
+                                reportCloudflare(site, request.url)
                                 deferred.complete("")
                             } else {
                                 deferred.complete(jsResult ?: "")
@@ -337,14 +345,14 @@ object SiteClient {
                         view.evaluateJavascript("document.title") { title ->
                             val t = title?.trim('"') ?: ""
                             if (client.isCfTitle(t) || isCloudflareUrl(url)) {
-                                client.reportCloudflare(site)
+                                client.reportCloudflare(site, url)
                                 callback("CF")
                                 return@evaluateJavascript
                             }
                             val runJs = js ?: client.PROBE_AND_EXTRACT_JS
                             view.evaluateJavascript(runJs) { result ->
                                 if (unwrapJsResult(result) == "CF") {
-                                    client.reportCloudflare(site)
+                                    client.reportCloudflare(site, url)
                                     callback("CF")
                                 } else {
                                     callback(result ?: "")

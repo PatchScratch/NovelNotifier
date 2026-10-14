@@ -16,6 +16,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -185,6 +186,12 @@ fun NovelApp(
         if (cached.isNotBlank() && usableCoverUrl(novel.coverUrl).isBlank()) novel.copy(coverUrl = cached) else novel
     }
 
+    // Persistent Cloudflare → one root-level challenge pane over every
+    // screen (single CF hits are handled by SiteClient's pacing; a repeat
+    // within the cooldown window needs a human).
+    val cfChallenge by SiteClient.cfNeeded.collectAsState()
+
+    androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
     // Only one screen is composed at a time: the top of the router stack.
     when (val route = router.top) {
         Route.XlateFiles -> {
@@ -513,6 +520,15 @@ fun NovelApp(
                 }
             )
         }
+    }
+
+    // The challenge pane rides above whatever screen is showing.
+    cfChallenge?.let { challenge ->
+        ChallengeOverlay(
+            challenge = challenge,
+            onSolved = { SiteClient.clearCloudflare(challenge.site) }
+        )
+    }
     }
 }
 

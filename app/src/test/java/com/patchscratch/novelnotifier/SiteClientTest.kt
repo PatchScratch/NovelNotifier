@@ -56,11 +56,16 @@ class SiteClientTest {
     fun `persistent cloudflare raises cfNeeded and clearCloudflare resets it`() {
         SiteClient.clearCloudflare(SiteClient.Site.NU) // isolate from other tests
         // A single report is treated as transient pacing, not user-actionable.
-        SiteClient.reportCloudflare(SiteClient.Site.NU)
+        SiteClient.reportCloudflare(SiteClient.Site.NU, "https://www.novelupdates.com/reading-list/")
         assertEquals(null, SiteClient.cfNeeded.value)
-        // A repeat within the escalation window = persistent → challenge.
-        SiteClient.reportCloudflare(SiteClient.Site.NU)
-        assertEquals(SiteClient.Site.NU, SiteClient.cfNeeded.value)
+        // A repeat within the escalation window = persistent → challenge,
+        // carrying the blocked URL for the root ChallengeOverlay.
+        SiteClient.reportCloudflare(SiteClient.Site.NU, "https://www.novelupdates.com/reading-list/")
+        assertEquals(SiteClient.Site.NU, SiteClient.cfNeeded.value?.site)
+        assertEquals(
+            "https://www.novelupdates.com/reading-list/",
+            SiteClient.cfNeeded.value?.url
+        )
         SiteClient.clearCloudflare(SiteClient.Site.NU)
         assertEquals(null, SiteClient.cfNeeded.value)
     }
