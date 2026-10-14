@@ -270,6 +270,8 @@ fun NovelApp(
 
         Route.Settings -> SettingsScreen(
             site = app.settingsSite,
+            nsfwUnlocked = app.nsfwUnlocked,
+            onRequestNsfwUnlock = { toggleNsfw() },
             kakuyomuR18 = kakuyomu.r18,
             onKakuyomuR18 = { on -> kakuyomu.updateR18(on) },
             kakuyomuLoggedIn = kakuyomu.loggedIn,
@@ -287,6 +289,8 @@ fun NovelApp(
             onSyosetuR18 = { on -> syosetu.updateR18(on) },
             syosetuSubsites = syosetu.subsites,
             onSyosetuSubsites = { set -> syosetu.updateSubsites(set) },
+            // R18 prefs are remembered but only EFFECTIVE while NSFW mode
+            // is unlocked — SFW hides every R18 surface.
             currentHours = nu.checkHours,
             loginState = nu.loginState,
             syncStatus = app.syncStatus,
@@ -475,7 +479,8 @@ fun NovelApp(
                 },
                 loggedIn = syosetu.loggedIn,
                 bookmarks = syosetu.bookmarks,
-                r18Enabled = syosetu.r18,
+                // R18 remembered prefs only take effect while unlocked.
+                r18Enabled = syosetu.r18 && app.nsfwUnlocked,
                 enabledSubsites = syosetu.subsites,
                 onOpenBookmarks = { cat -> router.push(Route.SyosetuLibrary(cat)) },
                 onOpenCategories = { router.push(Route.Categories) },
@@ -492,7 +497,9 @@ fun NovelApp(
                     kakuyomu.openDetail(work)
                     router.push(Route.KakuyomuDetail(work.id))
                 },
-                r18Enabled = kakuyomu.r18,
+                // R18 remembered prefs only take effect while unlocked
+                // (isSexual rows default-hide otherwise).
+                r18Enabled = kakuyomu.r18 && app.nsfwUnlocked,
                 bookmarks = kakuyomu.bookmarks,
                 categories = kakuyomu.categories,
                 onOpenBookmarks = { catId -> router.push(Route.KakuyomuLibrary(catId)) },

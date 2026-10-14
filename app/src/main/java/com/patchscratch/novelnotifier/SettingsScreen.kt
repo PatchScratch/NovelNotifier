@@ -49,6 +49,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     site: String = "nu",
+    // SFW/NSFW mode: R18 sections need the biometric unlock to appear;
+    // the locked hint row triggers the same prompt as the drawer toggle.
+    nsfwUnlocked: Boolean = false,
+    onRequestNsfwUnlock: () -> Unit = {},
     kakuyomuR18: Boolean = false,
     onKakuyomuR18: (Boolean) -> Unit = {},
     currentUrl: String,
@@ -208,43 +212,47 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall
             )
             var showAgeGate by remember { mutableStateOf(false) }
-            if (showAgeGate) {
-                AlertDialog(
-                    onDismissRequest = { showAgeGate = false },
-                    title = { Text(t("Adult content (18+)", "成人コンテンツ（18禁）")) },
-                    text = {
-                        Text(t(
-                            "Unlike Syosetu's sister site, Kakuyomu mixes R18 works into the same rankings and search. They are hidden here by default; enabling adds an R18 chip in Discover that switches to R18-only browsing, and R18 rows are marked. You confirm you are 18 or older.",
-                            "カクヨムはSyosetuのシスターサイトと異なり、R18作品が同じランキング・検索に混在しています。アプリでは既定で非表示にします。有効にするとDiscoverにR18チップが表示され、R18作品のみの閲覧に切り替えられ、R18行には印が付きます。あなたは18歳以上であることを確認してください。"))
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            onKakuyomuR18(true)
-                            showAgeGate = false
-                        }) { Text(t("I am 18 or older — enable", "18歳以上です — 有効にする")) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showAgeGate = false }) { Text(t("Cancel", "キャンセル")) }
-                    }
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(t("Show R18 works (18+)", "R18作品を表示（18禁）"), style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        t("Hidden by default; the Discover R18 chip appears after enabling.", "既定では非表示。有効にするとDiscoverにR18チップが表示されます。"),
-                        style = MaterialTheme.typography.bodySmall
+            if (nsfwUnlocked) {
+                if (showAgeGate) {
+                    AlertDialog(
+                        onDismissRequest = { showAgeGate = false },
+                        title = { Text(t("Adult content (18+)", "成人コンテンツ（18禁）")) },
+                        text = {
+                            Text(t(
+                                "Unlike Syosetu's sister site, Kakuyomu mixes R18 works into the same rankings and search. They are hidden here by default; enabling adds an R18 chip in Discover that switches to R18-only browsing, and R18 rows are marked. You confirm you are 18 or older.",
+                                "カクヨムはSyosetuのシスターサイトと異なり、R18作品が同じランキング・検索に混在しています。アプリでは既定で非表示にします。有効にするとDiscoverにR18チップが表示され、R18作品のみの閲覧に切り替えられ、R18行には印が付きます。あなたは18歳以上であることを確認してください。"))
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                onKakuyomuR18(true)
+                                showAgeGate = false
+                            }) { Text(t("I am 18 or older — enable", "18歳以上です — 有効にする")) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showAgeGate = false }) { Text(t("Cancel", "キャンセル")) }
+                        }
                     )
                 }
-                Switch(
-                    checked = kakuyomuR18,
-                    onCheckedChange = { checked ->
-                        if (checked) showAgeGate = true else onKakuyomuR18(false)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(t("Show R18 works (18+)", "R18作品を表示（18禁）"), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            t("Hidden by default; the Discover R18 chip appears after enabling.", "既定では非表示。有効にするとDiscoverにR18チップが表示されます。"),
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
-                )
+                    Switch(
+                        checked = kakuyomuR18,
+                        onCheckedChange = { checked ->
+                            if (checked) showAgeGate = true else onKakuyomuR18(false)
+                        }
+                    )
+                }
+            } else {
+                NsfwLockedHint(onClick = onRequestNsfwUnlock)
             }
         } else if (site == "syosetu") {
             Text(text = "Syosetu なろう", style = MaterialTheme.typography.titleMedium)
@@ -252,73 +260,77 @@ fun SettingsScreen(
                 Text(syosetuStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
             }
             var showAgeGate by remember { mutableStateOf(false) }
-            if (showAgeGate) {
-                AlertDialog(
-                    onDismissRequest = { showAgeGate = false },
-                    title = { Text(t("Adult content (18+)", "成人コンテンツ（18禁）")) },
-                    text = {
-                        Text(t(
-                            "novel18.syosetu.com hosts R18 works (Nocturne, Moonlight, Moonlight Ladies). Enabling shows an R18 chip in Discover and routes those novels to the sister site, which shows Syosetu's own age check on first open. You confirm you are 18 or older.",
-                            "novel18.syosetu.com はR18作品（ノクターン・ムーンライト・ムーンライトレディース）を配信しています。有効にするとDiscoverにR18チップが表示され、該当作品はシスターサイト経由で開きます（初回はSyosetu独自の年齢確認が表示されます）。あなたは18歳以上であることを確認してください。"))
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showAgeGate = false; onSyosetuR18(true) }) {
-                            Text(t("I am 18 or older — enable", "18歳以上 — 有効にする"))
+            if (nsfwUnlocked) {
+                if (showAgeGate) {
+                    AlertDialog(
+                        onDismissRequest = { showAgeGate = false },
+                        title = { Text(t("Adult content (18+)", "成人コンテンツ（18禁）")) },
+                        text = {
+                            Text(t(
+                                "novel18.syosetu.com hosts R18 works (Nocturne, Moonlight, Moonlight Ladies). Enabling shows an R18 chip in Discover and routes those novels to the sister site, which shows Syosetu's own age check on first open. You confirm you are 18 or older.",
+                                "novel18.syosetu.com はR18作品（ノクターン・ムーンライト・ムーンライトレディース）を配信しています。有効にするとDiscoverにR18チップが表示され、該当作品はシスターサイト経由で開きます（初回はSyosetu独自の年齢確認が表示されます）。あなたは18歳以上であることを確認してください。"))
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showAgeGate = false; onSyosetuR18(true) }) {
+                                Text(t("I am 18 or older — enable", "18歳以上 — 有効にする"))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showAgeGate = false }) { Text(t("Cancel", "キャンセル")) }
                         }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showAgeGate = false }) { Text(t("Cancel", "キャンセル")) }
-                    }
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        if (!syosetuR18) showAgeGate = true else onSyosetuR18(false)
-                    }
-                    .padding(vertical = 4.dp)
-            ) {
-                Switch(
-                    checked = syosetuR18,
-                    onCheckedChange = { on -> if (on) showAgeGate = true else onSyosetuR18(false) }
-                )
-                Text(t("R18 titles (novel18)", "R18作品（novel18）"),
-                    modifier = Modifier.padding(start = 8.dp))
-            }
-            if (syosetuR18) {
-                Text(
-                    t("Sister sites — disable any you don't read to cut the noise:",
-                       "シスターサイト — 読まないサイトはオフにしてください："),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-                listOf(
-                    1 to t("Nocturne (ノクターン)", "ノクターンノベルズ"),
-                    2 to t("Moonlight (ムーンライト)", "ムーンライトノベルズ"),
-                    3 to t("Moonlight Ladies (レディース)", "ムーンライトレディース")
-                ).forEach { (code, label) ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val next = if (code in syosetuSubsites) syosetuSubsites - code else syosetuSubsites + code
-                                onSyosetuSubsites(next)
-                            }
-                            .padding(start = 12.dp)
-                    ) {
-                        Switch(
-                            checked = code in syosetuSubsites,
-                            onCheckedChange = { on ->
-                                val next = if (on) syosetuSubsites + code else syosetuSubsites - code
-                                onSyosetuSubsites(next)
-                            }
-                        )
-                        Text(label, modifier = Modifier.padding(start = 8.dp))
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            if (!syosetuR18) showAgeGate = true else onSyosetuR18(false)
+                        }
+                        .padding(vertical = 4.dp)
+                ) {
+                    Switch(
+                        checked = syosetuR18,
+                        onCheckedChange = { on -> if (on) showAgeGate = true else onSyosetuR18(false) }
+                    )
+                    Text(t("R18 titles (novel18)", "R18作品（novel18）"),
+                        modifier = Modifier.padding(start = 8.dp))
+                }
+                if (syosetuR18) {
+                    Text(
+                        t("Sister sites — disable any you don't read to cut the noise:",
+                           "シスターサイト — 読まないサイトはオフにしてください："),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    listOf(
+                        1 to t("Nocturne (ノクターン)", "ノクターンノベルズ"),
+                        2 to t("Moonlight (ムーンライト)", "ムーンライトノベルズ"),
+                        3 to t("Moonlight Ladies (レディース)", "ムーンライトレディース")
+                    ).forEach { (code, label) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val next = if (code in syosetuSubsites) syosetuSubsites - code else syosetuSubsites + code
+                                    onSyosetuSubsites(next)
+                                }
+                                .padding(start = 12.dp)
+                        ) {
+                            Switch(
+                                checked = code in syosetuSubsites,
+                                onCheckedChange = { on ->
+                                    val next = if (on) syosetuSubsites + code else syosetuSubsites - code
+                                    onSyosetuSubsites(next)
+                                }
+                            )
+                            Text(label, modifier = Modifier.padding(start = 8.dp))
+                        }
                     }
                 }
+            } else {
+                NsfwLockedHint(onClick = onRequestNsfwUnlock)
             }
             if (syosetuLoggedIn) {
                 Button(
@@ -983,5 +995,26 @@ fun SettingsScreen(
                 .fillMaxWidth()
         ) { Text(t("Save", "保存")) }
         TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text(t("Cancel", "キャンセル")) }
+    }
+}
+
+/** SFW-mode stand-in for an R18 section: invites the biometric unlock. */
+@Composable
+private fun NsfwLockedHint(onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(top = 8.dp, bottom = 4.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(t("Adult content (18+) is locked", "成人コンテンツ（18禁）はロック中"), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                t("Unlock with \"Reveal hidden (18+)\" to change these settings.", "「非表示を表示（18禁）」でロック解除すると設定を変更できます。"),
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Text("🔒")
     }
 }
