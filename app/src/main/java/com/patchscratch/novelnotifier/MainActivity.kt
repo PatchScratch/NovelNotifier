@@ -339,13 +339,32 @@ fun NovelApp(
             onBack = { router.pop() }
         )
 
-        Route.Discover -> DiscoverScreen(
-            onOpenSeries = { found ->
-                nu.openDetail(found)
-                router.replace(Route.NuDetail(found.seriesUrl))
-            },
-            onBack = { router.pop() }
-        )
+        Route.Discover -> when (app.activeSite) {
+            "syosetu" -> SyosetuDiscoverBody(
+                onOpenNovel = { novel ->
+                    syosetu.openDetail(novel)
+                    router.push(Route.SyosetuDetail(novel.url))
+                },
+                r18Enabled = syosetu.r18 && app.nsfwUnlocked,
+                enabledSubsites = syosetu.subsites,
+                onBack = { router.pop() }
+            )
+            "kakuyomu" -> KakuyomuDiscoverBody(
+                onOpenWork = { work ->
+                    kakuyomu.openDetail(work)
+                    router.push(Route.KakuyomuDetail(work.id))
+                },
+                r18Enabled = kakuyomu.r18 && app.nsfwUnlocked,
+                onBack = { router.pop() }
+            )
+            else -> DiscoverScreen(
+                onOpenSeries = { found ->
+                    nu.openDetail(found)
+                    router.replace(Route.NuDetail(found.seriesUrl))
+                },
+                onBack = { router.pop() }
+            )
+        }
 
         is Route.KakuyomuDetail -> {
             val work = kakuyomu.selectedWork
@@ -498,6 +517,7 @@ fun NovelApp(
                     syosetu.openDetail(novel)
                     router.push(Route.SyosetuDetail(novel.url))
                 },
+                onOpenDiscover = { router.push(Route.Discover) },
                 loggedIn = syosetu.loggedIn,
                 bookmarks = syosetu.bookmarks,
                 // R18 remembered prefs only take effect while unlocked.
@@ -507,7 +527,14 @@ fun NovelApp(
                 onOpenCategories = { router.push(Route.Categories("syosetu")) },
                 nsfwUnlocked = app.nsfwUnlocked,
                 onToggleNsfw = { toggleNsfw() },
-                hiddenCategories = app.hiddenSyosetuCats
+                hiddenCategories = app.hiddenSyosetuCats,
+                categories = syosetu.categories,
+                onChangeCategory = { bm, catId ->
+                    if (bm.userfavId.isNotBlank()) syosetu.moveBookmark(bm.userfavId, catId)
+                },
+                onRemoveBookmark = { bm ->
+                    if (bm.userfavId.isNotBlank()) syosetu.removeBookmark(bm.userfavId)
+                }
             )
 
             "kakuyomu" -> KakuyomuHome(
@@ -518,6 +545,7 @@ fun NovelApp(
                     kakuyomu.openDetail(work)
                     router.push(Route.KakuyomuDetail(work.id))
                 },
+                onOpenDiscover = { router.push(Route.Discover) },
                 // R18 remembered prefs only take effect while unlocked
                 // (isSexual rows default-hide otherwise).
                 r18Enabled = kakuyomu.r18 && app.nsfwUnlocked,
@@ -527,7 +555,13 @@ fun NovelApp(
                 onOpenCategories = { router.push(Route.Categories("kakuyomu")) },
                 loggedIn = kakuyomu.loggedIn,
                 nsfwUnlocked = app.nsfwUnlocked,
-                onToggleNsfw = { toggleNsfw() }
+                onToggleNsfw = { toggleNsfw() },
+                onMove = { workId, catId -> kakuyomu.moveToCategory(workId, catId) },
+                onCreateAndMove = { workId, name ->
+                    kakuyomu.addCategory(name)
+                    val created = kakuyomu.categories.cats.lastOrNull()
+                    if (created != null) kakuyomu.moveToCategory(workId, created.id)
+                }
             )
 
             else -> {

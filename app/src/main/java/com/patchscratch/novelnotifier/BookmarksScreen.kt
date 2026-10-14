@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,8 +35,10 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 
 /**
  * Bookmark library screens, NU-home style: a dynamic-cover grid (columns
@@ -47,7 +50,7 @@ import androidx.compose.material3.Icon
  */
 
 /** One row/tile of either flavor, normalized for the shared body. */
-private data class BookmarkRow(
+data class BookmarkRow(
     val title: String,
     val subtitle: String,
     val coverUrl: String,
@@ -76,92 +79,156 @@ private fun BookmarksBody(
                 modifier = Modifier.weight(1f),
                 maxLines = 1
             )
-            TextButton(onClick = {
+            LayoutToggle(layoutMode = layoutMode, onFlip = {
                 layoutMode = if (layoutMode == LAYOUT_GRID) LAYOUT_LIST else LAYOUT_GRID
                 saveLayoutMode(context.getSharedPreferences("novel_prefs", 0), layoutMode)
-            }) { if (layoutMode == LAYOUT_GRID) {
-                Icon(Icons.Rounded.ViewList, contentDescription = "Switch to list")
-            } else {
-                Icon(Icons.Rounded.GridView, contentDescription = "Switch to grid")
-            } }
+            })
         }
-        if (rows.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(emptyMessage, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(32.dp))
+        BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+    }
+}
+
+/**
+ * The NU-shaped HOME panel (2026-10-15 site-consistency pass): hamburger +
+ * search line + layout toggle above the shared grid/list. The caller owns
+ * filtering (category, search, SFW-hidden) — this renders what it gets.
+ */
+@Composable
+fun BookmarkLibraryBody(
+    heading: String,
+    rows: List<BookmarkRow>,
+    emptyMessage: String,
+    searchQuery: String,
+    onSearchChange: (String) -> Unit,
+    onOpenDrawer: () -> Unit,
+    onManageRow: ((BookmarkRow) -> Unit)? = null
+) {
+    val context = LocalContext.current
+    var layoutMode by remember { mutableStateOf(loadLayoutMode(context.getSharedPreferences("novel_prefs", 0))) }
+    Column(modifier = Modifier.fillMaxSize().screenInsets()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        ) {
+            IconButton(onClick = onOpenDrawer) {
+                Icon(Icons.Rounded.Menu, contentDescription = "Menu")
             }
-        } else if (layoutMode == LAYOUT_GRID) {
-            val widthDp = with(LocalDensity.current) {
-                LocalWindowInfo.current.containerSize.width.toDp()
-            }.value.toInt()
-            val columns = when {
-                widthDp >= 840 -> 5
-                widthDp >= 600 -> 4
-                else -> 3
-            }
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(columns),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(rows, key = { it.seriesUrl }) { row ->
-                    Column(
-                        modifier = Modifier.combinedClickable(
-                            onClick = { row.open() },
-                            onLongClick = { onManageRow?.invoke(row) }
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = onSearchChange,
+                label = { Text(t("Search this list", "このリストを検索")) },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            LayoutToggle(layoutMode = layoutMode, onFlip = {
+                layoutMode = if (layoutMode == LAYOUT_GRID) LAYOUT_LIST else LAYOUT_GRID
+                saveLayoutMode(context.getSharedPreferences("novel_prefs", 0), layoutMode)
+            })
+        }
+        Text(
+            heading,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            maxLines = 1
+        )
+        BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+    }
+}
+
+@Composable
+private fun LayoutToggle(layoutMode: String, onFlip: () -> Unit) {
+    TextButton(onClick = onFlip) {
+        if (layoutMode == LAYOUT_GRID) {
+            Icon(Icons.Rounded.ViewList, contentDescription = "Switch to list")
+        } else {
+            Icon(Icons.Rounded.GridView, contentDescription = "Switch to grid")
+        }
+    }
+}
+
+@Composable
+private fun BookmarkRowsLayout(
+    rows: List<BookmarkRow>,
+    emptyMessage: String,
+    onManageRow: ((BookmarkRow) -> Unit)?,
+    layoutMode: String
+) {
+    if (rows.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(emptyMessage, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(32.dp))
+        }
+    } else if (layoutMode == LAYOUT_GRID) {
+        val widthDp = with(LocalDensity.current) {
+            LocalWindowInfo.current.containerSize.width.toDp()
+        }.value.toInt()
+        val columns = when {
+            widthDp >= 840 -> 5
+            widthDp >= 600 -> 4
+            else -> 3
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(rows, key = { it.seriesUrl }) { row ->
+                Column(
+                    modifier = Modifier.combinedClickable(
+                        onClick = { row.open() },
+                        onLongClick = { onManageRow?.invoke(row) }
+                    )
+                ) {
+                    CoverThumb(
+                        url = row.coverUrl,
+                        seriesUrl = row.seriesUrl,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(3f / 4f)
+                    )
+                    Text(
+                        row.title,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    if (row.subtitle.isNotBlank()) {
+                        Text(
+                            row.subtitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1
                         )
+                    }
+                }
+            }
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            items(rows.size) { index ->
+                val row = rows[index]
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(onClick = { row.open() }, onLongClick = { onManageRow?.invoke(row) })
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         CoverThumb(
                             url = row.coverUrl,
                             seriesUrl = row.seriesUrl,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(3f / 4f)
+                            modifier = Modifier.size(56.dp)
                         )
-                        Text(
-                            row.title,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                        if (row.subtitle.isNotBlank()) {
-                            Text(
-                                row.subtitle,
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1
-                            )
-                        }
-                    }
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(rows.size) { index ->
-                    val row = rows[index]
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .combinedClickable(onClick = { row.open() }, onLongClick = { onManageRow?.invoke(row) })
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CoverThumb(
-                                url = row.coverUrl,
-                                seriesUrl = row.seriesUrl,
-                                modifier = Modifier.size(56.dp)
-                            )
-                            Column(modifier = Modifier.padding(start = 12.dp)) {
-                                Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
-                                if (row.subtitle.isNotBlank()) {
-                                    Text(row.subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                                }
+                        Column(modifier = Modifier.padding(start = 12.dp)) {
+                            Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                            if (row.subtitle.isNotBlank()) {
+                                Text(row.subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                             }
                         }
                     }

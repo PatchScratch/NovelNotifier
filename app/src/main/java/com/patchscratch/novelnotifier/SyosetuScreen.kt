@@ -65,6 +65,7 @@ fun SyosetuHome(
     onSwitchSite: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenNovel: (SyosetuNovel) -> Unit,
+    onOpenDiscover: () -> Unit = {},
     loggedIn: Boolean = false,
     bookmarks: List<SyosetuBookmark> = emptyList(),
     r18Enabled: Boolean = false,
@@ -73,12 +74,18 @@ fun SyosetuHome(
     onOpenCategories: () -> Unit = {},
     nsfwUnlocked: Boolean = false,
     onToggleNsfw: () -> Unit = {},
-    hiddenCategories: Set<String> = emptySet()
+    hiddenCategories: Set<String> = emptySet(),
+    categories: List<SyosetuCategory> = emptyList(),
+    onChangeCategory: (SyosetuBookmark, Int) -> Unit = { _, _ -> },
+    onRemoveBookmark: (SyosetuBookmark) -> Unit = {}
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
     )
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // In-place category selection (NU list-switcher parity).
+    var selectedCategory by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
     androidx.compose.material3.ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -93,7 +100,10 @@ fun SyosetuHome(
                 NavigationDrawerItem(
                     label = { Text(t("Discover  ★", "なろう Discover  ★")) },
                     selected = false,
-                    onClick = { scope.launch { drawerState.close() } }
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenDiscover()
+                    }
                 )
                 if (loggedIn && bookmarks.isNotEmpty()) {
                     HorizontalDivider()
@@ -110,21 +120,21 @@ fun SyosetuHome(
                     // bookmark library screen (grid/list, covers) filtered.
                     if (visibleBookmarks.isNotEmpty()) {
                         NavigationDrawerItem(
-                            label = { Text(t("All", "すべて") + " (${visibleBookmarks.size}) ▦") },
-                            selected = false,
+                            label = { Text(t("All", "すべて") + " (${visibleBookmarks.size})") },
+                            selected = selectedCategory.isBlank(),
                             onClick = {
+                                selectedCategory = ""
                                 scope.launch { drawerState.close() }
-                                onOpenBookmarks("")
                             }
                         )
                     }
                     visibleBookmarks.map { it.category }.filter { it.isNotBlank() }.distinct().forEach { cat ->
                         NavigationDrawerItem(
                             label = { Text("$cat (${visibleBookmarks.count { it.category == cat }})") },
-                            selected = false,
+                            selected = selectedCategory == cat,
                             onClick = {
+                                selectedCategory = cat
                                 scope.launch { drawerState.close() }
-                                onOpenBookmarks(cat)
                             }
                         )
                     }
@@ -155,21 +165,84 @@ fun SyosetuHome(
             }
         }
     ) {
-        SyosetuDiscoverBody(
-            onOpenNovel = onOpenNovel,
-            openDrawer = { scope.launch { drawerState.open() } },
-            r18Enabled = r18Enabled,
-            enabledSubsites = enabledSubsites
+        // NU-parity home (Wayne's rule, 2026-10-15): the main panel IS the
+        // library — the selected 分類's series in a searchable grid/list;
+        // rankings/search moved to the Discover route.
+        val visible = NsfwFilter.filterSyosetu(bookmarks, hiddenCategories, nsfwUnlocked)
+            .filter { selectedCategory.isBlank() || it.category == selectedCategory }
+            .filter { searchQuery.isBlank() || it.title.contains(searchQuery, ignoreCase = true) }
+        var managed by remember { mutableStateOf<SyosetuBookmark?>(null) }
+        BookmarkLibraryBody(
+            heading = if (selectedCategory.isBlank()) t("All", "すべて") + " (${visible.size})"
+            else "$selectedCategory (${visible.size})",
+            rows = visible.map { bm ->
+                BookmarkRow(
+                    title = bm.title,
+                    subtitle = bm.category,
+                    coverUrl = "",
+                    seriesUrl = bm.url,
+                    open = { onOpenNovel(hydratedStub(bm)) }
+                )
+            },
+            emptyMessage = if (!loggedIn) t(
+                "Log in from Settings to sync your bookmark library.", "設定からログインするとブックマークを同期します。"
+            ) else t("Nothing here — pick another 分類 or check Discover ★.", "何もありません — 別の分類を選ぶかDiscover ★を確認してください。"),
+            searchQuery = searchQuery,
+            onSearchChange = { searchQuery = it },
+            onOpenDrawer = { scope.launch { drawerState.open() } },
+            onManageRow = { row ->
+                managed = visible.firstOrNull { it.url == row.seriesUrl }
+            }
         )
+        // Long-press management (same dialogs as the library screen).
+        managed?.let { bm ->
+            AlertDialog(
+                onDismissRequest = { managed = null },
+                title = { Text(t("Change category", "カテゴリ変更")) },
+                text = {
+                    Column {
+                        categories.forEach { cat ->
+                            TextButton(onClick = {
+                                onChangeCategory(bm, cat.id)
+                                managed = null
+                            }) {
+                                Text((if (bm.category == cat.name) "✓ " else "") + cat.name + " (${cat.count})")
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    Column {
+                        TextButton(onClick = {
+                            onRemoveBookmark(bm)
+                            managed = null
+                        }) { Text(t("Remove bookmark", "ブックマーク解除"), color = MaterialTheme.colorScheme.error) }
+                        TextButton(onClick = { managed = null }) { Text(t("Close", "閉じる")) }
+                    }
+                }
+            )
+        }
     }
 }
+
+/** Cheap placeholder for a tapped bookmark row; the detail screen
+ *  re-hydrates full metadata from cache/API on open. */
+private fun hydratedStub(bm: SyosetuBookmark): SyosetuNovel = SyosetuNovel(
+    ncode = bm.ncode, title = bm.title, writer = "", story = "",
+    genreCode = 9801, keywords = "", isCompleted = false, isShortStory = false,
+    episodeCount = 0, lastUpdate = bm.updated, points = 0
+)
 
 @Composable
 fun SyosetuDiscoverBody(
     onOpenNovel: (SyosetuNovel) -> Unit,
     openDrawer: () -> Unit = {},
     r18Enabled: Boolean = false,
-    enabledSubsites: Set<Int> = setOf(1, 2, 3)
+    enabledSubsites: Set<Int> = setOf(1, 2, 3),
+    // Non-null in the Discover ROUTE: show a back arrow instead of the
+    // hamburger (there is no drawer there).
+    onBack: (() -> Unit)? = null
 ) {
     var tab by remember { mutableIntStateOf(0) }
     // 0 = Narou (all-ages); 1/2/3 = the enabled sister in the cycle
@@ -235,8 +308,12 @@ fun SyosetuDiscoverBody(
 
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = openDrawer) {
-                Icon(Icons.Rounded.Menu, contentDescription = "Menu")
+            if (onBack != null) {
+                TextButton(onClick = onBack) { Text("‹ " + t("Back", "戻る")) }
+            } else {
+                TextButton(onClick = openDrawer) {
+                    Icon(Icons.Rounded.Menu, contentDescription = "Menu")
+                }
             }
             Text(
                 t("Syosetu Discover", "なろう Discover"),

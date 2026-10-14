@@ -55,6 +55,7 @@ fun KakuyomuHome(
     onSwitchSite: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWork: (KakuyomuWork) -> Unit,
+    onOpenDiscover: () -> Unit = {},
     r18Enabled: Boolean = false,
     bookmarks: List<KakuyomuWork> = emptyList(),
     categories: CategoryState = CategoryState(),
@@ -62,12 +63,17 @@ fun KakuyomuHome(
     onOpenCategories: () -> Unit = {},
     loggedIn: Boolean = false,
     nsfwUnlocked: Boolean = false,
-    onToggleNsfw: () -> Unit = {}
+    onToggleNsfw: () -> Unit = {},
+    onMove: (workId: String, catId: String?) -> Unit = { _, _ -> },
+    onCreateAndMove: (workId: String, name: String) -> Unit = { _, _ -> }
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
     )
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // In-place category selection (NU list-switcher parity).
+    var selectedCategoryId by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
     androidx.compose.material3.ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -82,7 +88,10 @@ fun KakuyomuHome(
                 NavigationDrawerItem(
                     label = { Text(t("Discover  ★", "カクヨム Discover  ★")) },
                     selected = false,
-                    onClick = { scope.launch { drawerState.close() } }
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onOpenDiscover()
+                    }
                 )
                 HorizontalDivider()
                 Text(
@@ -115,11 +124,11 @@ fun KakuyomuHome(
                     // rows; the drawer navigates to a filtered view.
                     if (visible.isNotEmpty()) {
                         NavigationDrawerItem(
-                            label = { Text(t("All", "すべて") + " (${visible.size}) ▦") },
-                            selected = false,
+                            label = { Text(t("All", "すべて") + " (${visible.size})") },
+                            selected = selectedCategoryId.isBlank(),
                             onClick = {
+                                selectedCategoryId = ""
                                 scope.launch { drawerState.close() }
-                                onOpenBookmarks("")
                             }
                         )
                     }
@@ -133,10 +142,10 @@ fun KakuyomuHome(
                                 label = {
                                     Text("${cat.name} (${visible.count { categories.assign[it.id] == cat.id }})")
                                 },
-                                selected = false,
+                                selected = selectedCategoryId == cat.id,
                                 onClick = {
+                                    selectedCategoryId = cat.id
                                     scope.launch { drawerState.close() }
-                                    onOpenBookmarks(cat.id)
                                 }
                             )
                         }
@@ -172,11 +181,44 @@ fun KakuyomuHome(
             }
         }
     ) {
-        KakuyomuDiscoverBody(
-            onOpenWork = onOpenWork,
-            openDrawer = { scope.launch { drawerState.open() } },
-            r18Enabled = r18Enabled
+        // NU-parity home: the library panel with in-place category filter.
+        val all = NsfwFilter.filterKakuyomu(bookmarks, NsfwFilter.hiddenKakuyomuWorkIds(categories), nsfwUnlocked)
+        val visible = all
+            .filter { selectedCategoryId.isBlank() || categories.assign[it.id] == selectedCategoryId }
+            .filter { searchQuery.isBlank() || it.title.contains(searchQuery, ignoreCase = true) }
+        var moveTo by remember { mutableStateOf<KakuyomuWork?>(null) }
+        BookmarkLibraryBody(
+            heading = if (selectedCategoryId.isBlank()) t("All", "すべて") + " (${visible.size})"
+            else (categories.cats.firstOrNull { it.id == selectedCategoryId }?.name ?: "") + " (${visible.size})",
+            rows = visible.map { work ->
+                BookmarkRow(
+                    title = work.title,
+                    subtitle = work.author,
+                    coverUrl = work.coverUrl,
+                    seriesUrl = work.url,
+                    open = { onOpenWork(work) }
+                )
+            },
+            emptyMessage = if (bookmarks.isEmpty() && !loggedIn) t(
+                "Open a work and tap ⚑ Bookmark to keep it here.", "作品を開いて⚑ブックマークをタップするとここに保存されます。"
+            ) else t("Nothing here — pick another category or check Discover ★.", "何もありません — 別のカテゴリを選ぶかDiscover ★を確認してください。"),
+            searchQuery = searchQuery,
+            onSearchChange = { searchQuery = it },
+            onOpenDrawer = { scope.launch { drawerState.open() } },
+            onManageRow = { row ->
+                moveTo = visible.firstOrNull { it.url == row.seriesUrl }
+            }
         )
+        moveTo?.let { work ->
+            CategoryMoveDialog(
+                workId = work.id,
+                current = categories.cats.firstOrNull { it.id == categories.assign[work.id] },
+                cats = categories.cats,
+                onMove = { catId -> onMove(work.id, catId) },
+                onCreateAndMove = { name -> onCreateAndMove(work.id, name) },
+                onDismiss = { moveTo = null }
+            )
+        }
     }
 }
 
@@ -218,7 +260,10 @@ fun SiteSwitcherChips(activeSite: String, onSwitchSite: (String) -> Unit) {
 fun KakuyomuDiscoverBody(
     onOpenWork: (KakuyomuWork) -> Unit,
     openDrawer: () -> Unit = {},
-    r18Enabled: Boolean = false
+    r18Enabled: Boolean = false,
+    // Non-null in the Discover ROUTE: show a back arrow instead of the
+    // hamburger (there is no drawer there).
+    onBack: (() -> Unit)? = null
 ) {
     // Default to All-time rankings so the screen fills on entry; the Search
     // tab (index KAKUYOMU_PERIODS.size) stays a deliberate tap away.
@@ -292,8 +337,12 @@ fun KakuyomuDiscoverBody(
 
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = openDrawer) {
-                Icon(Icons.Rounded.Menu, contentDescription = "Menu")
+            if (onBack != null) {
+                TextButton(onClick = onBack) { Text("‹ " + t("Back", "戻る")) }
+            } else {
+                TextButton(onClick = openDrawer) {
+                    Icon(Icons.Rounded.Menu, contentDescription = "Menu")
+                }
             }
             Text(
                 t("Kakuyomu Discover", "カクヨム Discover"),
