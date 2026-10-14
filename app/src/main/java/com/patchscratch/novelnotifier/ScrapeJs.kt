@@ -702,7 +702,29 @@ fun chapterExtractJs(): String = """
     var out = [];
     Array.prototype.slice.call(best.querySelectorAll('p')).forEach(function(p) {
       if (!nodeVisible(p)) return;
-      var t = cleanText(p.innerText || '');
+      // Anti-scrape decoys (verified: foxteller 2026-10-15): position:fixed
+      // spans injected into EVERY paragraph — watermark chaff plus the
+      // chapter's first sentence as filler. innerText includes them; real
+      // prose is never position:fixed, so strip those descendants first.
+      var t;
+      var all = p.querySelectorAll('*');
+      var fixedIdx = [];
+      for (var fi = 0; fi < all.length; fi++) {
+        try {
+          if (window.getComputedStyle(all[fi]).position === 'fixed') fixedIdx.push(fi);
+        } catch (e) {}
+      }
+      if (fixedIdx.length) {
+        var clone = p.cloneNode(true);
+        var cloneAll = clone.querySelectorAll('*');
+        for (var k = fixedIdx.length - 1; k >= 0; k--) {
+          var victim = cloneAll[fixedIdx[k]];
+          if (victim.parentNode) victim.parentNode.removeChild(victim);
+        }
+        t = cleanText(clone.textContent || '');
+      } else {
+        t = cleanText(p.innerText || '');
+      }
       if (t.length < 2 || isJunk(t, p)) return;
       if (out.length && out[out.length - 1] === t) return; // consecutive repeat
       out.push(t);
