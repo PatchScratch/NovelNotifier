@@ -179,6 +179,18 @@ fun loadSeriesCache(context: Context, seriesUrl: String): Pair<SeriesPage, Int>?
     }
 }
 
+/**
+ * Wayne's NU-section rule (2026-10-14): ignore anything from the Scribble
+ * Hub domain. The reading-list rows never link SH directly — the reliable
+ * signal is the series' own cached releases page (SH-hosted series link
+ * every chapter at scribblehub.com). No cache → unknown → keep (an
+ * unvisited SH series drops after its first detail-screen visit).
+ */
+fun seriesIsScribbleHosted(context: Context, seriesUrl: String): Boolean {
+    val cached = loadSeriesCache(context, seriesUrl) ?: return false
+    return cached.first.releases.any { it.url.contains("scribblehub.com", ignoreCase = true) }
+}
+
 fun saveSeriesCache(context: Context, seriesUrl: String, page: SeriesPage, loadedPage: Int) {
     if (seriesUrl.isBlank()) return
     if (page.releases.isEmpty() && page.description.isBlank()) return

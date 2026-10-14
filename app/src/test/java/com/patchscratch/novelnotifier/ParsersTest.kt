@@ -833,4 +833,49 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         )
     }
 
+    // --- reading-list row filters (Wayne's rule: ignore Scribble Hub) ---
+
+    private fun listPayload(vararg rows: String) =
+        "1===Reading List:::NOVELS:::" + rows.joinToString("|||") + ":::RSS:::"
+
+    @Test
+    fun parseListPageResult_dropsScribblehubChapterRows() {
+        val result = parseListPageResult(
+            listPayload(
+                "Half-elves Fall in Love===c982===https://www.novelupdates.com/series/half-elves/===https://nu/img.jpg===c56===https://www.novelupdates.com/readinglist/?rid=1===https://www.scribblehub.com/read/1234-half-elves/chapter/982/",
+                "No-Rin===c47===https://www.novelupdates.com/series/no-rin/======c40===https://www.novelupdates.com/readinglist/?rid=2===https://no-rin-translations.example/chapter-47/"
+            )
+        )
+        assertEquals(listOf("No-Rin"), result.novels.map { it.title })
+        // The dropped row's read position must not leak into lastReads.
+        assertFalse(result.lastReads.containsKey("Half-elves Fall in Love"))
+        assertEquals("c40", result.lastReads["No-Rin"]?.first)
+    }
+
+    @Test
+    fun parseListPageResult_keepsRowsWithoutChapterUrl() {
+        // No chapter link (old payload shape / no chapter info) — cannot
+        // classify the host, so the row stays. Degrade, don't lose the list.
+        val result = parseListPageResult(
+            listPayload("Mystery Series===c10===https://www.novelupdates.com/series/mystery/===img======")
+        )
+        assertEquals(listOf("Mystery Series"), result.novels.map { it.title })
+    }
+
+    @Test
+    fun parseListPageResult_subdomainAndSchemeVariantsDropped() {
+        // Empty img/lastReadCh/lastReadUrl fields: 4 separators between the
+        // series href and the chapterUrl.
+        val result = parseListPageResult(
+            listPayload(
+                "A===c1===https://www.novelupdates.com/series/a/============https://scribblehub.com/read/1/",
+                "B===c1===https://www.novelupdates.com/series/b/============https://m.scribblehub.com/read/2/",
+                "C===c1===https://www.novelupdates.com/series/c/============https://notscribblehub.com.evil.example/read/3/"
+            )
+        )
+        // A and B are Scribble Hub hosts; C only CONTAINS the name in an
+        // unrelated host and must survive the host check.
+        assertEquals(listOf("C"), result.novels.map { it.title })
+    }
+
 }

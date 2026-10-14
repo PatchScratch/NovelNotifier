@@ -189,8 +189,19 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                     selectedList = first.name
                 }
 
-                val lastReads = result.lastReads
-                val parsedNovels = result.novels
+                // The merge continues in a coroutine: the SH-hosted check
+                // reads series caches (IO) for every row before anything
+                // is written to the list state.
+                viewModelScope.launch {
+                val shTitles = withContext(Dispatchers.IO) {
+                    result.novels.filter { seriesIsScribbleHosted(getApplication(), it.seriesUrl) }
+                        .map { it.title }.toSet()
+                }
+                if (shTitles.isNotEmpty()) {
+                    DebugLog.log("SYNC", "dropped ${shTitles.size} Scribble Hub-hosted rows (cached release links)")
+                }
+                val lastReads = result.lastReads.filterKeys { it !in shTitles }
+                val parsedNovels = result.novels.filterNot { it.title in shTitles }
                 // Row-capture visibility: what the scraper took from this page.
                 DebugLog.log(
                     "SYNC",
@@ -203,7 +214,7 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                 if (parsedNovels.isEmpty() && cachedLooksReal) {
                     listNovels = cachedRows
                     listStatus = "Site parse returned nothing — keeping ${cachedRows.size} cached series"
-                    return
+                    return@launch
                 }
                 val stamped = stampChapterTimes(listNovels, parsedNovels)
                 val changed = chapterChangeCount(listNovels, stamped)
@@ -236,6 +247,7 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 persistLists()
                 pendingSideEffects = SideEffects(result.rssUrl, result.readRssUrl, lastReads)
+                }
             }
         }
     }

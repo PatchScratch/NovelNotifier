@@ -201,12 +201,22 @@ fun parseListPageResult(
         if (bits.size == 2 && isRealListName(bits[1])) ReadingList(bits[0], bits[1]) else null
     }.distinctBy { it.name }
     val lastReads = mutableMapOf<String, Pair<String, String>>()
+    // Wayne's rule (2026-10-14): the NU section ignores anything from the
+    // Scribble Hub domain. SH-hosted series ride NU's lists with chapter
+    // links pointing at scribblehub.com; their unread badges (NU tick vs
+    // SH releases) ran into the hundreds. Detection = the row's latest-
+    // release link (7th payload field, added with the filter).
+    var droppedScribblehub = 0
     val novels = novelPart.split("|||").mapNotNull { item ->
-        val bits = item.split("===", limit = 6)
+        val bits = item.split("===", limit = 7)
         if (bits.size >= 2) {
             val title = bits[0]
             val seriesUrl = bits.getOrNull(2).orEmpty()
             val siteLast = bits.getOrNull(4).orEmpty().trim()
+            if (isScribblehubUrl(bits.getOrNull(6)) || isScribblehubUrl(bits.getOrNull(5))) {
+                droppedScribblehub++
+                return@mapNotNull null
+            }
             val skipLast = siteLast.isBlank() ||
                 siteLast == "—" ||
                 siteLast == "-" ||
@@ -231,7 +241,33 @@ fun parseListPageResult(
                 !title.equals("Series Information", ignoreCase = true) &&
                 novel.seriesUrl.contains("/series/")
         }
-    return ListPageResult(lists, novels, lastReads, pickReleasesFeedUrl(feedUrls), pickReadFeedUrl(feedUrls))
+    // The payload carries NU's own row count ("Series (195)" in the list
+    // header). Panel/widget rows append AFTER the real list — trim to the
+    // count and they cannot survive (Wayne's rule: ignore the Latest
+    // Series panel). No count on the page (redesign) → keep everything
+    // and let the guard above carry the day.
+    val expectedCount = raw.substringAfter(":::COUNT:::", "")
+        .substringBefore(":::").toIntOrNull() ?: -1
+    val trimmed = if (expectedCount > 0 && novels.size > expectedCount) novels.take(expectedCount) else novels
+    if (trimmed.size < novels.size) {
+        DebugLog.log("SYNC", "trimmed ${novels.size - trimmed.size} panel rows (NU says $expectedCount)")
+    }
+    if (droppedScribblehub > 0) {
+        DebugLog.log("SYNC", "dropped $droppedScribblehub Scribble Hub rows from list")
+    }
+    return ListPageResult(lists, trimmed, lastReads, pickReleasesFeedUrl(feedUrls), pickReadFeedUrl(feedUrls))
+}
+
+/** Host check for the SH filter: any *.scribblehub.com link. */
+private fun isScribblehubUrl(url: String?): Boolean {
+    val u = url.orEmpty()
+    if (!u.startsWith("http")) return false
+    val host = try {
+        java.net.URI(u).host?.lowercase() ?: return false
+    } catch (e: Exception) {
+        return false
+    }
+    return host == "scribblehub.com" || host.endsWith(".scribblehub.com")
 }
 
 /** Strip the extra quoting evaluateJavascript adds around a JS string.

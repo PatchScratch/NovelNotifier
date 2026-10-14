@@ -90,25 +90,43 @@ fun listPageJs(): String = """
         return /^(series information|description|latest release|status|notes|latest series)$/i.test(title);
       }
       var candidates = [];
+      // The reading-list table = the one containing NU's per-row chklist
+      // checkboxes. Found, it scopes every captured row; not found (page
+      // redesign), the checkbox-mark fallback below applies.
+      var listTable = null;
+      var chkInput = document.querySelector("input[id^='chklist']");
+      if (chkInput && chkInput.closest) listTable = chkInput.closest('table');
       document.querySelectorAll('a[href*="/series/"]').forEach(function(a) {
         var title = (a.textContent || '').replace(/\s+/g, ' ').trim();
         var href = a.href || '';
         if (!title || isJunkTitle(title)) return;
         if (!/\/series\/[a-z0-9-]+/i.test(href)) return;
         var chapter = '';
+        var chapterUrl = '';
         var lastReadCh = '';
         var lastReadUrl = '';
         var img = '';
         var hasListMark = false;
         var row = a.closest ? a.closest('tr') : a.parentElement;
+        var inListTable = !!(listTable && listTable.contains(a));
         if (row) {
           var statusA = row.querySelector('[id^="mystatus"], a[id*="mystatus"], #mystatus');
           var latestA = row.querySelector('[id^="mylatest"], a[id*="mylatest"]');
-          if (latestA) chapter = (latestA.textContent || '').replace(/\s+/g, ' ').trim();
+          if (latestA) {
+            chapter = (latestA.textContent || '').replace(/\s+/g, ' ').trim();
+            chapterUrl = latestA.href || '';
+          }
           if (statusA) {
             lastReadCh = (statusA.textContent || '').replace(/\s+/g, ' ').trim();
             lastReadUrl = statusA.getAttribute('href') || '';
           }
+        }
+        // Scribble Hub detection (Wayne's rule): SH-hosted series' chapter
+        // link points at scribblehub.com. The mylatest anchor may be absent
+        // on some row variants, so probe the whole row for any SH link.
+        if (!chapterUrl && row && row.querySelector) {
+          var shA = row.querySelector('a[href*="scribblehub.com"]');
+          if (shA) chapterUrl = shA.href || '';
         }
         var node = a.parentElement;
         for (var k = 0; k < 8 && node; k++) {
@@ -140,23 +158,34 @@ fun listPageJs(): String = """
         if (!chapter && !hasListMark) return;
         candidates.push({
           title: title, chapter: chapter || 'No chapter info', href: href, img: img,
-          lastReadCh: lastReadCh, lastReadUrl: lastReadUrl, hasListMark: hasListMark
+          chapterUrl: chapterUrl,
+          lastReadCh: lastReadCh, lastReadUrl: lastReadUrl, hasListMark: hasListMark,
+          inListTable: inListTable
         });
       });
-      // Strict row scoping (2026-10-13): real reading-list rows live in the
-      // table whose rows carry NU's own list checkboxes (chklist inputs — the
-      // original app keyed on the same ids). Suggestion/recommendation
-      // widgets elsewhere on the page share the /series/ href + bracket
-      // chapter text but have NO checkbox, and were leaking into the
-      // library (user report: Scribble Hub suggestions appearing). When any
-      // checkbox-marked row exists, ONLY those count; the looser
-      // chapter-text acceptance survives solely as a fallback for a page
-      // redesign where nothing carries checkboxes (degrade, don't lose the
-      // library).
+      // Strict row scoping (2026-10-13, tightened 2026-10-14): real
+      // reading-list rows live in the table that carries NU's own list
+      // checkboxes (chklist inputs). When that table is found, ONLY anchors
+      // inside it count — this structurally ignores every side widget
+      // (the "Latest Series" panel, suggestion/recommendation boxes) whose
+      // rows share the /series/ href + bracket chapter text but are not the
+      // user's list. The checkbox-mark heuristic (and, below it, the
+      // chapter-text acceptance) survives solely as fallbacks for a page
+      // redesign where the table or the checkboxes cannot be found
+      // (degrade, don't lose the library).
       var anyMarked = candidates.some(function(c) { return c.hasListMark; });
+      // The list header carries NU's own row count — "Series (195)". It is
+      // the authoritative scope: the "Latest Series" panel and suggestion
+      // widgets append AFTER the real list rows, so trimming to this count
+      // removes them without structural guessing about the markup.
+      var expectedCount = -1;
+      var scopeText = (listTable ? listTable.textContent : document.body.textContent) || '';
+      var cm = scopeText.match(/Series\s*\((\d+)\)/);
+      if (cm) expectedCount = parseInt(cm[1], 10);
       candidates.forEach(function(c) {
-        if (anyMarked && !c.hasListMark) return;
-        novels.push(c.title + '===' + c.chapter + '===' + c.href + '===' + c.img + '===' + c.lastReadCh + '===' + c.lastReadUrl);
+        if (listTable && !c.inListTable) return;
+        if (!listTable && anyMarked && !c.hasListMark) return;
+        novels.push(c.title + '===' + c.chapter + '===' + c.href + '===' + c.img + '===' + c.lastReadCh + '===' + c.lastReadUrl + '===' + c.chapterUrl);
       });
       // NU shows the personal RSS feed links on this page — the releases feed
       // and the read-activity feed (type=read). Grab every feed-ish anchor so
@@ -165,7 +194,8 @@ fun listPageJs(): String = """
       document.querySelectorAll('a[href*="rss"], a[href*="RSS"], a[href*="/feed"]').forEach(function(a) {
         if (a.href && /^https?:/i.test(a.href) && feeds.indexOf(a.href) === -1) feeds.push(a.href);
       });
-      return lists.join('|||') + ':::NOVELS:::' + novels.join('|||') + ':::RSS:::' + feeds.join('|||');
+      return lists.join('|||') + ':::NOVELS:::' + novels.join('|||') + ':::RSS:::' + feeds.join('|||') +
+        ':::COUNT:::' + expectedCount;
     })();
 """.trimIndent()
 
