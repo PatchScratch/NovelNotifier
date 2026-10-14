@@ -136,6 +136,8 @@ fun NovelApp(
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { applySavedCookies(prefs) }
+    // Phase 4a: centralised WebView/queue/pacing (progressive migration)
+    LaunchedEffect(Unit) { SiteClient.initialize(context) }
 
     // --- persisted UI state ---
     var novels by remember { mutableStateOf(emptyList<Novel>()) }

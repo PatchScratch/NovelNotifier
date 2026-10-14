@@ -1,11 +1,5 @@
 package com.patchscratch.novelnotifier
 
-import android.annotation.SuppressLint
-import android.webkit.CookieManager
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -14,11 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -30,15 +20,17 @@ import kotlin.time.Duration.Companion.seconds
  * new RELEASES rows into series_cache. Used from MainActivity while the list
  * screen is showing (chapterFetchQueue).
  *
+ * Phase 4a migration: uses SiteClient's shared WebView and queue instead of
+ * a hidden per-composable WebView. Pacing (8s between series hits) is still
+ * enforced here because it's per-series-page, not per-site-request —
+ * SiteClient's 10s gap is for broader politeness across ALL requests.
+ *
  * Rules:
  *   8 seconds between hits so we do not trip Cloudflare.
  *   "Just a moment" → one retry, then skip that title.
  *   mergeReleases never drops old rows and never duplicates chapter+url.
  *   applyListChapter writes the new c-number into list_cache.json.
- *
- * getValue / setValue are used by the `by` keyword. Do not delete those imports.
  */
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun SeriesChapterFetcher(
     queue: List<Novel>,
@@ -59,73 +51,68 @@ fun SeriesChapterFetcher(
 
     if (!canLoad) return
 
-    // Hidden 1dp WebView, parked off-screen.
-    AndroidView(
-        modifier = Modifier
-            .size(1.dp)
-            .alpha(0f)
-            .offset(x = 4000.dp),
-        factory = { viewContext ->
-            WebView(viewContext).apply {
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                CookieManager.getInstance().setAcceptCookie(true)
-            }
-        },
-        update = { webView ->
-            webView.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    val script = seriesPageJs()
-                    view?.evaluateJavascript(script) { result ->
-                        val raw = unwrapJsResult(result)
-                        if (raw == "CF" || raw.isBlank()) {
-                            if (tries < 1) {
-                                tries += 1
-                                canLoad = false
+    // Phase 4a: SiteClient handles the WebView, cookie jar, and Cloudflare.
+    LaunchedEffect(next.seriesUrl, canLoad, tries) {
+        if (!canLoad) return@LaunchedEffect
+        SiteClient.enqueue(
+            site = SiteClient.Site.NU,
+            request = SiteClient.ScrapeRequest(
+                url = next.seriesUrl.trimEnd('/') + "/",
+                js = seriesPageJs(),
+                onComplete = { result ->
+                    when (result) {
+                        is SiteClient.ScrapeRequest.Result.Success -> {
+                            val raw = unwrapJsResult(result.html)
+                            if (raw.isBlank()) {
+                                if (tries < 1) tries += 1
+                                else onFinished(next.title, false)
                             } else {
-                                onFinished(next.title, false)
+                            val title = next.title
+                            val seriesUrl = next.seriesUrl
+                            val latestChapter = next.latestChapter
+                            scope.launch {
+                                val ok = withContext(Dispatchers.IO) {
+                                    val parsed = parseSeriesPage(raw)
+                                    val cachedPair = loadSeriesCache(context, seriesUrl)
+                                    val old = cachedPair?.first ?: SeriesPage()
+                                    val merged = mergeReleases(old.releases, parsed.releases)
+                                    val page = old.copy(
+                                        title = parsed.title.ifBlank { old.title },
+                                        author = parsed.author.ifBlank { old.author },
+                                        rating = parsed.rating.ifBlank { old.rating },
+                                        description = parsed.description.ifBlank { old.description },
+                                        genres = parsed.genres.ifBlank { old.genres },
+                                        tags = parsed.tags.ifBlank { old.tags },
+                                        type = parsed.type.ifBlank { old.type },
+                                        status = parsed.status.ifBlank { old.status },
+                                        coverUrl = usableCoverUrl(parsed.coverUrl).ifBlank { old.coverUrl },
+                                        sid = parsed.sid.ifBlank { old.sid },
+                                        releases = merged,
+                                        maxPage = maxOf(old.maxPage, parsed.maxPage)
+                                    )
+                                    saveSeriesCache(context, seriesUrl, page, maxOf(1, cachedPair?.second ?: 1))
+                                    applyListChapter(context, title, latestChapter)
+                                    DebugLog.log(
+                                        "RSSSYNC",
+                                        "'$title' rows=${parsed.releases.size} total=${merged.size} ok=${parsed.releases.isNotEmpty()}"
+                                    )
+                                    parsed.releases.isNotEmpty()
+                                }
+                                onFinished(title, ok)
+                                }
                             }
-                            return@evaluateJavascript
                         }
-                        val title = next.title
-                        val seriesUrl = next.seriesUrl
-                        val latestChapter = next.latestChapter
-                        scope.launch {
-                            val ok = withContext(Dispatchers.IO) {
-                                val parsed = parseSeriesPage(raw)
-                                val cachedPair = loadSeriesCache(context, seriesUrl)
-                                val old = cachedPair?.first ?: SeriesPage()
-                                val merged = mergeReleases(old.releases, parsed.releases)
-                                val page = old.copy(
-                                    title = parsed.title.ifBlank { old.title },
-                                    author = parsed.author.ifBlank { old.author },
-                                    rating = parsed.rating.ifBlank { old.rating },
-                                    description = parsed.description.ifBlank { old.description },
-                                    genres = parsed.genres.ifBlank { old.genres },
-                                    tags = parsed.tags.ifBlank { old.tags },
-                                    type = parsed.type.ifBlank { old.type },
-                                    status = parsed.status.ifBlank { old.status },
-                                    coverUrl = usableCoverUrl(parsed.coverUrl).ifBlank { old.coverUrl },
-                                    sid = parsed.sid.ifBlank { old.sid },
-                                    releases = merged,
-                                    maxPage = maxOf(old.maxPage, parsed.maxPage)
-                                )
-                                saveSeriesCache(context, seriesUrl, page, maxOf(1, cachedPair?.second ?: 1))
-                                applyListChapter(context, title, latestChapter)
-                                DebugLog.log(
-                                    "RSSSYNC",
-                                    "'$title' rows=${parsed.releases.size} total=${merged.size} ok=${parsed.releases.isNotEmpty()}"
-                                )
-                                parsed.releases.isNotEmpty()
-                            }
-                            onFinished(title, ok)
+                        is SiteClient.ScrapeRequest.Result.Cloudflare -> {
+                            if (tries < 1) tries += 1
+                            else onFinished(next.title, false)
+                        }
+                        is SiteClient.ScrapeRequest.Result.Error -> {
+                            DebugLog.log("RSSSYNC", "scrape error: ${result.message}")
+                            onFinished(next.title, false)
                         }
                     }
                 }
-            }
-            val target = next.seriesUrl.trimEnd('/') + "/"
-            if ((webView.url ?: "") != target) webView.loadUrl(target)
-        }
-    )
+            )
+        )
+    }
 }
