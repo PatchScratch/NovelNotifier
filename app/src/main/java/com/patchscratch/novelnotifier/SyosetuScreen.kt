@@ -43,6 +43,9 @@ import androidx.compose.material3.FilterChip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material3.Icon
 
 /**
  * Syosetu discover (provider slice 1): ranking orders + word search, both
@@ -207,7 +210,7 @@ fun SyosetuDiscoverBody(
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = openDrawer) {
-                Text("☰", style = MaterialTheme.typography.headlineSmall)
+                Icon(Icons.Rounded.Menu, contentDescription = "Menu")
             }
             Text(
                 t("Syosetu Discover", "なろう Discover"),

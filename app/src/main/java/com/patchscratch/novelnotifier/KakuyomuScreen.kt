@@ -38,6 +38,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material3.Icon
 
 /**
  * Kakuyomu workspace (provider slice 1): its own drawer (site switcher,
@@ -249,7 +252,7 @@ fun KakuyomuDiscoverBody(
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = openDrawer) {
-                Text("☰", style = MaterialTheme.typography.headlineSmall)
+                Icon(Icons.Rounded.Menu, contentDescription = "Menu")
             }
             Text(
                 t("Kakuyomu Discover", "カクヨム Discover"),

@@ -36,6 +36,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -71,6 +72,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.seconds
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.ViewList
 
 /**
  * Home screen: hamburger drawer of reading lists, cover tiles, pull-to-refresh.
@@ -407,7 +412,7 @@ fun NovelListScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Text("☰", style = MaterialTheme.typography.headlineSmall)
+                            Icon(Icons.Rounded.Menu, contentDescription = "Menu")
                         }
                     },
                     actions = {
@@ -432,7 +437,11 @@ fun NovelListScreen(
                                 layoutMode = if (layoutMode == LAYOUT_GRID) LAYOUT_LIST else LAYOUT_GRID
                                 saveLayoutMode(prefs, layoutMode)
                             }
-                        ) { Text(if (layoutMode == LAYOUT_GRID) "☰" else "▦") }
+                        ) { if (layoutMode == LAYOUT_GRID) {
+                Icon(Icons.Rounded.ViewList, contentDescription = "Switch to list")
+            } else {
+                Icon(Icons.Rounded.GridView, contentDescription = "Switch to grid")
+            } }
                     }
                 )
             },

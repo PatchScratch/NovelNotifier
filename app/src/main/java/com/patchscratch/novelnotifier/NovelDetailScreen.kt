@@ -32,6 +32,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -64,6 +65,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.seconds
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsOff
 
 /**
  * Layout mode for the pane WebViews (shared with NovelListScreen). Hidden, the
@@ -449,7 +453,13 @@ fun NovelDetailScreen(
                     ) {
                         Button(onClick = { showChangeList = true }) { Text(t("CHANGE LIST", "リスト変更")) }
                         TextButton(onClick = onToggleNotify) {
-                            Text(if (notifyOn) "🔔" else "🔕", fontSize = 32.sp)
+                            if (notifyOn) {
+                                Icon(Icons.Rounded.Notifications, contentDescription = "Notifications on",
+                                    modifier = Modifier.size(32.dp))
+                            } else {
+                                Icon(Icons.Rounded.NotificationsOff, contentDescription = "Notifications off",
+                                    modifier = Modifier.size(32.dp))
+                            }
                         }
                     }
                     if (listStatus.isNotBlank()) {

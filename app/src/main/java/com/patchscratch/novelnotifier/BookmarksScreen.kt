@@ -32,6 +32,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.ViewList
+import androidx.compose.material3.Icon
 
 /**
  * Bookmark library screens, NU-home style: a dynamic-cover grid (columns
@@ -75,7 +79,11 @@ private fun BookmarksBody(
             TextButton(onClick = {
                 layoutMode = if (layoutMode == LAYOUT_GRID) LAYOUT_LIST else LAYOUT_GRID
                 saveLayoutMode(context.getSharedPreferences("novel_prefs", 0), layoutMode)
-            }) { Text(if (layoutMode == LAYOUT_GRID) "☰" else "▦") }
+            }) { if (layoutMode == LAYOUT_GRID) {
+                Icon(Icons.Rounded.ViewList, contentDescription = "Switch to list")
+            } else {
+                Icon(Icons.Rounded.GridView, contentDescription = "Switch to grid")
+            } }
         }
         if (rows.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
