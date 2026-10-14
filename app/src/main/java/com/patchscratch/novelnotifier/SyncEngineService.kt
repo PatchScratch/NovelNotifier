@@ -12,9 +12,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.webkit.CookieManager
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -39,7 +36,6 @@ class SyncEngineService : Service() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
-    private var webView: WebView? = null
     private var stopped = false
     private var pausedByUser = false
     private var cfRetries = 0
@@ -86,8 +82,6 @@ class SyncEngineService : Service() {
         engineAlive = false
         handler.removeCallbacksAndMessages(null)
         executor.shutdown()
-        webView?.destroy()
-        webView = null
         super.onDestroy()
     }
 
@@ -148,46 +142,57 @@ class SyncEngineService : Service() {
         if (wait > 0) handler.postDelayed({ executeSiteJob(job) }, wait) else executeSiteJob(job)
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
     private fun executeSiteJob(job: SyncJob) {
         if (stopped || pausedByUser) return
-        val view = webViewOrCreate()
         // Reserve this hit's slot in the pacing window before the load starts.
         lastSiteHitAt = System.currentTimeMillis()
-        // One WebViewClient per job: onPageFinished picks the script from the
-        // job type, so a single shared WebView can serve every kind of job.
-        view.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(page: WebView?, url: String?) {
-                if (isLoginRedirect(url)) {
-                    handleSessionExpired(job)
-                    return@onPageFinished
-                }
-                val script = when (job.type) {
-                    "list", "check" -> listPageJs()
-                    "cover" -> coverJs()
-                    else -> seriesPageJs()
-                }
-                page?.evaluateJavascript(script) { result ->
-                    val raw = unwrapJsResult(result)
-                    if (raw == "CF" || isCloudflareUrl(url)) {
-                        handleCloudflare(job)
-                        return@evaluateJavascript
-                    }
-                    executor.execute { processResult(job, raw) }
-                }
-            }
-        }
-        when (job.type) {
-            "list", "check" -> view.loadUrl(
+        // Phase 4a: SiteClient owns the WebView. The service keeps its own
+        // pacing (GAP_MS), CF policy (escalating pauses), and job queue —
+        // SiteClient handles the page load, JS evaluation, and CF detection.
+        val url = when (job.type) {
+            "list", "check" ->
                 if (job.key.isBlank()) "https://www.novelupdates.com/reading-list/"
                 else "https://www.novelupdates.com/reading-list/?list=${job.key}"
-            )
-            "cover" -> view.loadUrl(job.seriesUrl)
+            "cover" -> job.seriesUrl
             else -> {
                 val base = job.seriesUrl.trimEnd('/')
-                view.loadUrl(if (job.nextPage <= 1) "$base/" else "$base/?pg=${job.nextPage}")
+                if (job.nextPage <= 1) "$base/" else "$base/?pg=${job.nextPage}"
             }
         }
+        val script = when (job.type) {
+            "list", "check" -> listPageJs()
+            "cover" -> coverJs()
+            else -> seriesPageJs()
+        }
+        SiteClient.enqueue(
+            site = SiteClient.Site.NU,
+            request = SiteClient.ScrapeRequest(
+                url = url,
+                js = script,
+                onComplete = { result ->
+                    when (result) {
+                        is SiteClient.ScrapeRequest.Result.Success -> {
+                            val raw = unwrapJsResult(result.html)
+                            if (raw == "CF") {
+                                handleCloudflare(job)
+                            } else {
+                                executor.execute { processResult(job, raw) }
+                            }
+                        }
+                        is SiteClient.ScrapeRequest.Result.Cloudflare ->
+                            handleCloudflare(job)
+                        is SiteClient.ScrapeRequest.Result.Error -> {
+                            // Distinguish session expiry from network errors
+                            if (result.message.contains("login", ignoreCase = true)) {
+                                handleSessionExpired(job)
+                            } else {
+                                handleCloudflare(job)
+                            }
+                        }
+                    }
+                }
+            )
+        )
     }
 
     /**
@@ -572,17 +577,7 @@ class SyncEngineService : Service() {
         manager.notify(NOTIF_ID, buildNotification(text).build())
     }
 
-    private fun webViewOrCreate(): WebView {
-        return webView ?: WebView(applicationContext).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.userAgentString = chromeMobileUserAgent(settings.userAgentString)
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            webView = this
-        }
-    }
+
 
     companion object {
         const val CHANNEL_ID = "library_sync"
