@@ -43,6 +43,10 @@ Each site is its own workspace (hamburger → site chips), served by official/op
 - **AI cover art** for series without one (all three sites) — generated from title, genre and synopsis with your own prompt; title and author render as cover typography in the artwork's style.
 - **Costs are yours to control** — the key lives only on the device, never in backups; typical translation runs ~half a cent per chapter, covers ~$0.01–0.02 (see the cost table below).
 
+### Hidden lists & SFW mode
+- **Flag any list or category as hidden** — NU reading lists, Syosetu 分類, and Kakuyomu's client-side categories (Kakuyomu's follows are flat on the site, so the app adds local folders; they live in app data and ride backups). Hidden series vanish from every screen, cover grids, counts, search and notifications until you unlock.
+- **SFW/NSFW mode** — the app starts locked every time. A drawer toggle unlocks with your fingerprint or screen lock (Android's own prompt — no new PIN to invent); hiding again is instant, and the app re-locks itself whenever it leaves the foreground. R18 content (Syosetu's sister sites, Kakuyomu 18+) sits behind the same unlock. Hidden series never notify. Nothing is encrypted or deleted — it's a display gate over data that still syncs and backs up.
+
 ### Backup, themes, and diagnostics
 - **One-zip backups** — lists, chapter caches, covers and settings through the system file picker; never contains your password, sessions, or feed tokens. **Share covers (zip)** moves cover art between your devices on its own.
 - **Themes** — light/dark/AMOLED-black/Material You, plus custom themes from a JSON file.
@@ -206,7 +210,8 @@ typography better. The prompt is yours to customise. Series info
 
 ## Roadmap
 
-Planned next: しおり (reading-position) sync on Syosetu, reading history on Kakuyomu, and then the wider Japanese webnovel sites. A nicety on the list: running translation chunks 2–3 at a time instead of one.
+Planned next: read-aloud refinements (speed sliders, sleep timer, media
+notification), visual polish, and then the wider Japanese webnovel sites.
 
 Parsing hazard to remember: NU hides decoy chapter links with CSS — randomized class names, zero-opacity text, and JS-injected traps — so reader extraction filters by *computed* styles (`getComputedStyle` in the WebView: visible, non-hidden, opacity > 0), never by element presence alone.
 
