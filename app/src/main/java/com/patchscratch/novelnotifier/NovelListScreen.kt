@@ -156,7 +156,10 @@ fun NovelListScreen(
                 onSaveListOptions(n, u)
                 showListOptions = false
             },
-            onCancel = { showListOptions = false }
+            onCancel = { showListOptions = false },
+            shScanLabel = vm.shScan?.let { "${it.done}/${it.total}" } ?: "",
+            shScanRunning = vm.shScan?.running == true,
+            onToggleShScan = { vm.toggleShScan() }
         )
         return
     }

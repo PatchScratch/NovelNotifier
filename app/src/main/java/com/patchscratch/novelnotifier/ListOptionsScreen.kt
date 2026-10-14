@@ -39,7 +39,10 @@ fun ListOptionsScreen(
     notifyOff: Set<String>,
     updateOff: Set<String>,
     onSave: (Set<String>, Set<String>) -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    shScanLabel: String = "",
+    shScanRunning: Boolean = false,
+    onToggleShScan: () -> Unit = {}
 ) {
     var draftNotifyOff by remember { mutableStateOf(notifyOff) }
     var draftUpdateOff by remember { mutableStateOf(updateOff) }
@@ -125,6 +128,29 @@ fun ListOptionsScreen(
                             onCheckedChange = { enabled ->
                                 draftUpdateOff = if (enabled) draftUpdateOff - list.id else draftUpdateOff + list.id
                             }
+                        )
+                    }
+                }
+                item {
+                    Text(
+                        text = "Scribble Hub",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                    )
+                    Text(
+                        text = "Scribble Hub-hosted series are ignored in the NU section. " +
+                            "The one-time scan visits every uncached series (politely paced) " +
+                            "and purges the SH-hosted ones from all lists.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    TextButton(onClick = onToggleShScan) {
+                        Text(if (shScanRunning) shScanLabel.ifBlank { "Stop scan" } else "Scan & purge Scribble Hub series")
+                    }
+                    if (shScanRunning && shScanLabel.isNotBlank()) {
+                        Text(
+                            text = shScanLabel,
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }

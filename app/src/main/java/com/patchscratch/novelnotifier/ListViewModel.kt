@@ -271,6 +271,100 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
         if (syncing) listStatus = "Still waiting on Novel Updates — the site is slow right now"
     }
 
+    // --- Scribble Hub bulk purge (Wayne's rule: NU ignores SH) ---------------
+    // Series-page caches are the SH-hostedness signal, but they only exist
+    // for visited series. This scan walks every UNCACHED series through the
+    // paced SiteClient queue (10 s gaps), saves each page-1 cache, and
+    // purges SH-hosted rows from every list live as verdicts land. Progress
+    // rides listStatus; tap the List-options row again to stop early.
+
+    data class ShScan(val done: Int, val total: Int, val running: Boolean)
+    var shScan by mutableStateOf<ShScan?>(null)
+    private var shScanStop = false
+
+    fun toggleShScan() {
+        if (shScan?.running == true) {
+            shScanStop = true
+            return
+        }
+        shScanStop = false
+        viewModelScope.launch {
+            val targets = novelsByList.values.flatten()
+                .distinctBy { it.seriesUrl }
+                .filter { it.seriesUrl.isNotBlank() }
+                .filterNot { withContext(Dispatchers.IO) { loadSeriesCache(getApplication(), it.seriesUrl) != null } }
+            if (targets.isEmpty()) {
+                listStatus = "No uncached series to scan"
+                return@launch
+            }
+            shScan = ShScan(0, targets.size, running = true)
+            listStatus = "Scanning for Scribble Hub series… 0/${targets.size}"
+            DebugLog.log("SYNC", "sh scan start: ${targets.size} uncached series")
+            var purged = 0
+            targets.forEach { novel ->
+                if (shScanStop) return@forEach
+                try {
+                    val raw = scrapeSeriesPageSuspend(novel.seriesUrl)
+                    if (raw != null) {
+                        val page = parseSeriesPage(raw)
+                        withContext(Dispatchers.IO) {
+                            saveSeriesCache(getApplication(), novel.seriesUrl, page, 1)
+                        }
+                        if (page.releases.any { it.url.contains("scribblehub.com", ignoreCase = true) }) {
+                            purged++
+                            purgeShTitles(setOf(novel.title))
+                            DebugLog.log("SYNC", "sh scan: ${novel.title.take(40)} is Scribble Hub — purged")
+                        }
+                    }
+                } catch (e: Exception) {
+                    DebugLog.log("SYNC", "sh scan skipped ${novel.title.take(30)}", e)
+                }
+                shScan = shScan?.copy(done = (shScan?.done ?: 0) + 1)
+                listStatus = "Scanning for Scribble Hub series… ${shScan?.done}/${targets.size} · $purged purged"
+            }
+            persistLists()
+            listStatus = if (shScanStop) {
+                "Scan stopped — purged $purged Scribble Hub series so far"
+            } else {
+                "Scan done — purged $purged Scribble Hub series"
+            }
+            DebugLog.log(
+                "SYNC",
+                "sh scan finished: purged $purged of ${shScan?.done ?: 0} visited (${targets.size} targets)"
+            )
+            shScan = shScan?.copy(running = false)
+        }
+    }
+
+    /** Remove rows by title from every list + the visible list + cover queue. */
+    private fun purgeShTitles(titles: Set<String>) {
+        novelsByList = novelsByList.mapValues { (_, rows) -> rows.filterNot { it.title in titles } }
+        if (selectedListId.isNotBlank()) {
+            listNovels = novelsByList[selectedListId].orEmpty()
+        }
+        coverQueue = coverQueue.filterNot { it.title in titles }
+    }
+
+    /** One paced series-page scrape through the SiteClient queue; null on
+     *  CF/error (the series is simply skipped — a later scan retries). */
+    private suspend fun scrapeSeriesPageSuspend(seriesUrl: String): String? =
+        kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            SiteClient.enqueue(SiteClient.Site.NU, SiteClient.ScrapeRequest(
+                url = seriesUrl.trimEnd('/') + "/",
+                js = seriesPageJs(),
+                timeoutMs = 45_000
+            ) { result ->
+                if (!cont.isActive) return@ScrapeRequest
+                when (result) {
+                    is SiteClient.ScrapeRequest.Result.Success ->
+                        cont.resumeWith(
+                            Result.success(unwrapJsResult(result.html).takeIf { it.startsWith("{") })
+                        )
+                    else -> cont.resumeWith(Result.success(null))
+                }
+            })
+        }
+
     private fun persistLists() {
         val snapshot = ListSnapshot(
             lists = lists,
