@@ -29,14 +29,14 @@ import kotlin.coroutines.resume
  * Phase 3.3.1 — bulk ePub download as a FOREGROUND SERVICE (2026-10-12).
  *
  * The reader-hosted bulk loop died the moment the screen locked or another
- * app came forward: Activity WebViews pause, loads stall mid-flight ("page
+ * app came forward: the shared SiteClient WebView survives screen-off.
  * cannot be found"), and the whole queue failed (user report). This service
- * hosts its own WebView — the same pattern the library sync engine has used
+ * uses SiteClient's shared WebView (Phase 4a)
  * to download hundreds of pages overnight — so bulk downloads keep running
  * with the screen off.
  *
  * The download logic is the reader's proven flow, ported: ToC-first (harvest
- * chapter links from every page the WebView loads, chapter dropdowns
+ * chapter links from every page SiteClient loads, chapter dropdowns
  * included), single-NU-visit bootstrap for all-NU series, series-page
  * fallback when chapter pages carry no ToC, volume-tolerant (vol,ch)→key
  * matching with per-chapter ambiguity, extraction retry for JS-rendering
