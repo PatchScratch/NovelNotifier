@@ -31,6 +31,9 @@ class KakuyomuViewModel(app: Application) : AndroidViewModel(app) {
     var loggedIn by mutableStateOf(prefs.getBoolean("kakuyomu_logged_in", false))
         private set
     var status by mutableStateOf("")
+    /** Pull-to-refresh spinner state (home panel sync). */
+    var syncing by mutableStateOf(false)
+        private set
 
     /** Payload for the open detail screen (Route.KakuyomuDetail). */
     var selectedWork by mutableStateOf<KakuyomuWork?>(null)
@@ -54,6 +57,7 @@ class KakuyomuViewModel(app: Application) : AndroidViewModel(app) {
     fun syncBookmarks(quiet: Boolean = false) {
         viewModelScope.launch {
             if (!quiet) status = t("Syncing bookmarks…", "ブックマークを同期中…")
+            syncing = true
             try {
                 val visitor = fetchKakuyomuVisitor()
                 if (visitor == null) {
@@ -82,6 +86,8 @@ class KakuyomuViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 DebugLog.log("KAKUYOMU", "bookmark sync failed", e)
                 if (!quiet) status = t("Sync failed: ", "同期失敗: ") + (e.message ?: "")
+            } finally {
+                syncing = false
             }
         }
     }

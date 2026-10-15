@@ -77,7 +77,10 @@ fun SyosetuHome(
     hiddenCategories: Set<String> = emptySet(),
     categories: List<SyosetuCategory> = emptyList(),
     onChangeCategory: (SyosetuBookmark, Int) -> Unit = { _, _ -> },
-    onRemoveBookmark: (SyosetuBookmark) -> Unit = {}
+    onRemoveBookmark: (SyosetuBookmark) -> Unit = {},
+    // Pull-to-refresh: re-sync the bookmark page from syosetu.com.
+    isRefreshing: Boolean = false,
+    onRefresh: (() -> Unit)? = null
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -192,7 +195,9 @@ fun SyosetuHome(
             onOpenDrawer = { scope.launch { drawerState.open() } },
             onManageRow = { row ->
                 managed = visible.firstOrNull { it.url == row.seriesUrl }
-            }
+            },
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh
         )
         // Long-press management (same dialogs as the library screen).
         managed?.let { bm ->

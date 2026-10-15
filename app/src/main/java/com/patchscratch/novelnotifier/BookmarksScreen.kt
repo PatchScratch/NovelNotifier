@@ -20,6 +20,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -92,6 +93,8 @@ private fun BookmarksBody(
  * The NU-shaped HOME panel (2026-10-15 site-consistency pass): hamburger +
  * search line + layout toggle above the shared grid/list. The caller owns
  * filtering (category, search, SFW-hidden) — this renders what it gets.
+ * Pass [onRefresh] (with [isRefreshing] from the site VM) to give the panel
+ * NU's pull-to-refresh; null keeps the plain layout (route screens).
  */
 @Composable
 fun BookmarkLibraryBody(
@@ -101,7 +104,9 @@ fun BookmarkLibraryBody(
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     onOpenDrawer: () -> Unit,
-    onManageRow: ((BookmarkRow) -> Unit)? = null
+    onManageRow: ((BookmarkRow) -> Unit)? = null,
+    isRefreshing: Boolean = false,
+    onRefresh: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     var layoutMode by remember { mutableStateOf(loadLayoutMode(context.getSharedPreferences("novel_prefs", 0))) }
@@ -131,7 +136,17 @@ fun BookmarkLibraryBody(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
             maxLines = 1
         )
-        BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+        if (onRefresh != null) {
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+            }
+        } else {
+            BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+        }
     }
 }
 

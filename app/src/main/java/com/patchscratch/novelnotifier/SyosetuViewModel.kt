@@ -38,6 +38,9 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
     var categories by mutableStateOf<List<SyosetuCategory>>(emptyList())
         private set
     var status by mutableStateOf("")
+    /** Pull-to-refresh spinner state (home panel sync). */
+    var syncing by mutableStateOf(false)
+        private set
 
     /** Payload for the open detail screen (Route.SyosetuDetail). */
     var selected by mutableStateOf<SyosetuNovel?>(null)
@@ -134,10 +137,11 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Settings ⋮ Sync now (manual, with the verbose empty-page diagnostics). */
+    /** Settings ⋮ Sync now + home pull-to-refresh (verbose diagnostics). */
     fun syncNow() {
         viewModelScope.launch {
             status = "Syncing bookmarks…"
+            syncing = true
             try {
                 val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
                 val found = syncBookmarkPage(html)
@@ -166,6 +170,8 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 status = "Sync failed: ${e.message}"
                 DebugLog.log("SYOSETU", "bookmark sync failed", e)
+            } finally {
+                syncing = false
             }
         }
     }

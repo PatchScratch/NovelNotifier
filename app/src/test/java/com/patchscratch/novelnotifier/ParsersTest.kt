@@ -510,7 +510,7 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         {"id":"16818093087479543721","title":"極悪貴族、謙虚堅実に無双する","catchphrase":"才能に恵まれ過ぎた極悪貴族が",
          "genre":"FANTASY","serialStatus":"COMPLETED","publicEpisodeCount":174,"totalReviewPoint":99246,
          "totalCharacterCount":831302,"publishedAt":"2024-10-27T03:04:11Z","lastEpisodePublishedAt":"2026-09-07T14:59:08Z",
-         "adminCoverImageUrl":"","author":{"activityName":"誰か"}},
+         "adminCoverImageUrl":null,"author":{"activityName":"誰か"}},
         {"id":"","title":"blank id row","genre":"FANTASY","author":{}}
         ]}}}"""
 
@@ -524,6 +524,17 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertFalse(res.works[0].isCompleted)
         assertTrue(res.works[1].isCompleted)
         assertEquals("https://kakuyomu.jp/works/1177354054891139802", res.works[0].url)
+        // covers: real URL passes through; JSON null falls back to the
+        // deterministic og:image card (works without admin cover art)
+        assertEquals("https://cdn-ak.f.st-hatena.com/images/fotolife/k/kadokawa-toko/20200603/20200603182952.jpg", res.works[0].coverUrl)
+        assertEquals("https://cdn-static.kakuyomu.jp/works/16818093087479543721/ogimage.png", res.works[1].coverUrl)
+    }
+
+    @Test
+    fun kakuyomuWorkPage_coverNullFallsBackToOgImage() {
+        val html = kakuWorkPage().replace("\"adminCoverImageUrl\":\"https://example.jp/cover.jpg\"", "\"adminCoverImageUrl\":null")
+        val d = parseKakuyomuWorkPage(html)!!
+        assertEquals("https://cdn-static.kakuyomu.jp/works/1177354054891139802/ogimage.png", d.work.coverUrl)
     }
 
     /** Work page __NEXT_DATA__ Apollo cache, minimal but structurally real:

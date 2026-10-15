@@ -168,6 +168,17 @@ private suspend fun kakuyomuGqlRaw(query: String, variables: JSONObject? = null)
         raw
     }
 
+/**
+ * Cover for works whose adminCoverImageUrl is null (common: unpublished
+ * works carry no cover art — the site itself renders a tinted card).
+ * kakuyomu.jp generates an og:image card for EVERY work and its CDN serves
+ * it token-free at a URL derived from the work id alone (verified
+ * 2026-10-15: null-cover work 2912051607690915798 still 200s here), so this
+ * needs no extra request or page state — the id is enough.
+ */
+internal fun kakuyomuOgImage(workId: String): String =
+    "https://cdn-static.kakuyomu.jp/works/$workId/ogimage.png"
+
 /** GraphQL Work node → row (works for search, rankings and detail alike). */
 private fun parseWorkNode(node: JSONObject): KakuyomuWork? {
     val id = node.optString("id")
@@ -185,7 +196,9 @@ private fun parseWorkNode(node: JSONObject): KakuyomuWork? {
         charCount = node.optLong("totalCharacterCount", 0L),
         publishedAt = node.optString("publishedAt"),
         lastUpdate = node.optString("lastEpisodePublishedAt"),
-        coverUrl = node.optString("adminCoverImageUrl"),
+        // takeIf: GraphQL null and absent both coerce to non-URL strings.
+        coverUrl = node.optString("adminCoverImageUrl").takeIf { it.startsWith("http") }
+            ?: kakuyomuOgImage(id),
         isSexual = node.optBoolean("isSexual"),
         introduction = node.optString("introduction"),
         tags = node.optJSONArray("tagLabels")?.let { arr ->
@@ -369,7 +382,8 @@ fun parseKakuyomuWorkPage(html: String): KakuyomuWorkDetail? {
         charCount = workNode.optLong("totalCharacterCount", 0L),
         publishedAt = workNode.optString("publishedAt"),
         lastUpdate = workNode.optString("lastEpisodePublishedAt"),
-        coverUrl = workNode.optString("adminCoverImageUrl"),
+        coverUrl = workNode.optString("adminCoverImageUrl").takeIf { it.startsWith("http") }
+            ?: kakuyomuOgImage(workNode.optString("id")),
         isSexual = workNode.optBoolean("isSexual"),
         introduction = workNode.optString("introduction"),
         tags = workNode.optJSONArray("tagLabels")?.let { arr ->

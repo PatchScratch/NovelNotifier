@@ -65,7 +65,11 @@ fun KakuyomuHome(
     nsfwUnlocked: Boolean = false,
     onToggleNsfw: () -> Unit = {},
     onMove: (workId: String, catId: String?) -> Unit = { _, _ -> },
-    onCreateAndMove: (workId: String, name: String) -> Unit = { _, _ -> }
+    onCreateAndMove: (workId: String, name: String) -> Unit = { _, _ -> },
+    // Pull-to-refresh: re-sync follows (the site is master) — also the way
+    // stale rows pick up fresh cover URLs.
+    isRefreshing: Boolean = false,
+    onRefresh: (() -> Unit)? = null
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -207,7 +211,9 @@ fun KakuyomuHome(
             onOpenDrawer = { scope.launch { drawerState.open() } },
             onManageRow = { row ->
                 moveTo = visible.firstOrNull { it.url == row.seriesUrl }
-            }
+            },
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh
         )
         moveTo?.let { work ->
             CategoryMoveDialog(

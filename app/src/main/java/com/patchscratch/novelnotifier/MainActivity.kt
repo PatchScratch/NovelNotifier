@@ -534,7 +534,9 @@ fun NovelApp(
                 },
                 onRemoveBookmark = { bm ->
                     if (bm.userfavId.isNotBlank()) syosetu.removeBookmark(bm.userfavId)
-                }
+                },
+                isRefreshing = syosetu.syncing,
+                onRefresh = { syosetu.syncNow() }
             )
 
             "kakuyomu" -> KakuyomuHome(
@@ -561,7 +563,9 @@ fun NovelApp(
                     kakuyomu.addCategory(name)
                     val created = kakuyomu.categories.cats.lastOrNull()
                     if (created != null) kakuyomu.moveToCategory(workId, created.id)
-                }
+                },
+                isRefreshing = kakuyomu.syncing,
+                onRefresh = { kakuyomu.syncBookmarks() }
             )
 
             else -> {
