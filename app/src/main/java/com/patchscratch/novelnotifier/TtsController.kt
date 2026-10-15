@@ -281,6 +281,10 @@ object TtsController {
 
     // --- engine: Android TTS -------------------------------------------------------------------
 
+    /** Kana (incl. half-width) or CJK ideographs → treat the text as Japanese. */
+    private fun hasJapanese(text: String): Boolean =
+        text.any { it.code in 0x3040..0x30FF || it.code in 0xFF66..0xFF9D || it.code in 0x4E00..0x9FAF }
+
     private suspend fun playAndroid(text: String) {
         // Wait for TTS init — can take 500-2000ms on first launch.
         // Poll with generous timeout; speech quality is worth the wait.
@@ -297,8 +301,7 @@ object TtsController {
         val speed = _state.value.speed
 
         // Detect language from the text (Japanese chars → ja, else en)
-        val hasJp = text.any { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FAF }
-        tts.language = if (hasJp) Locale.JAPANESE else Locale.US
+        tts.language = if (hasJapanese(text)) Locale.JAPANESE else Locale.US
         tts.setSpeechRate(speed)
 
         val utteranceId = "para_${_state.value.paragraph}"
@@ -324,6 +327,17 @@ object TtsController {
     // --- engine: Kokoro (Sherpa-ONNX) --------------------------------------------------------
 
     private suspend fun playKokoro(context: Context, text: String) {
+        // kokoro-multi-lang-v1_1 is an EN(+zh) model — feeding it kana/kanji
+        // makes the English phonemizer describe each character aloud
+        // ("Japanese letter, Japanese letter…"). Japanese paragraphs route to
+        // the system engine (Google TTS reads JP natively; Kokoro is the EN
+        // voice by design). Mixed JP+EN layouts therefore alternate engines
+        // per paragraph.
+        if (hasJapanese(text)) {
+            DebugLog.log("TTS", "Kokoro: Japanese paragraph → system TTS")
+            playAndroid(text)
+            return
+        }
         if (!TtsEngine.isModelReady(context)) {
             DebugLog.log("TTS", "Kokoro model not ready — falling back to Android TTS")
             playAndroid(text)
@@ -357,8 +371,7 @@ object TtsController {
             playAndroid(text)
             return
         }
-        val hasJp = text.any { it.code in 0x3040..0x30FF || it.code in 0x4E00..0x9FAF }
-        val voice = if (hasJp) "onyx" else "alloy"   // OpenAI voice names as defaults
+        val voice = if (hasJapanese(text)) "onyx" else "alloy"   // OpenAI voice names as defaults
         val model = p.getString("tts_cloud_model", "tts-1").orEmpty()
         val speed = _state.value.speed
 

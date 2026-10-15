@@ -20,14 +20,17 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Neural text-to-speech through Sherpa-ONNX + Kokoro multi-lang v1.1 (int8),
  * fully offline. The model (~140MB tar.bz2 from the sherpa-onnx GitHub
  * tts-models release) downloads on first use — the same opt-in UX as the
- * JMdict toggle — and lives in filesDir/tts-model/. Supports EN and JP
- * (Japanese quality verified live; the espeak-ng ja_dict handles
- * phonemization).
+ * JMdict toggle — and lives in filesDir/tts-model/.
+ *
+ * ENGLISH ONLY, despite the "multi-lang" name — v1_1 is Chinese + English
+ * (sherpa-onnx issue #2038); kana/kanji fed to it get described aloud as
+ * "Japanese letter". TtsController routes Japanese paragraphs to the system
+ * engine before ever reaching this one.
  *
  * The engine speaks a list of paragraphs (whatever the reader's current
- * layout shows: JP, EN, or both interleaved), reporting progress through
- * [onParagraph] so the caller can highlight. [stop] cancels generation
- * and playback; the AudioTrack is released cleanly.
+ * layout shows), reporting progress through [onParagraph] so the caller can
+ * highlight. [stop] cancels generation and playback; the AudioTrack is
+ * released cleanly.
  */
 object TtsEngine {
 
