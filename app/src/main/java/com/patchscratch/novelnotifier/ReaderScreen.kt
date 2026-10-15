@@ -119,6 +119,19 @@ fun isBlockedReaderHost(host: String): Boolean {
     return READER_BLOCKED_HOSTS.any { host == it || host.endsWith(".$it") }
 }
 
+/**
+ * True when the device has a network with internet capability. The reader's
+ * offline fast-path uses this: with no network the extraction ladder cannot
+ * succeed, so a stored ePub copy is served immediately instead.
+ */
+fun isNetworkOnline(context: android.content.Context): Boolean {
+    val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+        as? android.net.ConnectivityManager ?: return false
+    val network = cm.activeNetwork ?: return false
+    return cm.getNetworkCapabilities(network)
+        ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+}
+
 // Reader page palettes (reading surface, independent of the app theme).
 private data class ReaderPalette(val background: Color, val text: Color)
 private val ReaderLight = ReaderPalette(Color(0xFFFFFFFF), Color(0xFF1A1C1E))
@@ -556,6 +569,20 @@ fun ReaderScreen(
         imageChapter = false
         offlineCopy = false
         cfChecking = false
+        // No network at all: the WebView cannot load anything, so skip the
+        // ~30 s patience ladder and serve the stored ePub copy NOW. Without
+        // a stored copy the ladder still runs (it fails gracefully, and the
+        // WebView may hold a client-side cache of the page).
+        if (!isNetworkOnline(context)) {
+            val storedNow = withContext(Dispatchers.IO) {
+                EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+            }
+            if (storedNow != null) {
+                extractResult = storedNow
+                offlineCopy = true
+                return@LaunchedEffect
+            }
+        }
         delay(1200)
         tryExtract()
         delay(2600)

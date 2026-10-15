@@ -510,9 +510,18 @@ fun KakuyomuDetailScreen(
         error = ""
         try {
             detail = fetchKakuyomuWork(work.id)
+            if (detail != null) {
+                // Offline reading: every successful fetch refreshes the ToC
+                // cache the offline fallback below reads back.
+                saveKakuyomuDetail(context, detail!!)
+            }
             if (detail == null) error = "ToC を読み込めませんでした"
         } catch (e: Exception) {
-            error = "ToC を読み込めませんでした: ${e.message}"
+            // Fetch failed (offline / site down): the cached ToC keeps the
+            // episode list, "Read from start" and the epub-reader path alive.
+            detail = loadKakuyomuDetail(context, work.id)
+            error = if (detail == null) "ToC を読み込めませんでした: ${e.message}"
+            else t("Offline — showing the cached table of contents", "オフライン — キャッシュの目次を表示")
         }
         loading = false
     }

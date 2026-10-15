@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -418,6 +419,81 @@ fun parseKakuyomuWorkPage(html: String): KakuyomuWorkDetail? {
 /** Detail in one call: fetch the work page and parse it. */
 suspend fun fetchKakuyomuWork(id: String): KakuyomuWorkDetail? =
     parseKakuyomuWorkPage(fetchKakuyomuHtml("https://kakuyomu.jp/works/$id"))
+
+// --- Detail cache (offline reading: the ToC is the reader's entry point) ----
+
+/**
+ * Last-fetched work detail (work fields + ordered ToC), one JSON per work in
+ * filesDir/kakuyomu_cache/. The detail screen writes on every live fetch and
+ * reads back when the fetch fails — offline, the episode list and "Read from
+ * start" keep working, and the reader serves stored chapters from the epub
+ * store. NOT in backups (like series caches, it re-fetches on first open).
+ */
+private fun kakuyomuDetailCacheFile(context: android.content.Context, workId: String): File =
+    File(File(context.filesDir, "kakuyomu_cache"), "$workId.json")
+
+internal fun kakuyomuDetailJson(d: KakuyomuWorkDetail): JSONObject = JSONObject().apply {
+    val w = d.work
+    put("id", w.id); put("title", w.title); put("catchphrase", w.catchphrase)
+    put("genre", w.genre); put("author", w.author); put("end", w.isCompleted)
+    put("eps", w.episodeCount); put("pts", w.points); put("chars", w.charCount)
+    put("pub", w.publishedAt); put("up", w.lastUpdate); put("cover", w.coverUrl)
+    put("r18", w.isSexual); put("intro", w.introduction); put("tags", w.tags)
+    put("episodes", JSONArray().apply {
+        d.episodes.forEach { e ->
+            put(JSONObject().apply {
+                put("id", e.id); put("title", e.title)
+                put("pub", e.publishedAt); put("ch", e.chapterTitle)
+            })
+        }
+    })
+}
+
+internal fun parseKakuyomuDetailJson(json: String): KakuyomuWorkDetail? = try {
+    val row = JSONObject(json)
+    val id = row.optString("id")
+    if (id.isBlank()) null else KakuyomuWorkDetail(
+        work = KakuyomuWork(
+            id = id, title = row.optString("title"), catchphrase = row.optString("catchphrase"),
+            genre = row.optString("genre"), author = row.optString("author"),
+            isCompleted = row.optBoolean("end"), episodeCount = row.optInt("eps"),
+            points = row.optInt("pts"), charCount = row.optLong("chars"),
+            publishedAt = row.optString("pub"), lastUpdate = row.optString("up"),
+            coverUrl = row.optString("cover"), isSexual = row.optBoolean("r18"),
+            introduction = row.optString("intro"), tags = row.optString("tags")
+        ),
+        episodes = row.optJSONArray("episodes")?.let { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                val e = arr.optJSONObject(i) ?: return@mapNotNull null
+                val eid = e.optString("id")
+                if (eid.isBlank()) null else KakuyomuEpisode(
+                    id = eid, title = e.optString("title"),
+                    publishedAt = e.optString("pub"), chapterTitle = e.optString("ch")
+                )
+            }
+        } ?: emptyList()
+    )
+} catch (e: Exception) {
+    DebugLog.log("KAKUYOMU", "detail cache parse failed", e)
+    null
+}
+
+fun saveKakuyomuDetail(context: android.content.Context, d: KakuyomuWorkDetail) {
+    try {
+        val f = kakuyomuDetailCacheFile(context, d.work.id)
+        f.parentFile?.mkdirs()
+        f.writeText(kakuyomuDetailJson(d).toString())
+    } catch (e: Exception) {
+        DebugLog.log("KAKUYOMU", "detail cache save failed", e)
+    }
+}
+
+fun loadKakuyomuDetail(context: android.content.Context, workId: String): KakuyomuWorkDetail? = try {
+    kakuyomuDetailCacheFile(context, workId).takeIf { it.isFile }?.readText()
+        ?.let { parseKakuyomuDetailJson(it) }
+} catch (e: Exception) {
+    null
+}
 
 // --- Episode text (used by tests; the reader reads episodes in its WebView) --
 

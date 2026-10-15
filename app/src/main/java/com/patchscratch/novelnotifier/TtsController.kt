@@ -70,6 +70,9 @@ object TtsController {
     private var androidTts: TextToSpeech? = null
     private var ttsReady = false
 
+    /** Consecutive engine errors (offline voice-data loss → pause, see onError). */
+    private var consecutiveEngineErrors = 0
+
     // --- engine: Kokoro (Sherpa-ONNX) --------------------------------------------------
     // Reuses TtsEngine for model management + AudioTrack playback.
 
@@ -309,13 +312,23 @@ object TtsController {
             override fun onStart(id: String?) {}
             override fun onDone(id: String?) {
                 if (id == utteranceId && _state.value.state == State.PLAYING) {
+                    consecutiveEngineErrors = 0
                     advanceAfterParagraph()
                 }
             }
             @Deprecated("Deprecated in Java")
             override fun onError(id: String?) {
                 DebugLog.log("TTS", "Android TTS error for $id")
-                advanceAfterParagraph() // don't stall on errors
+                // Offline with no installed voice data the engine errors on
+                // EVERY paragraph — advancing would race the chapter in
+                // silence. A few strikes → pause with a hint instead.
+                consecutiveEngineErrors++
+                if (consecutiveEngineErrors >= 3) {
+                    DebugLog.log("TTS", "engine failing repeatedly — pausing")
+                    pause()
+                } else {
+                    advanceAfterParagraph() // don't stall on one bad paragraph
+                }
             }
         })
 
