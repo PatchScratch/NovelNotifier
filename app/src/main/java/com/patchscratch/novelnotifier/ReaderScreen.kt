@@ -637,10 +637,14 @@ fun ReaderScreen(
         }
     }
 
-    // Auto-save — ONLY for series the user opted in, dedup by chapter URL.
-    LaunchedEffect(extractResult, chapter.url, offlineEnabled) {
+    // Auto-save — EVERY successfully displayed chapter becomes its offline
+    // copy (Wayne's rule, 2026-10-15: "downloaded chapters should be visible
+    // offline" — reading IS the opt-in; the per-series toggle now governs
+    // bulk downloads only). Dedup by chapter URL; never re-store the very
+    // copy we're currently serving from the book.
+    LaunchedEffect(extractResult, chapter.url) {
         val extract = extractResult ?: return@LaunchedEffect
-        if (!offlineEnabled || offlineCopy || chapter.url in savedUrls) return@LaunchedEffect
+        if (offlineCopy || chapter.url in savedUrls) return@LaunchedEffect
         savedUrls.add(chapter.url)
         val count = withContext(Dispatchers.IO) {
             EpubStore.appendChapter(
@@ -903,9 +907,14 @@ fun ReaderScreen(
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
 
                 // ---- Offline library ----------------------------------------------
+                // Chapters you read are stored automatically; this toggle
+                // decides whether BULK downloads include the series.
                 DropdownMenuItem(
                     text = {
-                        Text(if (offlineEnabled) t("Offline for this series: ON", "このシリーズのオフライン: ON") else t("Offline for this series: OFF", "このシリーズのオフライン: OFF"))
+                        Text(
+                            if (offlineEnabled) t("Include in bulk download: ON", "一括ダウンロードに含める: ON")
+                            else t("Include in bulk download: OFF", "一括ダウンロードに含める: OFF")
+                        )
                     },
                     onClick = { showMenu = false; toggleOfflineForSeries() }
                 )

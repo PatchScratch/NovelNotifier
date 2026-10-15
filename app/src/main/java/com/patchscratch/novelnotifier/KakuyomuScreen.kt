@@ -1,6 +1,8 @@
 package com.patchscratch.novelnotifier
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
@@ -504,6 +506,9 @@ fun KakuyomuDetailScreen(
     var error by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     var showMove by remember { mutableStateOf(false) }
+    // Offline ToC of last resort: chapters already stored in the series'
+    // offline books ("the chapters you've read").
+    var storedList by remember(work.id) { mutableStateOf<List<Release>>(emptyList()) }
 
     LaunchedEffect(work.id) {
         loading = true
@@ -522,6 +527,11 @@ fun KakuyomuDetailScreen(
             detail = loadKakuyomuDetail(context, work.id)
             error = if (detail == null) "ToC を読み込めませんでした: ${e.message}"
             else t("Offline — showing the cached table of contents", "オフライン — キャッシュの目次を表示")
+        }
+        if (detail == null) {
+            storedList = withContext(Dispatchers.IO) {
+                EpubStore.storedChapters(context, work.url).map { it.toRelease() }
+            }
         }
         loading = false
     }
@@ -625,10 +635,15 @@ fun KakuyomuDetailScreen(
             Row(modifier = Modifier.padding(horizontal = 8.dp)) {
                 TextButton(
                     onClick = {
-                        val chapters = toChapters()
-                        if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
+                        if (detail?.episodes?.isNotEmpty() == true) {
+                            val chapters = toChapters()
+                            if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
+                        } else if (storedList.isNotEmpty()) {
+                            // Offline with no ToC at all — read what's stored.
+                            onOpenReader(storedList, 0)
+                        }
                     },
-                    enabled = detail?.episodes?.isNotEmpty() == true
+                    enabled = detail?.episodes?.isNotEmpty() == true || storedList.isNotEmpty()
                 ) { Text(t("Read from start", "最初から読む")) }
                 TextButton(
                     onClick = {
@@ -685,6 +700,27 @@ fun KakuyomuDetailScreen(
                     )
                 }
                 Text("${list.indexOf(ep) + 1}. ${ep.title}", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        // Offline ToC of last resort: no live/cached ToC, but the offline
+        // books hold chapters — list exactly what can be opened.
+        if (list.isEmpty() && storedList.isNotEmpty()) {
+            item {
+                Text(
+                    t("Stored chapters (offline)", "保存済みの話（オフライン）") + " (${storedList.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+            items(storedList, key = { it.url }) { rel ->
+                Text(
+                    rel.chapter,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenReader(storedList, storedList.indexOf(rel)) }
+                        .padding(horizontal = 20.dp, vertical = 10.dp)
+                )
             }
         }
     }

@@ -435,6 +435,9 @@ fun SyosetuDetailScreen(
     // after a bookmark-tile hydration) — render from it when present.
     var meta by remember(novel.ncode) { mutableStateOf(novel) }
     var showBookmarkCard by remember { mutableStateOf(false) }
+    // Offline ToC of last resort: chapters already stored in the series'
+    // offline books ("the chapters you've read").
+    var storedList by remember(novel.ncode) { mutableStateOf<List<Release>>(emptyList()) }
 
     // Instant render from the series cache when fresh; fetch only when
     // stale (>12h) or the row's lastUpdate moved (new episodes published).
@@ -478,7 +481,23 @@ fun SyosetuDetailScreen(
                 withContext(Dispatchers.IO) { saveSyosetuSeries(context, novel, toc!!) }
             }
         } catch (e: Exception) {
-            error = "ToC を読み込めませんでした: ${e.message}"
+            // Live fetch failed (offline / site down). A stale cached ToC
+            // still opens every stored chapter; without one, the stored
+            // chapter list below becomes the visible ToC.
+            val stale = withContext(Dispatchers.IO) {
+                loadSyosetuSeries(context, novel.ncode, "", allowStale = true)
+            }
+            if (stale != null) {
+                toc = stale.toc
+                error = t("Offline — showing the cached table of contents", "オフライン — キャッシュの目次を表示")
+            } else {
+                error = "ToC を読み込めませんでした: ${e.message}"
+            }
+        }
+        if (toc == null) {
+            storedList = withContext(Dispatchers.IO) {
+                EpubStore.storedChapters(context, novel.url).map { it.toRelease() }
+            }
         }
         loading = false
     }
@@ -611,10 +630,15 @@ fun SyosetuDetailScreen(
             Row(modifier = Modifier.padding(horizontal = 8.dp)) {
                 TextButton(
                     onClick = {
-                        val chapters = toChapters()
-                        if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
+                        if (toc?.episodes?.isNotEmpty() == true) {
+                            val chapters = toChapters()
+                            if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
+                        } else if (storedList.isNotEmpty()) {
+                            // Offline with no ToC at all — read what's stored.
+                            onOpenReader(storedList, 0)
+                        }
                     },
-                    enabled = toc?.episodes?.isNotEmpty() == true
+                    enabled = toc?.episodes?.isNotEmpty() == true || storedList.isNotEmpty()
                 ) { Text(t("Read from start", "最初から読む")) }
                 TextButton(
                     onClick = {
@@ -719,6 +743,29 @@ fun SyosetuDetailScreen(
                     }
                     .padding(horizontal = 20.dp, vertical = 10.dp)
             )
+        }
+        // Offline ToC of last resort: no live/stale ToC, but the offline
+        // books hold chapters — list exactly what can be opened.
+        if (list.isEmpty() && storedList.isNotEmpty()) {
+            item {
+                Text(
+                    t("Stored chapters (offline)", "保存済みの話（オフライン）") + " (${storedList.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+            items(storedList, key = { it.url }) { rel ->
+                Text(
+                    rel.chapter,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onOpenReader(storedList, storedList.indexOf(rel))
+                        }
+                        .padding(horizontal = 20.dp, vertical = 10.dp)
+                )
+            }
         }
     }
 }

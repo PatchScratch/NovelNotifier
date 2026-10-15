@@ -91,6 +91,17 @@ object EpubStore {
 
     private fun prefixOf(seriesUrl: String) = seriesUrl.hashCode().toUInt().toString() + "-"
 
+    /**
+     * Every stored chapter across the series' bucket books, chapter order —
+     * the offline ToC of last resort. The reader appends each chapter it
+     * successfully displays (2026-10-15: reading is the opt-in), so this is
+     * "the chapters you've read/downloaded", servable with no network.
+     */
+    fun storedChapters(context: Context, seriesUrl: String): List<StoredChapter> =
+        bookFiles(context, seriesUrl)
+            .flatMap { readBookIndex(it) }
+            .sortedBy { it.num }
+
     // --- data shapes ---------------------------------------------------------
 
     /**
@@ -728,3 +739,11 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         }
     }
 }
+
+/** Stored chapter → reader chapter row (label keeps cN bucket semantics). */
+fun EpubStore.StoredChapter.toRelease(): Release = Release(
+    chapter = label.ifBlank { title },
+    group = "",
+    date = "",
+    url = url
+)

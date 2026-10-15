@@ -725,10 +725,17 @@ fun saveSyosetuSeriesTo(dir: File, novel: SyosetuNovel, toc: SyosetuToc) {
 
 /** Cache for [ncode] when it exists and is fresh relative to the incoming
  *  row's lastUpdate ([incomingUpdate]; blank skips the check). */
-fun loadSyosetuSeries(context: Context, ncode: String, incomingUpdate: String): SyosetuSeriesCache? =
-    loadSyosetuSeriesFrom(context.filesDir.resolve("syosetu"), ncode, incomingUpdate)
+fun loadSyosetuSeries(
+    context: Context,
+    ncode: String,
+    incomingUpdate: String,
+    // Offline fallback: serve a stale cache when the live fetch failed —
+    // a possibly-outdated ToC beats a dead-end detail screen.
+    allowStale: Boolean = false
+): SyosetuSeriesCache? =
+    loadSyosetuSeriesFrom(context.filesDir.resolve("syosetu"), ncode, incomingUpdate, allowStale)
 
-fun loadSyosetuSeriesFrom(dir: File, ncode: String, incomingUpdate: String): SyosetuSeriesCache? = try {
+fun loadSyosetuSeriesFrom(dir: File, ncode: String, incomingUpdate: String, allowStale: Boolean = false): SyosetuSeriesCache? = try {
     val f = dir.resolve("series").apply { mkdirs() }.resolve(ncode.uppercase() + ".json")
     if (!f.isFile) null
     else {
@@ -736,7 +743,7 @@ fun loadSyosetuSeriesFrom(dir: File, ncode: String, incomingUpdate: String): Syo
         val cached = novelFromJson(o.optJSONObject("novel") ?: return null)
         val fresh = o.optLong("at") > System.currentTimeMillis() - 12 * 3600_000L
         val sameUpdate = incomingUpdate.isBlank() || incomingUpdate == cached.lastUpdate
-        if (fresh && sameUpdate) {
+        if ((fresh && sameUpdate) || allowStale) {
             val eps = (0 until o.optJSONArray("episodes").length()).map {
                 val e = o.optJSONArray("episodes").optJSONObject(it)!!
                 SyosetuEpisode(e.optInt("n"), e.optString("t"))

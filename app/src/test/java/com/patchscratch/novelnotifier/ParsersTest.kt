@@ -843,6 +843,11 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
             )
         )
         assertNull(loadSyosetuSeriesFrom(dir, "n4180mw", novel.lastUpdate))
+        // offline fallback (2026-10-15): allowStale serves the stale cache —
+        // a possibly-outdated ToC beats a dead-end detail screen offline
+        val stale = loadSyosetuSeriesFrom(dir, "n4180mw", novel.lastUpdate, allowStale = true)
+        assertNotNull(stale)
+        assertEquals(2, stale!!.toc.episodes.size)
     }
 
 
