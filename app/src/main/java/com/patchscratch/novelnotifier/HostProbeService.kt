@@ -286,7 +286,7 @@ class HostProbeService : Service() {
             raw == null -> return entry.put("verdict", "TIMEOUT").put("note", "page never finished")
             raw == "CF" -> return entry.put("verdict", "CLOUDFLARE")
         }
-        val parsed = parseChapterExtract(unwrapJsResult(raw))
+        val parsed = parseChapterExtract(raw)
         if (parsed != null) {
             return entry.put("verdict", "OK")
                 .put("paragraphs", parsed.paragraphs.size)
@@ -303,7 +303,7 @@ class HostProbeService : Service() {
                 }
             }
         }
-        val parsed2 = retry?.let { parseChapterExtract(unwrapJsResult(it)) }
+        val parsed2 = retry?.let { parseChapterExtract(it) }
         if (parsed2 != null) {
             return entry.put("verdict", "OK-SLOW") // needed the extra beat — TTS/ePub must too
                 .put("paragraphs", parsed2.paragraphs.size)
@@ -317,8 +317,31 @@ class HostProbeService : Service() {
                 }
             }
         } ?: ""
+        // Parse forensics: the extractor returned SOMETHING — if it looks
+        // like JSON, find out exactly why the Kotlin parse rejected it.
+        val unwrapped = unwrapJsResult(raw)
+        if (unwrapped.trimStart().startsWith("{")) {
+            try {
+                val obj = org.json.JSONObject(unwrapped)
+                val arr = obj.optJSONArray("paragraphs")
+                // Stage-by-stage: mirror parseChapterExtract exactly, but
+                // record WHERE it would drop out.
+                val n = arr?.length() ?: -1
+                val nonBlank = (0 until (arr?.length() ?: 0)).count { i ->
+                    arr!!.optString(i).trim().isNotBlank()
+                }
+                val viaRealParser = parseChapterExtract(unwrapped)
+                entry.put(
+                    "parseNote",
+                    "jsonOk n=$n nonBlank=$nonBlank realParser=${viaRealParser?.paragraphs?.size ?: "null"}" +
+                        " first=" + (arr?.optString(0) ?: "").take(40)
+                )
+            } catch (e: Exception) {
+                entry.put("parseNote", "jsonThrow " + e.javaClass.simpleName + ": " + (e.message ?: "").take(80))
+            }
+        }
         return entry.put("verdict", "FAIL")
-            .put("extractSaid", (raw.take(40)))
+            .put("extractSaid", (raw.take(120)))
             .put("note", unwrapJsResult(diag).take(220))
     }
 }

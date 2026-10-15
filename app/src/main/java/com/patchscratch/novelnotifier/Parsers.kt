@@ -276,14 +276,21 @@ private fun isScribblehubUrl(url: String?): Boolean {
  *  arrive as literal "\u003Cul\u003E…" and never parse. */
 fun unwrapJsResult(result: String?): String {
     if (result.isNullOrBlank() || result == "null") return ""
-    return result
-        .removeSurrounding("\"")
-        .replace(Regex("\\\\u([0-9a-fA-F]{4})")) { it.groupValues[1].toInt(16).toChar().toString() }
-        .replace("\\\"", "\"")
-        .replace("\\n", "\n")
-        .replace("\\r", "\r")
-        .replace("\\t", "\t")
-        .replace("\\\\", "\\")
+    // Proper JSON decode (2026-10-15): the hand-rolled escape replacements
+    // unescaped \" EVERYWHERE — including inside string values — so prose
+    // containing straight quotes produced ["He said "hi"."] which is
+    // malformed JSON and failed every downstream parse (reader extraction,
+    // TTS, ePub, the host probe). JSONTokener decodes with real string
+    // boundaries; non-JSON input falls back unchanged (legacy callers pass
+    // already-decoded strings through here too).
+    return try {
+        when (val v = org.json.JSONTokener(result).nextValue()) {
+            is String -> v
+            else -> v.toString()
+        }
+    } catch (_: Exception) {
+        result.removeSurrounding("\"")
+    }
 }
 
 /** True for challenge / turnstile URLs. Not a bypass — we still show the check. */
