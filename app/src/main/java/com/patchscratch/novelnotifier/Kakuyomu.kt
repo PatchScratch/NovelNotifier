@@ -547,8 +547,12 @@ suspend fun fetchKakuyomuVisitor(): KakuyomuVisitor? {
         KAKUYOMU_GQL_URL,
         """{"query":"{ visitor { screenName name } }"}"""
     )
+    // Kakuyomu's visitor payload started returning "@name" (2026-10-15
+    // live catch: follows then queried a user literally named '@PatchScratch'
+    // → NOT_FOUND → sync silently kept stale local rows). Strip the prefix.
     val screenName = JSONObject(raw).optJSONObject("data")
         ?.optJSONObject("visitor")?.optString("screenName").orEmpty()
+        .removePrefix("@")
     if (screenName.isBlank() || screenName == "null") return null
     val name = JSONObject(raw).optJSONObject("data")?.optJSONObject("visitor")?.optString("name").orEmpty()
     return KakuyomuVisitor(screenName, name)
@@ -569,6 +573,7 @@ internal fun parseKakuyomuFollowsJson(json: String): List<KakuyomuWork> = try {
 suspend fun fetchKakuyomuFollows(screenName: String): List<KakuyomuWork> {
     val all = mutableListOf<KakuyomuWork>()
     var offset = 0
+    DebugLog.log("KAKUYOMU", "follows query for screenName=[$screenName]")
     while (true) {
         val raw = fetchKakuyomuWithSession(
             KAKUYOMU_GQL_URL,
@@ -580,6 +585,9 @@ suspend fun fetchKakuyomuFollows(screenName: String): List<KakuyomuWork> {
             }.toString()
         )
         val page = parseKakuyomuFollowsJson(raw)
+        if (page.isEmpty() && offset == 0) {
+            DebugLog.log("KAKUYOMU", "follows page empty — raw: " + raw.take(300))
+        }
         all += page
         if (page.size < 50) break
         offset += 50
