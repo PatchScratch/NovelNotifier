@@ -641,10 +641,18 @@ fun ReaderScreen(
     // copy (Wayne's rule, 2026-10-15: "downloaded chapters should be visible
     // offline" — reading IS the opt-in; the per-series toggle now governs
     // bulk downloads only). Dedup by chapter URL; never re-store the very
-    // copy we're currently serving from the book.
+    // copy we're currently serving from the book, and never overwrite a
+    // chapter already in the store (it may carry an AI translation).
     LaunchedEffect(extractResult, chapter.url) {
         val extract = extractResult ?: return@LaunchedEffect
         if (offlineCopy || chapter.url in savedUrls) return@LaunchedEffect
+        val alreadyStored = withContext(Dispatchers.IO) {
+            EpubStore.readChapter(context, target.seriesUrl, chapter.url) != null
+        }
+        if (alreadyStored) {
+            savedUrls.add(chapter.url)   // counted, but not re-written
+            return@LaunchedEffect
+        }
         savedUrls.add(chapter.url)
         val count = withContext(Dispatchers.IO) {
             EpubStore.appendChapter(

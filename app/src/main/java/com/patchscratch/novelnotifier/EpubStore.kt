@@ -610,7 +610,11 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
             val existing = readAllChapterDocs(book) +
                 (if (legacy.exists()) readAllChapterDocs(legacy).filter { chapterBucket(it.label) == bucket } else emptyList())
             val kept = existing.filter { it.url != chapterUrl }
-            val docs = kept + ChapterDoc(chapterUrl, label, extract.title, extract.paragraphs)
+            // Re-appending must not drop a stored AI translation (the doc
+            // rebuild replaces the URL's row) — carry it across so a plain
+            // re-read never wipes translated chapters.
+            val priorTranslation = existing.firstOrNull { it.url == chapterUrl }?.translation
+            val docs = kept + ChapterDoc(chapterUrl, label, extract.title, extract.paragraphs, priorTranslation)
             val ordered = orderDocs(docs)
             val cover = CoverStore.localFile(context, seriesUrl)?.readBytes()
                 ?: existingCover(book) ?: if (legacy.exists()) existingCover(legacy) else null

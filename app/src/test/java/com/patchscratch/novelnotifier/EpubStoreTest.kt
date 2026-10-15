@@ -106,6 +106,25 @@ class EpubStoreTest {
     }
 
     @Test
+    fun translationSurvivesRoundTripAndCarriedAcrossReappend() {
+        // Regression (2026-10-15): the reader auto-appends every displayed
+        // chapter; the doc rebuild must carry the stored AI translation
+        // across instead of dropping it ("the update lost my translation").
+        val book = tempBook("xlate")
+        EpubStore.writeBook(book, "T", null, "image/jpeg", listOf(
+            doc("https://h/1", "c1", "One", "原文1", "原文2").copy(translation = listOf("Hello 1", "Hello 2"))
+        ))
+        val stored = EpubStore.readChapterDoc(book, "https://h/1")!!
+        assertEquals(listOf("Hello 1", "Hello 2"), stored.translation)
+        // simulate appendChapter's rebuild: fresh raw doc + prior translation
+        val prior = stored.translation
+        EpubStore.writeBook(book, "T", null, "image/jpeg", listOf(
+            doc("https://h/1", "c1", "One", "原文1", "原文2").copy(translation = prior)
+        ))
+        assertEquals(listOf("Hello 1", "Hello 2"), EpubStore.readChapterDoc(book, "https://h/1")!!.translation)
+    }
+
+    @Test
     fun unparseableLabelsSortLastButKept() {
         val ordered = EpubStore.orderDocs(listOf(
             doc("https://h/x", "v2 part7", "Extra", "px"),
