@@ -232,21 +232,30 @@ object TtsEngine {
 
     /** Generate one paragraph and play it. Returns true on success.
      *  Used by TtsController for Kokoro engine playback. */
-    suspend fun generateSingle(text: String, voiceId: Int = 0, speed: Float = 1.0f): Boolean =
-        withContext(Dispatchers.IO) {
-            val context = lastContext ?: return@withContext false
-            if (!isModelReady(context)) return@withContext false
-            if (tts == null) initEngine(context) ?: return@withContext false
-            try {
-                val generated = tts!!.generate(text = text, sid = voiceId, speed = speed)
-                ensureAudioTrack(tts!!.sampleRate())
-                writeSamples(generated.samples, tts!!.sampleRate())
-                true
-            } catch (e: Exception) {
-                DebugLog.log(TAG, "generateSingle failed", e)
-                false
-            }
+    suspend fun generateSingle(
+        context: Context,
+        text: String,
+        voiceId: Int = 0,
+        speed: Float = 1.0f
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (!isModelReady(context)) return@withContext false
+        // Must ASSIGN — a bare `initEngine(context) ?: return` left tts null
+        // and the next `tts!!` NPE'd on first use (caught → silent fallback).
+        if (tts == null) {
+            tts = initEngine(context) ?: return@withContext false
         }
+        try {
+            val started = System.currentTimeMillis()
+            val generated = tts!!.generate(text = text, sid = voiceId, speed = speed)
+            ensureAudioTrack(tts!!.sampleRate())
+            writeSamples(generated.samples, tts!!.sampleRate())
+            DebugLog.log(TAG, "kokoro gen: ${text.length} chars → ${System.currentTimeMillis() - started}ms, ${generated.samples.size} samples")
+            true
+        } catch (e: Exception) {
+            DebugLog.log(TAG, "generateSingle failed", e)
+            false
+        }
+    }
 
     /** Play raw PCM (16-bit) audio bytes — used by the cloud TTS engine. */
     suspend fun playPcm(pcmBytes: ByteArray, sampleRate: Int = 24000) = withContext(Dispatchers.IO) {
@@ -261,9 +270,6 @@ object TtsEngine {
                 DebugLog.log(TAG, "playPcm failed", e)
             }
     }
-
-    @Volatile private var lastContext: Context? = null
-    fun setContext(context: Context) { lastContext = context.applicationContext }
 
     private fun initEngine(context: Context): com.k2fsa.sherpa.onnx.OfflineTts? {
         val dir = modelDir(context)

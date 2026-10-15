@@ -329,12 +329,15 @@ object TtsController {
             playAndroid(text)
             return
         }
-        val index = _state.value.paragraph
         val speed = _state.value.speed
         val voiceId = prefs?.getInt("tts_voice", 0) ?: 0
 
-        val spoken = TtsEngine.generateSingle(text, voiceId, speed)
-        if (spoken != null) {
+        // NB: generateSingle returns a plain Boolean — truth-check it.
+        // (An earlier `!= null` compared a non-null Boolean and was always
+        // true, swallowing failures: the reader raced through the chapter
+        // in silence instead of falling back to system TTS.)
+        val spoken = TtsEngine.generateSingle(context, text, voiceId, speed)
+        if (spoken) {
             if (_state.value.state == State.PLAYING) {
                 advanceAfterParagraph()
             }
