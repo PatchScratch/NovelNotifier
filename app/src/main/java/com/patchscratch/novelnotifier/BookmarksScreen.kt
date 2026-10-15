@@ -56,10 +56,7 @@ data class BookmarkRow(
     val subtitle: String,
     val coverUrl: String,
     val seriesUrl: String,
-    val open: () -> Unit,
-    // Site theme color for coverless works (hex) — renders a tinted card
-    // instead of the shiba placeholder when set.
-    val placeholderColor: String = ""
+    val open: () -> Unit
 )
 
 @Composable
@@ -203,9 +200,7 @@ private fun BookmarkRowsLayout(
                         seriesUrl = row.seriesUrl,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .aspectRatio(3f / 4f),
-                        placeholderColor = row.placeholderColor,
-                        placeholderLabel = row.title
+                            .aspectRatio(3f / 4f)
                     )
                     Text(
                         row.title,
@@ -243,9 +238,7 @@ private fun BookmarkRowsLayout(
                         CoverThumb(
                             url = row.coverUrl,
                             seriesUrl = row.seriesUrl,
-                            modifier = Modifier.size(56.dp),
-                            placeholderColor = row.placeholderColor,
-                            placeholderLabel = row.title
+                            modifier = Modifier.size(56.dp)
                         )
                         Column(modifier = Modifier.padding(start = 12.dp)) {
                             Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
@@ -403,8 +396,7 @@ fun KakuyomuBookmarksScreen(
                 subtitle = work.author,
                 coverUrl = work.coverUrl,
                 seriesUrl = work.url,
-                open = { onOpenWork(work) },
-                placeholderColor = work.baseColor
+                open = { onOpenWork(work) }
             )
         },
         emptyMessage = t(
