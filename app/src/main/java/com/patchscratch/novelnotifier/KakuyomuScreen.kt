@@ -200,7 +200,8 @@ fun KakuyomuHome(
                     subtitle = work.author,
                     coverUrl = work.coverUrl,
                     seriesUrl = work.url,
-                    open = { onOpenWork(work) }
+                    open = { onOpenWork(work) },
+                    placeholderColor = work.baseColor
                 )
             },
             emptyMessage = if (bookmarks.isEmpty() && !loggedIn) t(
@@ -538,15 +539,17 @@ fun KakuyomuDetailScreen(
             }
         }
         item {
-            // Cover thumb beside the title, NU-style — shows generated art
-            // once CoverStore has one (Kakuyomu covers are admin-set and
-            // mostly absent from the API payload).
+            // Cover thumb beside the title, NU-style — real art when the work
+            // has it, generated art once CoverStore has one, else the site's
+            // baseColor card (what kakuyomu.jp itself shows coverless).
             Row(modifier = Modifier.padding(horizontal = 16.dp)) {
                 CoverThumb(
                     url = work.coverUrl,
                     seriesUrl = work.url,
                     modifier = Modifier.padding(top = 8.dp, end = 12.dp).width(84.dp).height(112.dp),
-                    fullscreen = true
+                    fullscreen = true,
+                    placeholderColor = work.baseColor,
+                    placeholderLabel = work.title
                 )
                 Column {
                     Text(

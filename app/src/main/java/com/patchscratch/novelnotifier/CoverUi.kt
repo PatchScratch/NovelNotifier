@@ -92,7 +92,10 @@ fun CoverPrefetcher(
 /**
  * Small cover tile. Loads the local CoverStore file for [seriesUrl] when we
  * have one (offline + backup-friendly), otherwise the URL via Coil; no cover
- * at all → the puzzled shiba placeholder with its "No cover available" caption.
+ * at all → the puzzled shiba placeholder with its "No cover available" caption,
+ * or — when [placeholderColor] is set (site theme color, e.g. Kakuyomu's
+ * baseColor) — a tinted card with [placeholderLabel], matching what the
+ * site itself renders for coverless works.
  */
 @Composable
 fun CoverThumb(
@@ -102,13 +105,21 @@ fun CoverThumb(
     // Bump to re-read CoverStore (e.g. after AI cover generation).
     refreshKey: Int = 0,
     // When set, tapping the thumb opens the image fullscreen (series pages).
-    fullscreen: Boolean = false
+    fullscreen: Boolean = false,
+    // Site theme color (hex "#RRGGBB") for the no-cover fallback card.
+    placeholderColor: String = "",
+    // Short label (the title) drawn on the tinted card.
+    placeholderLabel: String = ""
 ) {
     val context = LocalContext.current
     val local = remember(seriesUrl, refreshKey) {
         seriesUrl.takeIf { it.isNotBlank() }?.let { CoverStore.localFile(context, it) }
     }
     var openFull by remember { mutableStateOf(false) }
+    val tint = remember(placeholderColor) {
+        runCatching { Color(android.graphics.Color.parseColor(placeholderColor)) }
+            .getOrDefault(Color.Unspecified)
+    }
     Surface(
         modifier = modifier
             .clip(MaterialTheme.shapes.small)
@@ -123,6 +134,22 @@ fun CoverThumb(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
+        } else if (tint != Color.Unspecified) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(tint)
+                    .padding(8.dp),
+                contentAlignment = Alignment.BottomStart
+            ) {
+                Text(
+                    text = placeholderLabel,
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    lineHeight = 11.sp,
+                    maxLines = 3
+                )
+            }
         } else {
             Box(modifier = Modifier.fillMaxSize()) {
                 androidx.compose.foundation.Image(

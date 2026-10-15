@@ -42,7 +42,10 @@ data class KakuyomuWork(
     val coverUrl: String,       // adminCoverImageUrl ("" when absent)
     val isSexual: Boolean = false,  // the site's R18 flag (no separate genre)
     val introduction: String = "",  // synopsis — detail pages only
-    val tags: String = ""           // tagLabels joined — detail pages only
+    val tags: String = "",          // tagLabels joined — detail pages only
+    // Site-assigned theme color ("#3189D3"). Coverless works render a card
+    // tinted with this on kakuyomu.jp itself — our placeholder matches.
+    val baseColor: String = ""
 ) {
     val url: String get() = "https://kakuyomu.jp/works/$id"
 }
@@ -168,17 +171,6 @@ private suspend fun kakuyomuGqlRaw(query: String, variables: JSONObject? = null)
         raw
     }
 
-/**
- * Cover for works whose adminCoverImageUrl is null (common: unpublished
- * works carry no cover art — the site itself renders a tinted card).
- * kakuyomu.jp generates an og:image card for EVERY work and its CDN serves
- * it token-free at a URL derived from the work id alone (verified
- * 2026-10-15: null-cover work 2912051607690915798 still 200s here), so this
- * needs no extra request or page state — the id is enough.
- */
-internal fun kakuyomuOgImage(workId: String): String =
-    "https://cdn-static.kakuyomu.jp/works/$workId/ogimage.png"
-
 /** GraphQL Work node → row (works for search, rankings and detail alike). */
 private fun parseWorkNode(node: JSONObject): KakuyomuWork? {
     val id = node.optString("id")
@@ -197,8 +189,8 @@ private fun parseWorkNode(node: JSONObject): KakuyomuWork? {
         publishedAt = node.optString("publishedAt"),
         lastUpdate = node.optString("lastEpisodePublishedAt"),
         // takeIf: GraphQL null and absent both coerce to non-URL strings.
-        coverUrl = node.optString("adminCoverImageUrl").takeIf { it.startsWith("http") }
-            ?: kakuyomuOgImage(id),
+        coverUrl = node.optString("adminCoverImageUrl").takeIf { it.startsWith("http") } ?: "",
+        baseColor = node.optString("baseColor").takeIf { it.startsWith("#") } ?: "",
         isSexual = node.optBoolean("isSexual"),
         introduction = node.optString("introduction"),
         tags = node.optJSONArray("tagLabels")?.let { arr ->
@@ -211,7 +203,7 @@ private fun parseWorkNode(node: JSONObject): KakuyomuWork? {
 private const val KAKUYOMU_WORK_FIELDS =
     "id title catchphrase genre serialStatus publicEpisodeCount " +
         "totalReviewPoint totalCharacterCount publishedAt lastEpisodePublishedAt " +
-        "adminCoverImageUrl isSexual author { activityName }"
+        "adminCoverImageUrl baseColor isSexual author { activityName }"
 
 /** GraphQL response (the whole {data:…} envelope) → search result. */
 internal fun parseKakuyomuSearchJson(json: String): KakuyomuSearchResult = try {
@@ -382,8 +374,8 @@ fun parseKakuyomuWorkPage(html: String): KakuyomuWorkDetail? {
         charCount = workNode.optLong("totalCharacterCount", 0L),
         publishedAt = workNode.optString("publishedAt"),
         lastUpdate = workNode.optString("lastEpisodePublishedAt"),
-        coverUrl = workNode.optString("adminCoverImageUrl").takeIf { it.startsWith("http") }
-            ?: kakuyomuOgImage(workNode.optString("id")),
+        coverUrl = workNode.optString("adminCoverImageUrl").takeIf { it.startsWith("http") } ?: "",
+        baseColor = workNode.optString("baseColor").takeIf { it.startsWith("#") } ?: "",
         isSexual = workNode.optBoolean("isSexual"),
         introduction = workNode.optString("introduction"),
         tags = workNode.optJSONArray("tagLabels")?.let { arr ->
@@ -469,7 +461,7 @@ private fun KakuyomuWork.toBookmarkJson(): JSONObject = JSONObject().apply {
     put("genre", genre); put("author", author); put("end", isCompleted)
     put("eps", episodeCount); put("pts", points); put("chars", charCount)
     put("pub", publishedAt); put("up", lastUpdate); put("cover", coverUrl)
-    put("r18", isSexual)
+    put("r18", isSexual); put("bc", baseColor)
 }
 
 internal fun kakuyomuBookmarksJson(works: List<KakuyomuWork>): String =
@@ -487,7 +479,13 @@ internal fun parseKakuyomuBookmarks(json: String): List<KakuyomuWork> = try {
             isCompleted = row.optBoolean("end"), episodeCount = row.optInt("eps"),
             points = row.optInt("pts"), charCount = row.optLong("chars"),
             publishedAt = row.optString("pub"), lastUpdate = row.optString("up"),
-            coverUrl = row.optString("cover"), isSexual = row.optBoolean("r18")
+            // Strips the retired ogimage fallback URLs (c90d34f) that one
+            // sync's worth of stored rows carry — they read as page
+            // screenshots, not covers; the baseColor tint replaces them.
+            coverUrl = row.optString("cover")
+                .takeIf { it.startsWith("http") && !it.endsWith("/ogimage.png") && !it.contains("/ogimage.png?") } ?: "",
+            isSexual = row.optBoolean("r18"),
+            baseColor = row.optString("bc")
         )
     }
 } catch (e: Exception) {

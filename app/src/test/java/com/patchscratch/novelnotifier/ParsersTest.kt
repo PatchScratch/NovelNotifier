@@ -506,11 +506,12 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
          "genre":"FANTASY","serialStatus":"RUNNING","publicEpisodeCount":763,"totalReviewPoint":73819,
          "totalCharacterCount":1597523,"publishedAt":"2019-10-12T11:36:32Z","lastEpisodePublishedAt":"2026-10-11T04:16:59Z",
          "adminCoverImageUrl":"https://cdn-ak.f.st-hatena.com/images/fotolife/k/kadokawa-toko/20200603/20200603182952.jpg",
+         "baseColor":"#1F6FBF",
          "author":{"activityName":"じゃがバター"}},
         {"id":"16818093087479543721","title":"極悪貴族、謙虚堅実に無双する","catchphrase":"才能に恵まれ過ぎた極悪貴族が",
          "genre":"FANTASY","serialStatus":"COMPLETED","publicEpisodeCount":174,"totalReviewPoint":99246,
          "totalCharacterCount":831302,"publishedAt":"2024-10-27T03:04:11Z","lastEpisodePublishedAt":"2026-09-07T14:59:08Z",
-         "adminCoverImageUrl":null,"author":{"activityName":"誰か"}},
+         "adminCoverImageUrl":null,"baseColor":"#3189D3","author":{"activityName":"誰か"}},
         {"id":"","title":"blank id row","genre":"FANTASY","author":{}}
         ]}}}"""
 
@@ -524,17 +525,20 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertFalse(res.works[0].isCompleted)
         assertTrue(res.works[1].isCompleted)
         assertEquals("https://kakuyomu.jp/works/1177354054891139802", res.works[0].url)
-        // covers: real URL passes through; JSON null falls back to the
-        // deterministic og:image card (works without admin cover art)
+        // covers: real URL passes through; JSON null stays blank (coverless
+        // works render the baseColor tint card, not a fetched image)
         assertEquals("https://cdn-ak.f.st-hatena.com/images/fotolife/k/kadokawa-toko/20200603/20200603182952.jpg", res.works[0].coverUrl)
-        assertEquals("https://cdn-static.kakuyomu.jp/works/16818093087479543721/ogimage.png", res.works[1].coverUrl)
+        assertEquals("", res.works[1].coverUrl)
+        assertEquals("#3189D3", res.works[1].baseColor)
     }
 
     @Test
-    fun kakuyomuWorkPage_coverNullFallsBackToOgImage() {
-        val html = kakuWorkPage().replace("\"adminCoverImageUrl\":\"https://example.jp/cover.jpg\"", "\"adminCoverImageUrl\":null")
+    fun kakuyomuWorkPage_coverNullStaysBlankWithBaseColor() {
+        val html = kakuWorkPage()
+            .replace("\"adminCoverImageUrl\":\"https://example.jp/cover.jpg\"", "\"adminCoverImageUrl\":null,\"baseColor\":\"#3189D3\"")
         val d = parseKakuyomuWorkPage(html)!!
-        assertEquals("https://cdn-static.kakuyomu.jp/works/1177354054891139802/ogimage.png", d.work.coverUrl)
+        assertEquals("", d.work.coverUrl)
+        assertEquals("#3189D3", d.work.baseColor)
     }
 
     /** Work page __NEXT_DATA__ Apollo cache, minimal but structurally real:
@@ -646,6 +650,17 @@ fun chapterExtract_tooFewParagraphsReturnsNull() {
         assertFalse(restored.first().isSexual)
         assertEquals("じゃがバター", restored.first().author)
         assertEquals(763, restored.first().episodeCount)
+        assertEquals("#3189D3", restored[1].baseColor)
+    }
+
+    @Test
+    fun kakuyomuBookmarks_stripsRetiredOgImageCoverUrls() {
+        // One sync's worth of stored rows (c90d34f) carry the retired ogimage
+        // fallback — load must read them as blank so the tint card shows.
+        val json = """[{"id":"2912051607690915798","title":"肉屋のせがれ","cover":"https://cdn-static.kakuyomu.jp/works/2912051607690915798/ogimage.png","bc":"#3189D3"}]"""
+        val restored = parseKakuyomuBookmarks(json)
+        assertEquals("", restored[0].coverUrl)
+        assertEquals("#3189D3", restored[0].baseColor)
     }
 
     @Test
