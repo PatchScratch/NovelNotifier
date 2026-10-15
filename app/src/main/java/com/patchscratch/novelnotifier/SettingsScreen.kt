@@ -9,14 +9,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -48,41 +53,54 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun SettingsScreen(
-    site: String = "nu",
-    // SFW/NSFW mode: R18 sections need the biometric unlock to appear;
-    // the locked hint row triggers the same prompt as the drawer toggle.
-    nsfwUnlocked: Boolean = false,
-    onRequestNsfwUnlock: () -> Unit = {},
-    kakuyomuR18: Boolean = false,
-    onKakuyomuR18: (Boolean) -> Unit = {},
-    currentUrl: String,
-    currentHours: Int,
-    loginState: String,
-    syncStatus: String,
+    // Phase-7 reorg (2026-10-15): the ViewModels + Router replace ~30
+    // individual state/callback params. Only activity-owned actions stay
+    // callbacks (theme application, biometric prompt, the notification
+    // permission gate around cover sync).
+    app: AppViewModel,
+    nu: NuViewModel,
+    syosetu: SyosetuViewModel,
+    kakuyomu: KakuyomuViewModel,
+    router: Router,
     onThemeChange: (String) -> Unit = {},
     onCustomThemeReady: (CustomTheme?) -> Unit = {},
-    onStartCoverSync: () -> Unit,
-    onStopCoverSync: () -> Unit,
-    onSyosetuLogin: () -> Unit = {},
-    onSyosetuLogout: () -> Unit = {},
-    onSyosetuSync: () -> Unit = {},
-    syosetuR18: Boolean = false,
-    onSyosetuR18: (Boolean) -> Unit = {},
-    syosetuSubsites: Set<Int> = setOf(1, 2, 3),
-    onSyosetuSubsites: (Set<Int>) -> Unit = {},
-    syosetuLoggedIn: Boolean = false,
-    syosetuStatus: String = "",
-    kakuyomuLoggedIn: Boolean = false,
-    kakuyomuStatus: String = "",
-    onKakuyomuLogin: () -> Unit = {},
-    onKakuyomuLogout: () -> Unit = {},
-    onKakuyomuSync: () -> Unit = {},
-    onCheckNow: () -> Unit,
-    onSave: (String, Int) -> Unit,
-    onStartLogin: () -> Unit,
-    onLoggedOut: () -> Unit,
-    onCancel: () -> Unit
+    // SFW/NSFW mode: R18 sections need the biometric unlock to appear;
+    // the locked hint row triggers the same prompt as the drawer toggle.
+    onRequestNsfwUnlock: () -> Unit = {},
+    // Wraps startCoverSync in the POST_NOTIFICATIONS permission request —
+    // the launcher is activity-scoped.
+    onStartCoverSync: () -> Unit = {}
 ) {
+    // Local aliases keep the 850-line body unchanged while the signature
+    // above stays small.
+    val site = app.settingsSite
+    val nsfwUnlocked = app.nsfwUnlocked
+    val syncStatus = app.syncStatus
+    val currentUrl = nu.rssUrl
+    val currentHours = nu.checkHours
+    val loginState = nu.loginState
+    val kakuyomuR18 = kakuyomu.r18
+    val kakuyomuLoggedIn = kakuyomu.loggedIn
+    val kakuyomuStatus = kakuyomu.status
+    val syosetuLoggedIn = syosetu.loggedIn
+    val syosetuStatus = syosetu.status
+    val syosetuR18 = syosetu.r18
+    val syosetuSubsites = syosetu.subsites
+    val onKakuyomuR18: (Boolean) -> Unit = { on -> kakuyomu.updateR18(on) }
+    val onKakuyomuLogin = { router.replace(Route.KakuyomuLogin) }
+    val onKakuyomuLogout = { kakuyomu.onLoggedOut() }
+    val onKakuyomuSync = { kakuyomu.syncBookmarks() }
+    val onSyosetuLogin = { router.replace(Route.SyosetuLogin) }
+    val onSyosetuLogout = { syosetu.onLoggedOut() }
+    val onSyosetuSync = { syosetu.syncNow() }
+    val onSyosetuR18: (Boolean) -> Unit = { on -> syosetu.updateR18(on) }
+    val onSyosetuSubsites: (Set<Int>) -> Unit = { syosetu.updateSubsites(it) }
+    val onStopCoverSync = { app.stopCoverSync() }
+    val onCheckNow: () -> Unit = { router.pop(); app.checkNow(nu) }
+    val onSave: (String, Int) -> Unit = { url, hours -> nu.saveSettings(url, hours); router.pop() }
+    val onStartLogin = { router.replace(Route.NuLogin) }
+    val onLoggedOut = { nu.onLoggedOut() }
+    val onCancel: () -> Unit = { router.pop() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
@@ -178,8 +196,14 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
+        SettingsSection(
+            when (site) {
+                "kakuyomu" -> "Kakuyomu カクヨム"
+                "syosetu" -> "Syosetu なろう"
+                else -> t("Account · Novel Updates", "アカウント · ノベルアップデーツ")
+            }
+        ) {
         if (site == "kakuyomu") {
-            Text(text = "Kakuyomu カクヨム", style = MaterialTheme.typography.titleMedium)
             if (kakuyomuStatus.isNotBlank()) {
                 Text(kakuyomuStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
             }
@@ -255,7 +279,6 @@ fun SettingsScreen(
                 NsfwLockedHint(onClick = onRequestNsfwUnlock)
             }
         } else if (site == "syosetu") {
-            Text(text = "Syosetu なろう", style = MaterialTheme.typography.titleMedium)
             if (syosetuStatus.isNotBlank()) {
                 Text(syosetuStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
             }
@@ -379,9 +402,10 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         }
+        }
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         // --- Translation (shared: applies to the reader on any site) ---
+        SettingsSection(t("Translation & AI", "翻訳とAI")) {
         var xlateEndpoint by remember { mutableStateOf(prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty()) }
         var xlateModel by remember { mutableStateOf(prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty()) }
         var xlateKey by remember { mutableStateOf(prefs.getString("xlate_key", "").orEmpty()) }
@@ -389,8 +413,6 @@ fun SettingsScreen(
             mutableStateOf(prefs.getString("xlate_prompt", "")?.ifBlank { null } ?: TranslationClient.defaultPrompt())
         }
         var xlateTemp by remember { mutableStateOf(prefs.getString("xlate_temp", "0.3").orEmpty()) }
-        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(t("Translation", "翻訳"), style = MaterialTheme.typography.titleMedium)
         Text(
             t("Chapter translation through any OpenAI-compatible API. In the reader's ⋮ menu, Translate chapter sends the current chapter and shows the English under the original; the translation is saved into the series' offline book and travels with exports. Your key is kept on this device only — never in backups.",
                 "OpenAI互換APIによる章翻訳。リーダーの⋮メニュー「この話を翻訳」で現在の話を送信し、原文の下に英語を表示します。翻訳はシリーズのオフラインブックに保存され、エクスポートにも含まれます。APIキーは端末内のみに保存 — バックアップには含まれません。"),
@@ -513,7 +535,6 @@ fun SettingsScreen(
             coverPrompt = CoverGenClient.defaultPrompt()
             prefs.edit { putString("xlate_cover_prompt", "") }   // blank = follow app language
         }) { Text(t("Reset to default", "既定に戻す")) }
-        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
         Text(
             t("Saved translation layout", "保存時の翻訳レイアウト"),
             style = MaterialTheme.typography.titleSmall
@@ -585,8 +606,79 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 6.dp)
         )
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
-        Text(text = t("Read aloud (TTS)", "読み上げ（TTS）"), style = MaterialTheme.typography.titleSmall)
+        // Site-info engine: synopses, catchphrases, tags on the Japanese
+        // sites — ML Kit on-device is the FREE default; the AI key is an
+        // optional quality upgrade at negligible per-synopsis cost.
+        // (Lives in this card: it reads the xlateKey state above.)
+        var metaEngine by remember {
+            mutableStateOf(MetadataTranslator.effectiveEngine(prefs))
+        }
+        Text(
+            t("Translate Japanese site info (synopses, tags)", "日本サイトの情報を翻訳（あらすじ・タグ）"),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 12.dp)
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = metaEngine == MetadataTranslator.ENGINE_OFF,
+                onClick = {
+                    metaEngine = MetadataTranslator.ENGINE_OFF
+                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_OFF) }
+                }
+            )
+            Text(t("Off", "オフ"))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = metaEngine == MetadataTranslator.ENGINE_DEVICE,
+                onClick = {
+                    metaEngine = MetadataTranslator.ENGINE_DEVICE
+                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_DEVICE) }
+                }
+            )
+            Text(t("On-device (ML Kit) — free, offline", "端末内（ML Kit）— 無料・オフライン"))
+        }
+        Text(
+            t("Free on-device neural translation. A ~30 MB Japanese→English pack downloads on first use; after that it works offline. Gist-quality — fine for synopses and tags.",
+                "端末内ニューラル翻訳（無料）。初回使用時に約30MBの日→英パックをダウンロード、以降はオフラインで動作します。あらすじ・タグには十分な品質です。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(start = 48.dp, bottom = 4.dp)
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = metaEngine == MetadataTranslator.ENGINE_API,
+                onClick = {
+                    metaEngine = MetadataTranslator.ENGINE_API
+                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_API) }
+                }
+            )
+            Text(t("Via my AI key — best quality", "AIキーで — 最高品質"))
+        }
+        Text(
+            if (xlateKey.isBlank()) t(
+                "Uses the endpoint, model, prompt and temperature above — set the API key first (falls back to on-device until then).",
+                "上記のエンドポイント・モデル・プロンプト・温度を使用 — 先にAPIキーを設定してください（未設定の間は端末内にフォールバック）。"
+            ) else t(
+                "Uses the endpoint, model, prompt and temperature above. Cost is negligible — one synopsis is well under $0.001.",
+                "上記のエンドポイント・モデル・プロンプト・温度を使用。コストはごく僅か — あらすじ1件あたり0.001ドル未満です。"
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(start = 48.dp)
+        )
+        Text(
+            t("Site-info translations are display-only — books, backups, and anything sent to a site stay in the site's native language.",
+                "サイト情報の翻訳は表示のみ — ブック・バックアップ・サイトへ送る内容はサイトの言語のままです。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)
+        )
+        Text(
+            t("Cost guide is in the README (quality tier ≈ half a cent per chapter).", "コスト目安はREADME参照（品質重視層で1話約0.5セント）。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 6.dp)
+        )
+        }
+
+        SettingsSection(t("Read aloud (TTS)", "読み上げ（TTS）")) {
         Text(
             t("Three engines: Android system TTS (instant, reads Japanese natively), Kokoro neural (offline, English, ~140MB), or your AI API (cloud, both languages, best quality).",
                 "3エンジン：AndroidシステムTTS（即時・日本語対応）、Kokoroニューラル（オフライン・英語・約140MB）、AI API（クラウド・両言語・最高品質）。"),
@@ -701,76 +793,9 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        // Site-info engine: synopses, catchphrases, tags on the Japanese
-        // sites — ML Kit on-device is the FREE default; the AI key is an
-        // optional quality upgrade at negligible per-synopsis cost.
-        var metaEngine by remember {
-            mutableStateOf(MetadataTranslator.effectiveEngine(prefs))
         }
-        Text(
-            t("Translate Japanese site info (synopses, tags)", "日本サイトの情報を翻訳（あらすじ・タグ）"),
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(top = 12.dp)
-        )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(
-                selected = metaEngine == MetadataTranslator.ENGINE_OFF,
-                onClick = {
-                    metaEngine = MetadataTranslator.ENGINE_OFF
-                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_OFF) }
-                }
-            )
-            Text(t("Off", "オフ"))
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(
-                selected = metaEngine == MetadataTranslator.ENGINE_DEVICE,
-                onClick = {
-                    metaEngine = MetadataTranslator.ENGINE_DEVICE
-                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_DEVICE) }
-                }
-            )
-            Text(t("On-device (ML Kit) — free, offline", "端末内（ML Kit）— 無料・オフライン"))
-        }
-        Text(
-            t("Free on-device neural translation. A ~30 MB Japanese→English pack downloads on first use; after that it works offline. Gist-quality — fine for synopses and tags.",
-                "端末内ニューラル翻訳（無料）。初回使用時に約30MBの日→英パックをダウンロード、以降はオフラインで動作します。あらすじ・タグには十分な品質です。"),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(start = 48.dp, bottom = 4.dp)
-        )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(
-                selected = metaEngine == MetadataTranslator.ENGINE_API,
-                onClick = {
-                    metaEngine = MetadataTranslator.ENGINE_API
-                    prefs.edit { putString(MetadataTranslator.PREF_ENGINE, MetadataTranslator.ENGINE_API) }
-                }
-            )
-            Text(t("Via my AI key — best quality", "AIキーで — 最高品質"))
-        }
-        Text(
-            if (xlateKey.isBlank()) t(
-                "Uses the endpoint, model, prompt and temperature above — set the API key first (falls back to on-device until then).",
-                "上記のエンドポイント・モデル・プロンプト・温度を使用 — 先にAPIキーを設定してください（未設定の間は端末内にフォールバック）。"
-            ) else t(
-                "Uses the endpoint, model, prompt and temperature above. Cost is negligible — one synopsis is well under $0.001.",
-                "上記のエンドポイント・モデル・プロンプト・温度を使用。コストはごく僅か — あらすじ1件あたり0.001ドル未満です。"
-            ),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(start = 48.dp)
-        )
-        Text(
-            t("Site-info translations are display-only — books, backups, and anything sent to a site stay in the site's native language.",
-                "サイト情報の翻訳は表示のみ — ブック・バックアップ・サイトへ送る内容はサイトの言語のままです。"),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)
-        )
-        Text(
-            t("Cost guide is in the README (quality tier ≈ half a cent per chapter).", "コスト目安はREADME参照（品質重視層で1話約0.5セント）。"),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(top = 6.dp)
-        )
-        Text(text = t("Display", "表示"), style = MaterialTheme.typography.titleMedium)
+
+        SettingsSection(t("Display", "表示")) {
         Text(
             text = t("Home layout. Grid columns follow screen width (3 on a phone, more on a tablet).", "ホームレイアウト。グリッドの列数は画面幅に応じます（スマホで3列、タブレットでは更多）。"),
             style = MaterialTheme.typography.bodySmall,
@@ -845,8 +870,39 @@ fun SettingsScreen(
             )
         }
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = t("Library sync", "ライブラリ同期"), style = MaterialTheme.typography.titleMedium)
+        // UI language toggle — applies to app chrome immediately.
+        // (Moved into Display in the 2026-10-15 reorg; it used to float
+        // after Backup & restore.)
+        Text(
+            text = t("App language", "アプリの言語"),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+        Row(modifier = Modifier.fillMaxWidth()) {
+            listOf(UiLang.EN to "English", UiLang.JP to "日本語").forEach { (code, label) ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable {
+                            UiLang.current = code
+                            prefs.edit { putString("ui_lang", code) }
+                        }
+                ) {
+                    RadioButton(
+                        selected = UiLang.current == code,
+                        onClick = {
+                            UiLang.current = code
+                            prefs.edit { putString("ui_lang", code) }
+                        }
+                    )
+                    Text(label)
+                }
+            }
+        }
+        }
+
+        SettingsSection(t("Library sync", "ライブラリ同期")) {
         Text(
             text = syncStatus,
             style = MaterialTheme.typography.bodySmall,
@@ -864,8 +920,9 @@ fun SettingsScreen(
             Text(t("Stop sync", "同期を停止"))
         }
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = t("Backup & restore", "バックアップ"), style = MaterialTheme.typography.titleMedium)
+        }
+
+        SettingsSection(t("Backup & restore", "バックアップ")) {
         Text(
             text = t("One zip with your lists, chapter caches and cover images. Save it anywhere your file picker reaches — Google Drive, OneDrive, USB. Backups never contain your password, login, or feed links — a restored device asks for a fresh login and picks the rest up automatically.", "リスト・章キャッシュ・カバー画像を1つのZIPに。ファイルピッカーが届く場所ならどこでも保存できます — Google Drive、OneDrive、USB。バックアップにパスワード・ログイン・フィードリンクは決して含まれません — 復元端末は再ログインだけで残りを自動で取得します。"),
             style = MaterialTheme.typography.bodySmall,
@@ -904,38 +961,9 @@ fun SettingsScreen(
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
-
-        // UI language toggle — applies to app chrome immediately.
-        Text(
-            text = t("App language", "アプリの言語"),
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(top = 8.dp)
-        )
-        Row(modifier = Modifier.fillMaxWidth()) {
-            listOf(UiLang.EN to "English", UiLang.JP to "日本語").forEach { (code, label) ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable {
-                            UiLang.current = code
-                            prefs.edit { putString("ui_lang", code) }
-                        }
-                ) {
-                    RadioButton(
-                        selected = UiLang.current == code,
-                        onClick = {
-                            UiLang.current = code
-                            prefs.edit { putString("ui_lang", code) }
-                        }
-                    )
-                    Text(label)
-                }
-            }
         }
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = t("Notifications", "通知"), style = MaterialTheme.typography.titleMedium)
+        SettingsSection(t("Notifications", "通知")) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -964,8 +992,9 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
-        Text(text = t("Checks", "更新チェック"), style = MaterialTheme.typography.titleMedium)
+        }
+
+        SettingsSection(t("Checks", "更新チェック")) {
         Text(
             text = t("Check for updates every", "更新チェックの間隔"),
             style = MaterialTheme.typography.bodySmall,
@@ -995,6 +1024,7 @@ fun SettingsScreen(
                 .fillMaxWidth()
         ) { Text(t("Save", "保存")) }
         TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text(t("Cancel", "キャンセル")) }
+        }
     }
 }
 
@@ -1016,5 +1046,25 @@ private fun NsfwLockedHint(onClick: () -> Unit) {
             )
         }
         Text("🔒")
+    }
+}
+
+/**
+ * One grouped settings card (2026-10-15 reorg): elevated card + bold header
+ * replaces the old divider-separated flat list, so each concern (site,
+ * translation, TTS, display, sync, backup, notifications, checks) reads as
+ * a panel. Content lambdas keep the section bodies exactly as they were.
+ */
+@Composable
+private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(4.dp))
+            content()
+        }
     }
 }

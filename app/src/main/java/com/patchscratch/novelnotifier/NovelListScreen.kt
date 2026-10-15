@@ -393,13 +393,7 @@ fun NovelListScreen(
                         else -> ""
                     }
                     if (emptyMessage.isNotBlank()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = emptyMessage,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(32.dp)
-                            )
-                        }
+                        EmptyState(message = emptyMessage)
                     } else if (layoutMode == LAYOUT_GRID) {
                         val widthDp = with(LocalDensity.current) {
                             LocalWindowInfo.current.containerSize.width.toDp()

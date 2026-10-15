@@ -269,33 +269,14 @@ fun NovelApp(
         )
 
         Route.Settings -> SettingsScreen(
-            site = app.settingsSite,
-            nsfwUnlocked = app.nsfwUnlocked,
-            onRequestNsfwUnlock = { toggleNsfw() },
-            kakuyomuR18 = kakuyomu.r18,
-            onKakuyomuR18 = { on -> kakuyomu.updateR18(on) },
-            kakuyomuLoggedIn = kakuyomu.loggedIn,
-            kakuyomuStatus = kakuyomu.status,
-            onKakuyomuLogin = { router.replace(Route.KakuyomuLogin) },
-            onKakuyomuLogout = { kakuyomu.onLoggedOut() },
-            onKakuyomuSync = { kakuyomu.syncBookmarks() },
-            currentUrl = nu.rssUrl,
-            onSyosetuLogin = { router.replace(Route.SyosetuLogin) },
-            onSyosetuLogout = { syosetu.onLoggedOut() },
-            onSyosetuSync = { syosetu.syncNow() },
-            syosetuLoggedIn = syosetu.loggedIn,
-            syosetuStatus = syosetu.status,
-            syosetuR18 = syosetu.r18,
-            onSyosetuR18 = { on -> syosetu.updateR18(on) },
-            syosetuSubsites = syosetu.subsites,
-            onSyosetuSubsites = { set -> syosetu.updateSubsites(set) },
-            // R18 prefs are remembered but only EFFECTIVE while NSFW mode
-            // is unlocked — SFW hides every R18 surface.
-            currentHours = nu.checkHours,
-            loginState = nu.loginState,
-            syncStatus = app.syncStatus,
+            app = app,
+            nu = nu,
+            syosetu = syosetu,
+            kakuyomu = kakuyomu,
+            router = router,
             onThemeChange = onThemeChange,
             onCustomThemeReady = onCustomThemeReady,
+            onRequestNsfwUnlock = { toggleNsfw() },
             onStartCoverSync = {
                 if (Build.VERSION.SDK_INT >= 33 &&
                     ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -305,19 +286,7 @@ fun NovelApp(
                 } else {
                     app.startCoverSync(nu)
                 }
-            },
-            onStopCoverSync = { app.stopCoverSync() },
-            onCheckNow = {
-                router.pop()
-                app.checkNow(nu)
-            },
-            onSave = { url, hours ->
-                nu.saveSettings(url, hours)
-                router.pop()
-            },
-            onStartLogin = { router.replace(Route.NuLogin) },
-            onLoggedOut = { nu.onLoggedOut() },
-            onCancel = { router.pop() }
+            }
         )
 
         is Route.EditLists -> EditListsScreen(
