@@ -148,8 +148,15 @@ class KakuyomuViewModel(app: Application) : AndroidViewModel(app) {
         saveKakuyomuBookmarks(prefs, bookmarks)
         if (loggedIn) {
             viewModelScope.launch {
-                val ok = if (adding) kakuyomuFollow(id) else kakuyomuUnfollow(id)
-                DebugLog.log("KAKUYOMU", "site ${if (adding) "follow" else "unfollow"} $id → $ok")
+                // Crash fix (2026-10-16): un-caught network failure here
+                // killed the app offline (same class as the shiori crash).
+                try {
+                    val ok = if (adding) kakuyomuFollow(id) else kakuyomuUnfollow(id)
+                    DebugLog.log("KAKUYOMU", "site ${if (adding) "follow" else "unfollow"} $id → $ok")
+                } catch (e: Exception) {
+                    DebugLog.log("KAKUYOMU", "site follow/unfollow skipped (offline?)", e)
+                    // The next sync reconciles site state with local.
+                }
             }
         }
     }

@@ -300,11 +300,20 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
     fun updateShioriAuto(bm: SyosetuBookmark, ep: Int) {
         if (bm.userfavId.isBlank()) return
         viewModelScope.launch {
-            val ok = syosetuUpdateShiori(bm.userfavId, ep)
-            if (ok) {
-                // keep the local mirror in step so re-composition
-                // doesn't re-fire the same advance
-                mirrorShiori(bm.ncode, ep)
+            // Crash fix (2026-10-16): the auto-しおり fires on every chapter
+            // display; offline it threw UnknownHostException out of this
+            // un-caught launch and killed the app. Skip silently — the local
+            // mirror stays behind, so the next ONLINE display of a later
+            // chapter re-fires the advance to the site.
+            try {
+                val ok = syosetuUpdateShiori(bm.userfavId, ep)
+                if (ok) {
+                    // keep the local mirror in step so re-composition
+                    // doesn't re-fire the same advance
+                    mirrorShiori(bm.ncode, ep)
+                }
+            } catch (e: Exception) {
+                DebugLog.log("SYOSETU", "shiori auto skipped (offline?)", e)
             }
         }
     }
@@ -313,9 +322,14 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
         if (bm.userfavId.isBlank()) return
         viewModelScope.launch {
             status = "Setting しおり…"
-            val ok = syosetuUpdateShiori(bm.userfavId, ep)
-            status = if (ok) "しおり set to episode " + ep else "Set failed — try again"
-            if (ok) mirrorShiori(bm.ncode, ep)
+            try {
+                val ok = syosetuUpdateShiori(bm.userfavId, ep)
+                status = if (ok) "しおり set to episode " + ep else "Set failed — try again"
+                if (ok) mirrorShiori(bm.ncode, ep)
+            } catch (e: Exception) {
+                DebugLog.log("SYOSETU", "shiori manual failed", e)
+                status = t("Offline — しおり sets when back online", "オフライン — しおりはオンライン復帰時に設定されます")
+            }
         }
     }
 
