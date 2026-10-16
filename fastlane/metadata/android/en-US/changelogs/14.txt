@@ -1,0 +1,18 @@
+The app now updates itself, keeps everything you've read available offline, and adds a private mode with hidden lists.
+
+New:
+- In-app self-updating: a silent daily check offers new versions with their changelog — Ignore, or Download and install right in the app. A changelog popup greets you after every update.
+- SFW/NSFW mode: flag any list or category as hidden (NU reading lists, Syosetu 分類, Kakuyomu folders) and lock it behind your fingerprint or screen lock. Hidden series vanish from every screen and never notify; R18 content sits behind the same unlock.
+- Offline reading everywhere: every chapter you open is stored automatically and opens instantly with no network. Cached tables of contents keep chapter lists reachable offline, and a "Stored chapters" list appears when that's all you have.
+- Bookmarks on all three sites: star a series from its page on Syosetu (with 分類 picker) and Kakuyomu, alongside the existing NU lists.
+- Kakuyomu: local folders for your follows, pull-to-refresh on the library screens.
+- Read-aloud fixes: the offline Kokoro voice works again, Japanese paragraphs read by the system voice (Kokoro is English-only by design), playback pauses cleanly when the engine fails instead of skipping silently.
+- Settings reorganized into grouped cards; empty library screens get a proper illustration.
+
+Fixed:
+- Chapter text failed to display or play aloud on about a dozen translator sites (straight quotes in prose broke the extractor's transport).
+- Translations stored in offline books are no longer wiped when a chapter is re-read.
+- Opening a stored chapter offline no longer crashes the app (the background reading-position sync now skips gracefully with no network).
+- Kakuyomu follows added on the website appear in the app again.
+
+Note: installs older than v1.2.1 were signed with a different key — those need a one-time uninstall first (your library comes back by logging in and syncing).

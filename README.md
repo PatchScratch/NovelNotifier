@@ -10,7 +10,9 @@ This is a clean-room, from-scratch replacement for the abandoned *"Notifications
 
 Grab the latest `NovelNotifier-v<version>.apk` from [Releases](https://github.com/PatchScratch/NovelNotifier/releases) and install it (allow "unknown sources" for your browser if asked). Updates install over the top — your library stays.
 
-**Via Obtainium** (recommended): add the app by this GitHub URL and updates arrive automatically.
+**The app updates itself**: once installed, it checks GitHub once a day, offers the update with its changelog, and downloads + installs it in place (Android asks you to confirm each install). A changelog popup greets you on the first start after every update.
+
+**Via Obtainium**: add the app by this GitHub URL and updates arrive automatically — either path works, they don't conflict.
 
 **First steps:** Settings → *Log in on Novel Updates* (onboarding takes over), and optionally paste an OpenAI-compatible API key under Settings → *Translation* to unlock AI features. The Japanese sites work without any account.
 
@@ -33,7 +35,7 @@ Each site is its own workspace (hamburger → site chips), served by official/op
 
 ### Reading & offline
 - **In-app reader** — ‹ Prev / Next › through the book, sepia/dark/light themes, serif/sans, adjustable font size, per-novel JavaScript toggle, ad/tracker blocking, open-in-browser escape hatch. Extraction filters NU's hidden decoy content by computed styles and falls back to the full-page web view when a host defeats it.
-- **Offline library as standard ePubs** — opt in per series; chapters save as you read or bulk-download whole volumes (survives screen-off; the queue survives reboots). Books export/share to any e-reader. Storage stays yours — nothing saves without your say-so.
+- **Offline library as standard ePubs** — every chapter you read is stored automatically and opens instantly with no network (cached tables of contents keep the chapter lists reachable offline too). Want the whole series up front? Opt in per series and bulk-download it (survives screen-off; the queue survives reboots). Books export/share to any e-reader. Storage stays yours — nothing bulk-downloads without your say-so.
 - **Read aloud** — three engines (Android system TTS, zero download, reads Japanese natively; Kokoro offline neural English; or a cloud TTS through your own key) with a Voice Aloud-style control bar: play/pause, paragraph skip, tap-a-paragraph to jump, a live speed slider (0.5–2.5×), a sleep timer that pauses at the deadline, and a media-style notification with lockscreen controls.
 - **Long-press Japanese dictionary** — tap-and-hold any word in the reader for its reading, part of speech and JMdict senses. Fully offline (built-in Kuromoji tokenizer + a 499k-entry JMdict; ~80MB unpacked once on first enable).
 
@@ -76,6 +78,7 @@ Each site is its own workspace (hamburger → site chips), served by official/op
 | `NovelDetailScreen.kt` | Series INFO/RELEASES, CHANGE LIST, MARK AS READ. |
 | `OnboardingScreen.kt` | Fresh-login flow: hydration with live counter → size warning + estimates → priority-list picker. |
 | `SyncQueue.kt` | Bulk-download job model, priority ordering, persistent queue file, conservative time estimates. |
+| `Updater.kt` / `UpdateDownloadService.kt` | In-app self-update: GitHub release check, the prompt/permission/changelog dialogs, and the foreground download streamed into a PackageInstaller session. |
 | `SyncEngineService.kt` | The bulk downloader: paced WebView walking the queue, counter notification, Cloudflare policy. |
 | `CoverStore.kt` / `CoverUi.kt` | Cover image files on disk; thumbnails prefer local files, then the network. |
 | `BackupManager.kt` | One-zip export/import via the system file picker. Never contains login or feed tokens. |
