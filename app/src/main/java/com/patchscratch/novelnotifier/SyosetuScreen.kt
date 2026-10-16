@@ -638,6 +638,25 @@ fun SyosetuDetailScreen(
             }
         }
         item {
+            // Translation coverage (Wayne's 2026-10-17 ask): how many stored
+            // chapters carry an AI translation. Shown once anything is stored.
+            var xlated by remember(novel.ncode) { mutableStateOf(-1 to -1) }
+            LaunchedEffect(novel.ncode) {
+                xlated = withContext(Dispatchers.IO) {
+                    EpubStore.translatedCount(context, novel.url) to EpubStore.storedCount(context, novel.url)
+                }
+            }
+            val (xn, xm) = xlated
+            if (xm > 0) {
+                Text(
+                    if (xn >= xm) t("✓ All ", "✓ 全") + "$xm" + t(" chapters translated", "話 翻訳済み")
+                    else t("Translated: ", "翻訳済み：") + "$xn/$xm" + t(" chapters", "話"),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+        }
+        item {
             Row(modifier = Modifier.padding(horizontal = 8.dp)) {
                 TextButton(
                     onClick = {

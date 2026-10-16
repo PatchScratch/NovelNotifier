@@ -199,6 +199,11 @@ fun ReaderScreen(
         mutableStateOf(target.seriesUrl in loadIdSet(prefs, "epub_series_on"))
     }
     var epubCount by remember(target.seriesUrl) { mutableIntStateOf(EpubStore.storedCount(context, target.seriesUrl)) }
+    // Stored chapters carrying an AI translation — the reader menu's
+    // "N/M translated" coverage label. -1 = not loaded yet.
+    var translatedCount by remember(target.seriesUrl) {
+        mutableIntStateOf(EpubStore.translatedCount(context, target.seriesUrl))
+    }
     var savedOffline by remember(target) { mutableStateOf(false) } // this chapter is in the book
     var offlineCopy by remember(target) { mutableStateOf(false) } // rendered FROM the book
     val savedUrls = remember(target) { mutableSetOf<String>() } // already appended this session
@@ -325,6 +330,7 @@ fun ReaderScreen(
                         )
                     }
                     epubCount = EpubStore.storedCount(context, target.seriesUrl)
+                    translatedCount = EpubStore.translatedCount(context, target.seriesUrl)
                 }
                 // Auto-refine the series lock files with this
                 // chapter's context (novel-mill's missing piece).
@@ -669,6 +675,18 @@ fun ReaderScreen(
         }
     }
 
+    // Bulk translation finished for this series → refresh the coverage
+    // counters so the menu's "N/M translated" reflects the completed run
+    // without reopening the chapter.
+    LaunchedEffect(Unit) {
+        TranslationQueue.state.collect { st ->
+            if (st != null && !st.running && st.seriesUrl == target.seriesUrl) {
+                epubCount = withContext(Dispatchers.IO) { EpubStore.storedCount(context, target.seriesUrl) }
+                translatedCount = withContext(Dispatchers.IO) { EpubStore.translatedCount(context, target.seriesUrl) }
+            }
+        }
+    }
+
     BackHandler { onBack() }
 
     // Edge-to-edge: without insets the top bar hides under the status bar and
@@ -823,7 +841,9 @@ fun ReaderScreen(
                 )
                 // Bulk twin of Download all: every STORED chapter through the
                 // translator, one at a time, auto-refining lock files as it
-                // goes. Unstored chapters need Download all first.
+                // goes. Unstored chapters need Download all first. The label
+                // carries coverage (translated/stored) so a finished bulk
+                // run is visible as "all N translated".
                 if (xlateKey.isNotBlank()) {
                     val bulk by TranslationQueue.state.collectAsState()
                     val mine = bulk?.takeIf { it.seriesUrl == target.seriesUrl }
@@ -834,7 +854,16 @@ fun ReaderScreen(
                                     mine?.running == true ->
                                         t("Translating all… ", "一括翻訳中… ") + mine.done + "/" + mine.total +
                                             t(" (tap to stop)", "（タップで停止）")
-                                    else -> t("Translate all stored", "保存済みを一括翻訳")
+                                    else -> {
+                                        val n = translatedCount
+                                        val m = epubCount
+                                        when {
+                                            n < 0 -> t("Translate all stored", "保存済みを一括翻訳")
+                                            m > 0 && n >= m -> t("✓ All ", "✓ 全") + "$m" + t(" chapters translated", "話 翻訳済み")
+                                            m > 0 -> t("Translate all stored (", "保存済みを一括翻訳（") + "$n/$m" + t(" translated)", " 翻訳済み）")
+                                            else -> t("Translate all stored", "保存済みを一括翻訳")
+                                        }
+                                    }
                                 }
                             )
                         },

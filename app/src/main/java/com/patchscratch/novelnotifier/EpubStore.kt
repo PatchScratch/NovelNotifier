@@ -680,6 +680,14 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
     fun storedCount(context: Context, seriesUrl: String): Int =
         readAllStoredDocs(context, seriesUrl).size
 
+    /**
+     * Chapters of this series whose stored doc carries an AI translation.
+     * Pairs with storedCount for the "N/M translated" surfaces (reader
+     * menu + detail screens).
+     */
+    fun translatedCount(context: Context, seriesUrl: String): Int =
+        readAllStoredDocs(context, seriesUrl).count { !it.translation.isNullOrEmpty() }
+
     /** The stored copy of a chapter, for offline reading (any bucket). */
     fun readChapter(context: Context, seriesUrl: String, chapterUrl: String): ChapterExtract? {
         val files = bookFiles(context, seriesUrl) +
