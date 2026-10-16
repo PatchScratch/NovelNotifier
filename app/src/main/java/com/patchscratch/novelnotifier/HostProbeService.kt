@@ -50,6 +50,7 @@ class HostProbeService : Service() {
         const val EXTRA_MODE = "mode"
         const val MODE_LIBRARY = "library"     // one chapter per cached series
         const val MODE_DIRECTORY = "directory" // the full NU groups directory
+        const val TARGETS_CHECKPOINT = "host_probe_targets.json"
 
         /**
          * ONE chapter per cached SERIES — the releases tables store NU's
@@ -185,8 +186,33 @@ class HostProbeService : Service() {
         }
 
         // --- phase 2: per group, find a live release link ----------------
+        // The harvest is the long part (~14h at 6s/group); checkpoint each
+        // visited group so an interrupted run (device reboot, process death,
+        // moving the sweep between devices) resumes instead of restarting.
+        // Checkpoint shape: {groupUrl: [title, chapterOrNull]}.
+        val ckptFile = File(filesDir, TARGETS_CHECKPOINT)
+        val ckpt = withContext(Dispatchers.IO) {
+            runCatching {
+                if (ckptFile.isFile) JSONObject(ckptFile.readText()) else JSONObject()
+            }.getOrDefault(JSONObject())
+        }
         val targets = mutableListOf<Target>()
+        var harvested = 0
+        fun saveCkpt(groupUrl: String, title: String, chapter: String?) {
+            ckpt.put(groupUrl, JSONArray().put(title).put(chapter ?: ""))
+            harvested++
+            if (harvested % 10 == 0) {
+                runCatching { ckptFile.writeText(ckpt.toString()) }
+            }
+        }
         for ((i, g) in groups.entries.withIndex()) {
+            val done = ckpt.optJSONArray(g.key)
+            if (done != null) {
+                // already harvested on a previous run — reuse, no fetch
+                val chapter = done.optString(1).takeIf { it.startsWith("http") }
+                if (chapter != null) targets.add(Target(g.value, chapter))
+                continue
+            }
             val raw = loadJs(sess, g.key, harvestGroupJs()) ?: continue
             if (raw == "CF") {
                 delay(30_000)
@@ -194,9 +220,11 @@ class HostProbeService : Service() {
             }
             val chapter = parseHarvest(raw).entries.firstOrNull()?.key
             if (chapter != null) targets.add(Target(g.value, chapter))
+            saveCkpt(g.key, g.value, chapter)
             if (i % 10 == 0) note("groups ${i + 1}/${groups.size}: ${targets.size} chapter links")
             delay(6_000)
         }
+        withContext(Dispatchers.IO) { runCatching { ckptFile.writeText(ckpt.toString()) } }
 
         // --- phase 3: probe them ------------------------------------------
         runTargetList(targets)
@@ -210,11 +238,31 @@ class HostProbeService : Service() {
             return
         }
         val sess = session ?: SiteClient.openSession(SiteClient.Site.NU).also { session = it }
-        val report = JSONArray()
+        // Resume: the report from a previous (interrupted) run is the input —
+        // targets whose URL is already recorded are skipped without a fetch.
+        // This is what makes a multi-day directory sweep movable between
+        // devices (2026-10-16: tablet → dedicated rig) and restart-safe.
+        val prior = withContext(Dispatchers.IO) {
+            runCatching {
+                val f = File(filesDir, REPORT)
+                if (f.isFile) JSONArray(f.readText()) else null
+            }.getOrNull()
+        }
+        val doneUrls = mutableSetOf<String>()
+        if (prior != null) for (i in 0 until prior.length()) {
+            val u = prior.optJSONObject(i)?.optString("url").orEmpty()
+            if (u.isNotBlank()) doneUrls.add(u)
+        }
+        val report = prior ?: JSONArray()
         val seenHosts = mutableSetOf<String>()
         var consecutiveFailures = 0
+        var skipped = 0
         try {
             for ((i, t) in targets.withIndex()) {
+                if (t.url in doneUrls) {
+                    skipped++
+                    continue   // no fetch, no pacing delay
+                }
                 val entry = probeOne(sess, t, seenHosts)
                 withContext(Dispatchers.IO) {
                     report.put(entry)
@@ -235,7 +283,7 @@ class HostProbeService : Service() {
         } finally {
             withContext(Dispatchers.IO) { File(filesDir, REPORT).writeText(report.toString()) }
             note("done — ${report.length()} sites probed")
-            DebugLog.log("PROBE", "run complete: ${report.length()} entries in $REPORT")
+            DebugLog.log("PROBE", "run complete: ${report.length()} entries in $REPORT (skipped $skipped already-recorded targets)")
         }
     }
 
