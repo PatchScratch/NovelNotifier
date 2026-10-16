@@ -51,6 +51,9 @@ class HostProbeService : Service() {
         const val MODE_LIBRARY = "library"     // one chapter per cached series
         const val MODE_DIRECTORY = "directory" // the full NU groups directory
         const val TARGETS_CHECKPOINT = "host_probe_targets.json"
+        /** Groups per batch: ~12 min of NU walking, then a probe stretch
+         *  (mostly non-NU hosts) that lets NU cool down. */
+        const val GROUP_BATCH = 100
 
         /**
          * ONE chapter per cached SERIES — the releases tables store NU's
@@ -185,18 +188,21 @@ class HostProbeService : Service() {
             delay(6_000)
         }
 
-        // --- phase 2: per group, find a live release link ----------------
-        // The harvest is the long part (~14h at 6s/group); checkpoint each
-        // visited group so an interrupted run (device reboot, process death,
-        // moving the sweep between devices) resumes instead of restarting.
-        // Checkpoint shape: {groupUrl: [title, chapterOrNull]}.
+        // --- phase 2+3 interleaved: batched harvest → probe → harvest -----
+        // Wayne's design (2026-10-16): never run a monolithic 14h NU walk
+        // followed by a 22h probe pass. Walk GROUP_BATCH group pages, then
+        // probe the chapters those pages yielded, then walk the next batch.
+        // NU traffic gets a cooldown window during every probe stretch
+        // (probes hit the translator hosts, not NU), and a batch boundary
+        // is a natural place for a device restart or a minor-version
+        // update install — the checkpoint + report skip pick up exactly
+        // where the run stopped.
         val ckptFile = File(filesDir, TARGETS_CHECKPOINT)
         val ckpt = withContext(Dispatchers.IO) {
             runCatching {
                 if (ckptFile.isFile) JSONObject(ckptFile.readText()) else JSONObject()
             }.getOrDefault(JSONObject())
         }
-        val targets = mutableListOf<Target>()
         var harvested = 0
         fun saveCkpt(groupUrl: String, title: String, chapter: String?) {
             ckpt.put(groupUrl, JSONArray().put(title).put(chapter ?: ""))
@@ -205,36 +211,53 @@ class HostProbeService : Service() {
                 runCatching { ckptFile.writeText(ckpt.toString()) }
             }
         }
+        val batch = mutableListOf<Target>()
+        var batchLinks = 0
+        var walkedInBatch = 0   // checkpoint reuses count too — batches stay
+                                // regular even on a resumed run's backlog
         for ((i, g) in groups.entries.withIndex()) {
             val done = ckpt.optJSONArray(g.key)
+            val chapter: String?
             if (done != null) {
                 // already harvested on a previous run — reuse, no fetch
-                val chapter = done.optString(1).takeIf { it.startsWith("http") }
-                if (chapter != null) targets.add(Target(g.value, chapter))
-                continue
+                chapter = done.optString(1).takeIf { it.startsWith("http") }
+            } else {
+                val raw = loadJs(sess, g.key, harvestGroupJs())
+                if (raw == null) continue
+                if (raw == "CF") {
+                    delay(30_000)
+                    continue
+                }
+                chapter = parseHarvest(raw).entries.firstOrNull()?.key
+                saveCkpt(g.key, g.value, chapter)
+                delay(6_000)
             }
-            val raw = loadJs(sess, g.key, harvestGroupJs()) ?: continue
-            if (raw == "CF") {
-                delay(30_000)
-                continue
+            if (chapter != null) batch.add(Target(g.value, chapter))
+            batchLinks = if (chapter != null) batchLinks + 1 else batchLinks
+            walkedInBatch++
+            if (i % 10 == 0) note("groups ${i + 1}/${groups.size}: $batchLinks chapter links")
+            val last = i == groups.size - 1
+            if (batch.isNotEmpty() && (walkedInBatch >= GROUP_BATCH || last)) {
+                note("batch: probing ${batch.size} chapters (group ${i + 1}/${groups.size})")
+                runTargetList(batch, final = last)
+                batch.clear()
+                walkedInBatch = 0
             }
-            val chapter = parseHarvest(raw).entries.firstOrNull()?.key
-            if (chapter != null) targets.add(Target(g.value, chapter))
-            saveCkpt(g.key, g.value, chapter)
-            if (i % 10 == 0) note("groups ${i + 1}/${groups.size}: ${targets.size} chapter links")
-            delay(6_000)
         }
         withContext(Dispatchers.IO) { runCatching { ckptFile.writeText(ckpt.toString()) } }
-
-        // --- phase 3: probe them ------------------------------------------
-        runTargetList(targets)
     }
 
-    /** Shared probe loop used by both modes. */
-    private suspend fun runTargetList(targets: List<Target>) {
+    /**
+     * Shared probe loop used by both modes. [final] = the caller has no more
+     * batches (library mode, or the directory sweep's last group batch):
+     * the service stops itself at the end. Directory batches keep running.
+     */
+    private suspend fun runTargetList(targets: List<Target>, final: Boolean = true) {
         if (targets.isEmpty()) {
-            note("nothing to probe")
-            stopSelf()
+            if (final) {
+                note("nothing to probe")
+                stopSelf()
+            }
             return
         }
         val sess = session ?: SiteClient.openSession(SiteClient.Site.NU).also { session = it }
@@ -282,8 +305,12 @@ class HostProbeService : Service() {
             }
         } finally {
             withContext(Dispatchers.IO) { File(filesDir, REPORT).writeText(report.toString()) }
-            note("done — ${report.length()} sites probed")
-            DebugLog.log("PROBE", "run complete: ${report.length()} entries in $REPORT (skipped $skipped already-recorded targets)")
+            if (final) {
+                note("done — ${report.length()} sites probed")
+                DebugLog.log("PROBE", "run complete: ${report.length()} entries in $REPORT (skipped $skipped already-recorded targets)")
+            } else {
+                DebugLog.log("PROBE", "batch done — ${report.length()} entries so far (skipped $skipped recorded)")
+            }
         }
     }
 
