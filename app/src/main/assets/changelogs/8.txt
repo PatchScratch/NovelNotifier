@@ -1,0 +1,1 @@
+Re-signed with the proper release key. One-time action: previous installs (v1.2 and earlier, debug-signed) must be uninstalled first — your library backup restores everything except the login.

@@ -178,6 +178,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         appForeground = foreground
     }
 
+    // --- in-app self-update (Updater.kt has the pieces; this owns scope+prefs) --
+
+    /** Update prompt state ("up to date" feeds the Settings row's status). */
+    var updateStatus by mutableStateOf("")
+
+    /**
+     * Silent GitHub check. Background calls are throttled to once a day and
+     * skip a version the user ignored; manual (Settings row) always checks.
+     */
+    fun checkForAppUpdate(context: android.content.Context, manual: Boolean) {
+        if (!manual) {
+            if (!updateCheckDue(prefs)) return
+            if (!isNetworkOnline(context)) return
+        }
+        viewModelScope.launch {
+            updateStatus = if (manual) t("Checking for updates…", "アップデートを確認中…") else ""
+            prefs.edit { putLong("update_last_check_at", System.currentTimeMillis()) }
+            val release = fetchLatestRelease()
+            val current = installedVersion(context)
+            if (release == null || !isNewer(release.tag, current)) {
+                updateStatus = if (manual) t("You're up to date (v", "最新です（v") + current + t(")", "）") else ""
+                UpdateState.reset()
+                return@launch
+            }
+            if (!manual && prefs.getString("update_ignored_tag", "") == release.tag) {
+                // ignored this version — stay quiet until the next release
+                return@launch
+            }
+            DebugLog.log("UPDATE", "newer release ${release.tag} (installed $current)")
+            UpdateState.info = release
+            UpdateState.phase = "prompt"
+            updateStatus = ""
+        }
+    }
+
+    /** The prompt's Ignore: quiet until the NEXT release (manual still shows). */
+    fun ignoreUpdate() {
+        UpdateState.info?.let { prefs.edit { putString("update_ignored_tag", it.tag) } }
+        UpdateState.reset()
+    }
+
+    /** Prompt's Download and install: permission gate → foreground service. */
+    fun startUpdate(context: android.content.Context) {
+        val info = UpdateState.info ?: return
+        UpdateDownloadService.start(context, info.apkUrl)
+    }
+
     /** Settings sections are per-site; remember which site opened it. */
     fun openSettings(site: String) {
         settingsSite = site

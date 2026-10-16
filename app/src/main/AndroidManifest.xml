@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- In-app self-update: install the APK the updater downloads from
+         GitHub Releases (user confirms each install on the system sheet). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".NovelApplication"
@@ -84,6 +87,17 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- In-app updater: foreground APK download streamed into a
+             PackageInstaller session; the receiver logs the install
+             verdict (user confirms on the system sheet). -->
+        <service
+            android:name=".UpdateDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <receiver
+            android:name=".UpdateInstallReceiver"
+            android:exported="false" />
 
     </application>
 

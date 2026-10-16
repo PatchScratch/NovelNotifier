@@ -3,6 +3,17 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// In-app updater: bundle the fastlane changelogs as assets so the
+// post-update popup (Updater.kt ChangelogDialog) reads
+// assets/changelogs/<versionCode>.txt. Copies before every build — a new
+// release changelog ships automatically with the release build.
+val copyChangelogs by tasks.registering(Copy::class) {
+    from("${rootProject.projectDir}/fastlane/metadata/android/en-US/changelogs")
+    into("src/main/assets/changelogs")
+    include("*.txt")
+}
+tasks.named("preBuild") { dependsOn(copyChangelogs) }
+
 android {
     packaging {
         resources {

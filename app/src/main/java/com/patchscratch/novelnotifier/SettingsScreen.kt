@@ -995,6 +995,26 @@ fun SettingsScreen(
         }
 
         SettingsSection(t("Checks", "更新チェック")) {
+            // In-app updater (2026-10-16): manual check + the app's version.
+            val version = remember { installedVersion(context) }
+            TextButton(
+                onClick = { app.checkForAppUpdate(context, manual = true) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(t("Check for app updates", "アプリのアップデートを確認")) }
+            if (app.updateStatus.isNotBlank()) {
+                Text(
+                    app.updateStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            } else {
+                Text(
+                    t("NovelNotifier v", "NovelNotifier v") + version +
+                        t(" — checks GitHub automatically once a day.", " — GitHubを1日1回自動確認します。"),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
         Text(
             text = t("Check for updates every", "更新チェックの間隔"),
             style = MaterialTheme.typography.bodySmall,

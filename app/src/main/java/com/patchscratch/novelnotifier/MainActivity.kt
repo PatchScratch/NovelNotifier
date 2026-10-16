@@ -18,6 +18,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -153,6 +155,35 @@ fun NovelApp(
     // First-run guide (fresh login + empty library + onboarding not done).
     LaunchedEffect(Unit) {
         if (nu.needsOnboarding()) router.push(Route.Onboarding)
+    }
+
+    // In-app self-update (2026-10-16): silent GitHub check once a day. The
+    // prompt/changelog dialogs are composed at the root below.
+    LaunchedEffect(Unit) {
+        app.checkForAppUpdate(context, manual = false)
+    }
+
+    // Post-update changelog popup: first start after an in-place update
+    // (stored last-run version differs). Fresh installs record silently.
+    val prefs = remember { context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE) }
+    var showChangelog by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val current = installedVersion(context)
+        val last = prefs.getString("last_run_version", "").orEmpty()
+        if (last.isNotBlank() && last != current) showChangelog = true
+        prefs.edit().putString("last_run_version", current).apply()
+    }
+
+    // Install-permission gate state (download pressed but Android hasn't
+    // been given "install unknown apps" for us yet).
+    var installPermGate by remember { mutableStateOf(false) }
+    val installPermReturn = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) {
+        // Re-check: if granted now, the download proceeds; otherwise the
+        // gate dialog re-appears on the next attempt.
+        if (canRequestInstalls(context)) app.startUpdate(context)
+        else installPermGate = false
     }
 
     // A notification tap lands on the NU series detail page. Login is left
@@ -632,6 +663,37 @@ fun NovelApp(
     // Unlock attempted with no lockscreen credential at all.
     if (app.needsDeviceLock) {
         NeedsDeviceLockDialog(onDismiss = { app.dismissNeedsDeviceLock() })
+    }
+
+    // In-app update prompt (and its download-progress state). Ignore stays
+    // quiet for this release; Download gates on the install permission,
+    // then hands to the foreground service + system install sheet.
+    if (UpdateState.info != null || UpdateState.phase.isNotBlank()) {
+        UpdateDialog(
+            currentVersion = installedVersion(context),
+            onIgnore = { app.ignoreUpdate() },
+            onDownload = { ctx ->
+                if (canRequestInstalls(ctx)) app.startUpdate(ctx)
+                else installPermGate = true
+            }
+        )
+    }
+    if (installPermGate) {
+        InstallPermissionDialog(
+            onOpenSettings = {
+                installPermGate = false
+                installPermReturn.launch(unknownSourcesIntent(context))
+            },
+            onCancel = { installPermGate = false }
+        )
+    }
+
+    // First start after an in-place update: what changed, with OK.
+    if (showChangelog) {
+        ChangelogDialog(
+            currentVersion = installedVersion(context),
+            onSawIt = { showChangelog = false }
+        )
     }
     }
 }
