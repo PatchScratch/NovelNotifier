@@ -80,7 +80,10 @@ fun SyosetuHome(
     onRemoveBookmark: (SyosetuBookmark) -> Unit = {},
     // Pull-to-refresh: re-sync the bookmark page from syosetu.com.
     isRefreshing: Boolean = false,
-    onRefresh: (() -> Unit)? = null
+    onRefresh: (() -> Unit)? = null,
+    // Drawer's always-reachable update check (manual — bypasses the
+    // once-a-day throttle).
+    onCheckUpdate: () -> Unit = {}
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -162,6 +165,14 @@ fun SyosetuHome(
                     onClick = {
                         scope.launch { drawerState.close() }
                         onOpenSettings()
+                    }
+                )
+                NavigationDrawerItem(
+                    label = { Text(t("Check for app updates", "アプリのアップデートを確認")) },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onCheckUpdate()
                     }
                 )
                 NsfwToggleRow(unlocked = nsfwUnlocked, onToggle = onToggleNsfw)

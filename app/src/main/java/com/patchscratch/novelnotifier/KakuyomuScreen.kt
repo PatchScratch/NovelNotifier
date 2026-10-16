@@ -71,7 +71,10 @@ fun KakuyomuHome(
     // Pull-to-refresh: re-sync follows (the site is master) — also the way
     // stale rows pick up fresh cover URLs.
     isRefreshing: Boolean = false,
-    onRefresh: (() -> Unit)? = null
+    onRefresh: (() -> Unit)? = null,
+    // Drawer's always-reachable update check (manual — bypasses the
+    // once-a-day throttle).
+    onCheckUpdate: () -> Unit = {}
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
@@ -181,6 +184,14 @@ fun KakuyomuHome(
                     onClick = {
                         scope.launch { drawerState.close() }
                         onOpenSettings()
+                    }
+                )
+                NavigationDrawerItem(
+                    label = { Text(t("Check for app updates", "アプリのアップデートを確認")) },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onCheckUpdate()
                     }
                 )
                 NsfwToggleRow(unlocked = nsfwUnlocked, onToggle = onToggleNsfw)

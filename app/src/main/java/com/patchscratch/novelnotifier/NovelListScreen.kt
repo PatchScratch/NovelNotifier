@@ -108,7 +108,10 @@ fun NovelListScreen(
     onToggleNsfw: () -> Unit = {},
     hiddenLists: Set<String> = emptySet(),
     onHiddenLists: (Set<String>) -> Unit = {},
-    pauseLocalCovers: Boolean = false
+    pauseLocalCovers: Boolean = false,
+    // Drawer's always-reachable update check (manual — bypasses the
+    // once-a-day throttle).
+    onCheckUpdate: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -301,6 +304,14 @@ fun NovelListScreen(
                     onClick = {
                         scope.launch { drawerState.close() }
                         onOpenSettings()
+                    }
+                )
+                NavigationDrawerItem(
+                    label = { Text(t("Check for app updates", "アプリのアップデートを確認")) },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onCheckUpdate()
                     }
                 )
             }

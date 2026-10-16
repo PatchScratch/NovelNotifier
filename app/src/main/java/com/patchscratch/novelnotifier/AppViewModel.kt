@@ -199,6 +199,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val current = installedVersion(context)
             if (release == null || !isNewer(release.tag, current)) {
                 updateStatus = if (manual) t("You're up to date (v", "最新です（v") + current + t(")", "）") else ""
+                // The drawer's check row bypasses Settings — answer there
+                // too, or the tap looks like it did nothing.
+                if (manual) {
+                    android.widget.Toast.makeText(
+                        getApplication(),
+                        updateStatus,
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
                 UpdateState.reset()
                 return@launch
             }

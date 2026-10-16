@@ -513,6 +513,7 @@ fun NovelApp(
                 activeSite = app.activeSite,
                 onSwitchSite = { app.switchSite(it) },
                 onOpenSettings = { app.openSettings("syosetu") },
+                onCheckUpdate = { app.checkForAppUpdate(context, manual = true) },
                 onOpenNovel = { novel ->
                     syosetu.openDetail(novel)
                     router.push(Route.SyosetuDetail(novel.url))
@@ -543,6 +544,7 @@ fun NovelApp(
                 activeSite = app.activeSite,
                 onSwitchSite = { app.switchSite(it) },
                 onOpenSettings = { app.openSettings("kakuyomu") },
+                onCheckUpdate = { app.checkForAppUpdate(context, manual = true) },
                 onOpenWork = { work ->
                     kakuyomu.openDetail(work)
                     router.push(Route.KakuyomuDetail(work.id))
@@ -600,6 +602,7 @@ fun NovelApp(
                     activeSite = app.activeSite,
                     onSwitchSite = { app.switchSite(it) },
                     onOpenSettings = { app.openSettings("nu") },
+                    onCheckUpdate = { app.checkForAppUpdate(context, manual = true) },
                     onEditLists = { router.push(Route.EditLists()) },
                     onSaveListOptions = { newNotifyOff, newUpdateOff ->
                         nu.saveListOptions(newNotifyOff, newUpdateOff)
