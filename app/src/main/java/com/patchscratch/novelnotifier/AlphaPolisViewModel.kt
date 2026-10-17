@@ -63,7 +63,7 @@ class AlphaPolisViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 try {
                     val contentId = work.id.substringAfter('/')
-                    val ok = alpSetFavorite(contentId, adding)
+                    val ok = alpSetFavorite(contentId, adding, workId = work.id)
                     DebugLog.log("ALP", "site favorite " + (if (adding) "add" else "delete") + " → " + ok)
                 } catch (e: Exception) {
                     DebugLog.log("ALP", "site favorite skipped (offline?)", e)
@@ -81,6 +81,7 @@ class AlphaPolisViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     fun syncBookmarks() {
+        DebugLog.log("ALP", "syncBookmarks() called; loggedIn=$loggedIn")
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
             syncing = true
             try {

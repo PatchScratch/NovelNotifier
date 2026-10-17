@@ -81,8 +81,16 @@ data class AlpWorkDetail(val work: AlpWork, val episodes: List<AlpEpisode>)
  * WebView CookieManager so a login done in the visible WebView authorizes
  * these headless requests (premium chapters included).
  */
-internal fun alpCookies(): String =
-    android.webkit.CookieManager.getInstance().getCookie(ALP_BASE).orEmpty()
+/**
+ * CookieManager must be read on a thread with a Looper (Main) — a plain IO
+ * thread can block indefinitely once WebView's cookie provider is busy
+ * (observed live: the bookshelf fetch hung forever after the login WebView
+ * ran; the fix hoists the read to Main).
+ */
+internal suspend fun alpCookies(): String =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+        android.webkit.CookieManager.getInstance().getCookie(ALP_BASE).orEmpty()
+    }
 
 internal suspend fun alpFetch(url: String, referer: String? = null): String =
     withContext(Dispatchers.IO) {
@@ -276,9 +284,24 @@ fun parseAlpFavoriteState(html: String): Boolean = try {
  * ⚑ write-back (the site's own button semantics): POST add/delete with
  * {citi_cont_id} + the XHR header, from the shared session jar.
  */
-suspend fun alpSetFavorite(contentId: String, add: Boolean): Boolean =
+suspend fun alpSetFavorite(contentId: String, add: Boolean, workId: String? = null): Boolean =
     withContext(Dispatchers.IO) {
         try {
+            // 419 without it: the site's $.ajaxSetup sets X-CSRF-TOKEN from a
+            // per-page token (session-bound). Only WORK pages carry the
+            // ajaxSetup script (the /novel landing has none, verified), so
+            // pull the token from the work page itself — the episode-body
+            // lesson applied.
+            val page = alpFetch(
+                workId?.let { "$ALP_BASE/novel/$it" } ?: "$ALP_BASE/novel"
+            )
+            // Exact site bytes: {'X-CSRF-TOKEN': "token"}
+            val csrf = Regex("""'X-CSRF-TOKEN':\s*"([A-Za-z0-9]+)""")
+                .find(page)?.groupValues?.get(1)
+            if (csrf.isNullOrBlank()) {
+                DebugLog.log("ALP", "favorite: no CSRF token on page")
+                return@withContext false
+            }
             val conn = URL("$ALP_BASE/mypage/favorite/" + if (add) "add" else "delete")
                 .openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
@@ -287,13 +310,17 @@ suspend fun alpSetFavorite(contentId: String, add: Boolean): Boolean =
             conn.readTimeout = 20_000
             conn.setRequestProperty("User-Agent", ALP_UA)
             conn.setRequestProperty("X-Requested-With", "XMLHttpRequest")
+            conn.setRequestProperty("X-CSRF-TOKEN", csrf)
             alpCookies().takeIf { it.isNotBlank() }?.let { conn.setRequestProperty("Cookie", it) }
-            val body = "citi_cont_id=" + URLEncoder.encode(contentId, "UTF-8")
-            conn.setFixedLengthStreamingMode(body.toByteArray().size)
-            conn.outputStream.use { it.write(body.toByteArray()) }
-            val ok = conn.responseCode in 200..299
+            val payload = "citi_cont_id=" + URLEncoder.encode(contentId, "UTF-8")
+            conn.setFixedLengthStreamingMode(payload.toByteArray().size)
+            conn.outputStream.use { it.write(payload.toByteArray()) }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val respBody = stream?.bufferedReader()?.use { it.readText() }?.take(200) ?: ""
             conn.disconnect()
-            ok
+            if (code !in 200..299) DebugLog.log("ALP", "favorite POST $code: $respBody")
+            code in 200..299
         } catch (e: Exception) {
             DebugLog.log("ALP", "favorite add/remove failed", e)
             false
@@ -306,13 +333,53 @@ suspend fun alpSetFavorite(contentId: String, add: Boolean): Boolean =
  */
 fun parseAlpBookshelf(html: String): List<AlpWork> {
     val out = mutableListOf<AlpWork>()
-    for (m in Regex("""href="(/novel/\d+/\d+)""").findAll(html)) {
+    // The shelf page nests the works inside a paginator object deep in an
+    // embedded JSON blob: …"paginator":{"total":3,…,"items":[{"content":
+    // {"citi_cont_id","title","url":"/novel/<a>/<c>","updated","is_rental"}…
+    // — find the items array by brace-walking from its first occurrence.
+    var idx = html.indexOf(""":""items":[{"content":""")
+    if (idx < 0) idx = html.indexOf("""items":[{"content":""")
+    if (idx >= 0) {
+        var depth = 0
+        var start = -1
+        var end = -1
+        for (i in idx until html.length) {
+            when (html[i]) {
+                '[' -> { if (depth == 0 && start < 0) start = i; depth++ }
+                ']' -> { depth--; if (depth == 0 && start >= 0) { end = i + 1; break } }
+            }
+        }
+        if (start >= 0 && end > start) {
+            runCatching {
+                val items = org.json.JSONArray(html.substring(start, end))
+                for (i in 0 until items.length()) {
+                    val content = items.optJSONObject(i)?.optJSONObject("content") ?: continue
+                    val title = content.optString("title").trim()
+                    val id = content.optString("url").removePrefix("/novel/")
+                    if (title.isNotBlank() && id.contains("/") && out.none { it.id == id }) {
+                        out += AlpWork(
+                            id = id, title = title, author = "",
+                            lastUpdate = content.optString("updated").replace(".", "-")
+                        )
+                    }
+                }
+            }.onFailure { DebugLog.log("ALP", "shelf items parse: " + it.message) }
+        }
+    }
+    if (out.isNotEmpty()) return out
+    // The shelf page uses ABSOLUTE hrefs (https://…/novel/<a>/<c>) — the
+    // live log taught this; the ranking/search pages use relative ones.
+    for (m in Regex("""href="(?:https://www\.alphapolis\.co\.jp)?(/novel/\d+/\d+)""").findAll(html)) {
         val id = m.groupValues[1].removePrefix("/novel/")
         if (out.any { it.id == id }) continue
-        val cover = Regex("""<img src="(https://cdn-image[^"]+)"""")
-            .find(html.substring(m.range.last))?.groupValues?.get(1) ?: ""
-        val title = Regex("""<a href="/novel/$id"[^>]*>\s*([^<]{4,80})""")
-            .find(html)?.groupValues?.get(1)?.trim() ?: continue
+        // Card context follows the link; the title anchor re-appears inside it.
+        val ctx = html.substring(m.range.last, minOf(m.range.last + 6000, html.length))
+        val cover = Regex("""<img src="(https://cdn-image[^"]+)"""").find(ctx)?.groupValues?.get(1) ?: ""
+        val title = Regex("""<a href="/novel/$id"[^>]*>\s*([^<]{4,120})""")
+            .find(ctx)?.groupValues?.get(1)?.trim()
+            ?: ctx.substringAfter("alt=\"", "").substringBefore("\"").take(80).ifBlank { null }
+            ?: ctx.substringAfter("title=\"", "").substringBefore("\"").take(80).ifBlank { null }
+            ?: continue
         out += AlpWork(id = id, title = title, author = "", coverUrl = cover)
     }
     return out

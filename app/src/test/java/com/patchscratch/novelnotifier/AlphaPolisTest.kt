@@ -92,6 +92,19 @@ class AlphaPolisTest {
     }
 
     @Test
+    fun bookshelf_parsesNestedPaginatorItems() {
+        // The LIVE logged-in shape (recon 2026-10-17): a paginator object
+        // deep inside an embedded JSON blob.
+        val html = """xxx<script type="application/json">{"q":1,"paginator":{"total":2,
+            "items":[{"content":{"citi_cont_id":55093625,"title":"世界十傑","url":"/novel/195605754/55093625","updated":"2026.10.17"}},
+            {"content":{"citi_cont_id":524115920,"title":"二作目","url":"/novel/310314309/524115920","updated":"2026.10.01"}}]}}</script>"""
+        val rows = parseAlpBookshelf(html)
+        assertEquals(listOf("195605754/55093625", "310314309/524115920"), rows.map { it.id })
+        assertEquals("世界十傑", rows[0].title)
+        assertEquals("2026-10-17", rows[0].lastUpdate)
+    }
+
+    @Test
     fun bodyHtml_brsBecomeParagraphs() {
         val paras = parseAlpBodyHtml(fixture("fixture-alphapolis-body.html"))
         assertTrue("paragraphs: ${paras.size}", paras.size >= 5)
