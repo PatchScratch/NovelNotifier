@@ -70,6 +70,28 @@ class AlphaPolisTest {
     }
 
     @Test
+    fun ranking_parsesOrderedRowsWithCoverAndAuthor() {
+        val rows = parseAlpRanking(fixture("fixture-alphapolis-ranking.html"))
+        assertEquals(100, rows.size)
+        assertEquals("世界十傑は全員俺の教え子でした ～最悪の砦に左遷された元奴隷ですが、世界最強の十人が集まってきたので建国することになりました～", rows[0].title)
+        assertEquals("鷹の木", rows[0].author)
+        assertEquals("195605754/55093625", rows[0].id)
+        assertTrue(rows[0].coverUrl.startsWith("https://cdn-image"))
+        assertTrue(rows[0].introduction.isNotBlank())
+        // ranks arrive in order despite the DOM sequence
+        assertEquals("629735639/79092895", rows[1].id)
+    }
+
+    @Test
+    fun search_parsesRowsWithoutRank() {
+        val rows = parseAlpSearch(fixture("fixture-alphapolis-search.html"))
+        assertEquals(20, rows.size)
+        assertEquals("花嫁の代わりはいくらでもいるそうなので、あなたの結婚式には出席しません", rows[0].title)
+        assertEquals("サザンカ", rows[0].author)
+        assertEquals("123768033/255094017", rows[0].id)
+    }
+
+    @Test
     fun bodyHtml_brsBecomeParagraphs() {
         val paras = parseAlpBodyHtml(fixture("fixture-alphapolis-body.html"))
         assertTrue("paragraphs: ${paras.size}", paras.size >= 5)

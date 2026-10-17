@@ -35,6 +35,7 @@ sealed interface Route {
     data class NuDetail(val url: String) : Route
     data class SyosetuDetail(val url: String) : Route
     data class KakuyomuDetail(val id: String) : Route
+    data class AlpDetail(val id: String) : Route
     /** "" shows all bookmarks; otherwise the category id. */
     data class SyosetuLibrary(val category: String) : Route
     /** "" shows all follows; otherwise the local-category id. */

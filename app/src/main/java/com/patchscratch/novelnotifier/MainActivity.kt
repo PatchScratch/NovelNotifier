@@ -135,6 +135,7 @@ fun NovelApp(
     val nu = viewModel<NuViewModel>()
     val syosetu = viewModel<SyosetuViewModel>()
     val kakuyomu = viewModel<KakuyomuViewModel>()
+    val alp = viewModel<AlphaPolisViewModel>()
     val readerVm = viewModel<ReaderViewModel>()
     val router = app.router
 
@@ -340,6 +341,14 @@ fun NovelApp(
         )
 
         Route.Discover -> when (app.activeSite) {
+            "alphapolis" -> AlphaPolisDiscoverBody(
+                onOpenWork = { w ->
+                    alp.openDetail(w)
+                    router.push(Route.AlpDetail(w.id))
+                },
+                onBack = { router.pop() }
+            )
+
             "syosetu" -> SyosetuDiscoverBody(
                 onOpenNovel = { novel ->
                     syosetu.openDetail(novel)
@@ -517,6 +526,33 @@ fun NovelApp(
             onCancel = { router.pop() }
         )
 
+        is Route.AlpDetail -> {
+            val w = alp.selected
+            if (w != null) AlphaPolisDetailScreen(
+                work = w,
+                bookmarked = alp.bookmarks.any { it.id == w.id },
+                onToggleBookmark = { alp.toggleBookmark(it) },
+                readPos = alp.readPosOf(w.id),
+                onSetReadPos = { n -> alp.setReadPos(w.id, n) },
+                onOpenReader = { chapters, startAt ->
+                    readerVm.open(
+                        ReaderTarget(
+                            seriesTitle = w.title,
+                            seriesUrl = w.url,
+                            chapters = chapters,
+                            startIndex = startAt.coerceAtLeast(0),
+                            meta = null
+                        )
+                    )
+                    router.push(Route.Reader)
+                },
+                onBack = {
+                    alp.closeDetail()
+                    router.pop()
+                }
+            )
+        }
+
         Route.Home -> when (app.activeSite) {
             "syosetu" -> SyosetuHome(
                 activeSite = app.activeSite,
@@ -577,6 +613,23 @@ fun NovelApp(
                 },
                 isRefreshing = kakuyomu.syncing,
                 onRefresh = { kakuyomu.syncBookmarks() }
+            )
+
+            "alphapolis" -> AlphaPolisHome(
+                activeSite = app.activeSite,
+                onSwitchSite = { app.switchSite(it) },
+                onOpenSettings = { app.openSettings("alphapolis") },
+                onCheckUpdate = { app.checkForAppUpdate(context, manual = true) },
+                onOpenWork = { w ->
+                    alp.openDetail(w)
+                    router.push(Route.AlpDetail(w.id))
+                },
+                onOpenDiscover = { router.push(Route.Discover) },
+                nsfwUnlocked = app.nsfwUnlocked,
+                onToggleNsfw = { toggleNsfw() },
+                bookmarks = alp.bookmarks,
+                onToggleBookmark = { w -> alp.toggleBookmark(w) },
+                readPosById = { id -> alp.readPosOf(id) }
             )
 
             else -> {

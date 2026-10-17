@@ -267,23 +267,29 @@ fun KakuyomuHome(
  */
 @Composable
 fun SiteSwitcherChips(activeSite: String, onSwitchSite: (String) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
         FilterChip(
             selected = activeSite == "nu",
             onClick = { onSwitchSite("nu") },
             label = { Text("NU") },
-            modifier = Modifier.weight(1f).padding(end = 4.dp)
+            modifier = Modifier.weight(1f).padding(end = 3.dp)
         )
         FilterChip(
             selected = activeSite == "syosetu",
             onClick = { onSwitchSite("syosetu") },
             label = { Text(t("Syosetu", "なろう")) },
-            modifier = Modifier.weight(1f).padding(end = 4.dp)
+            modifier = Modifier.weight(1f).padding(end = 3.dp)
         )
         FilterChip(
             selected = activeSite == "kakuyomu",
             onClick = { onSwitchSite("kakuyomu") },
             label = { Text(t("Kakuyomu", "カクヨム")) },
+            modifier = Modifier.weight(1f).padding(end = 3.dp)
+        )
+        FilterChip(
+            selected = activeSite == "alphapolis",
+            onClick = { onSwitchSite("alphapolis") },
+            label = { Text(t("AlphaPolis", "アルポリ")) },
             modifier = Modifier.weight(1f)
         )
     }

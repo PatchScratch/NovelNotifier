@@ -575,6 +575,52 @@ fun ReaderScreen(
         imageChapter = false
         offlineCopy = false
         cfChecking = false
+        // AlphaPolis reads fully headless (B4): page → CSRF+episode tokens →
+        // POST /novel/episode_body — no WebView in the reading path, so the
+        // site's premium chapters (session-authorized) work without any
+        // scraping surface. Stored copies serve when offline.
+        if ((android.net.Uri.parse(chapter.url).host ?: "").endsWith("alphapolis.co.jp")) {
+            val stored = withContext(Dispatchers.IO) {
+                EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+            }
+            if (stored != null && !isNetworkOnline(context)) {
+                extractResult = stored
+                offlineCopy = true
+                return@LaunchedEffect
+            }
+            if (isNetworkOnline(context)) {
+                runCatching {
+                    val page = alpFetch(chapter.url)
+                    val (title, tokens) = parseAlpEpisodePage(page)
+                    if (tokens != null) {
+                        val body = alpPostEpisodeBody(
+                            tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapter.url
+                        )
+                        extractResult = ChapterExtract(
+                            title = title,
+                            paragraphs = parseAlpBodyHtml(body)
+                        )
+                        DebugLog.log("READER", "alphapolis headless: ${extractResult!!.paragraphs.size} paragraphs")
+                    }
+                }.onFailure {
+                    DebugLog.log("READER", "alphapolis headless failed", it)
+                }
+                if (extractResult == null) {
+                    if (stored != null) {
+                        extractResult = stored
+                        offlineCopy = true
+                    } else extractFailed = true
+                }
+                return@LaunchedEffect
+            }
+            if (stored != null) {
+                extractResult = stored
+                offlineCopy = true
+                return@LaunchedEffect
+            }
+            extractFailed = true
+            return@LaunchedEffect
+        }
         // No network at all: the WebView cannot load anything, so skip the
         // ~30 s patience ladder and serve the stored ePub copy NOW. Without
         // a stored copy the ladder still runs (it fails gracefully, and the

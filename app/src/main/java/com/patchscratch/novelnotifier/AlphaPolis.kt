@@ -62,9 +62,13 @@ data class AlpEpisode(
     val id: String,             // trailing /episode/<id>
     val title: String,
     val chapterTitle: String = "",
-    val isPublic: Boolean = true
+    val isPublic: Boolean = true,
+    // The ToC's own (work-scoped) path: /novel/<workId>/episode/<id> —
+    // episodes are NOT addressable without the work segment (the 404 the
+    // first live read caught).
+    val path: String = ""
 ) {
-    val url: String get() = "$ALP_BASE/novel/episode/$id"
+    val url: String get() = ALP_BASE + path.ifBlank { "/novel/episode/$id" }
 }
 
 /** Work detail + ordered ToC (one GET of the work page). */
@@ -221,7 +225,8 @@ fun parseAlpWorkPage(html: String): AlpWorkDetail? {
                         id = epId,
                         title = epTitle,
                         chapterTitle = heading,
-                        isPublic = ep.optBoolean("isPublic", true)
+                        isPublic = ep.optBoolean("isPublic", true),
+                        path = href
                     )
                 }
             }
@@ -249,6 +254,59 @@ private fun alpStripTags(html: String): String = html
     .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     .replace("&nbsp;", " ")
     .trim()
+
+// --- rankings + search -------------------------------------------------------------
+
+/**
+ * Ranking page HTML → ordered rows. The ranking tabs are
+ * /novel/ranking/{hot,annual,completed} (probed live: daily/weekly/monthly
+ * don't exist). Rows share the c-content card shape: rank span → cover →
+ * title anchor → author.
+ */
+fun parseAlpRanking(html: String): List<AlpWork> {
+    val out = mutableListOf<Pair<Int, AlpWork>>()
+    for (chunk in Regex("""<span class="c-content__rank""").split(html).drop(1)) {
+        val rank = Regex("""^[^>]*>\s*(\d+)""").find(chunk)?.groupValues?.get(1)?.toIntOrNull() ?: continue
+        val url = Regex("""href="(/novel/\d+/\d+)"""").find(chunk)?.groupValues?.get(1) ?: continue
+        val cover = Regex("""<img src="(https://cdn-image[^"]+)"""").find(chunk)?.groupValues?.get(1) ?: ""
+        val title = Regex("""c-content__title">\s*<a[^>]*>\s*([^<]+)""").find(chunk)?.groupValues?.get(1)?.trim() ?: continue
+        val author = Regex("""c-content__author-publink">\s*<a[^>]*>\s*([^<]+)""").find(chunk)?.groupValues?.get(1)?.trim() ?: ""
+        val abstract = Regex("""c-content__abstract">([^<]+)""").find(chunk)?.groupValues?.get(1)?.trim() ?: ""
+        out += rank to AlpWork(
+            id = url.removePrefix("/novel/"), title = title, author = author,
+            coverUrl = cover, introduction = abstract
+        )
+    }
+    return out.sortedBy { it.first }.map { it.second }
+}
+
+/**
+ * Search page HTML → rows (GET /search?category=novel&query=…&page=N).
+ * Search rows use the older .content-title/.author shape (no rank spans);
+ * paging via &page= (server total is huge — cap by caller).
+ */
+fun parseAlpSearch(html: String): List<AlpWork> {
+    val out = mutableListOf<AlpWork>()
+    for (chunk in Regex("""<div class="content-title">""").split(html).drop(1)) {
+        val m = Regex("""<a href="(/novel/\d+/\d+)"[^>]*>\s*([^<]+)""").find(chunk) ?: continue
+        val author = Regex("""class="author">\s*<a[^>]*>\s*([^<]+)""").find(chunk)?.groupValues?.get(1)?.trim() ?: ""
+        out += AlpWork(id = m.groupValues[1].removePrefix("/novel/"), title = m.groupValues[2].trim(), author = author)
+    }
+    return out
+}
+
+/** Ranking tab ids in the site's own order (labels for the Discover chips). */
+val ALP_RANKING_TABS = listOf("hot" to "急上昇", "annual" to "年間", "completed" to "完結")
+
+/** One ranking page (100 rows). */
+suspend fun fetchAlpRanking(tab: String): List<AlpWork> =
+    parseAlpRanking(alpFetch("$ALP_BASE/novel/ranking/$tab"))
+
+/** One search page (20 rows). */
+suspend fun fetchAlpSearch(query: String, page: Int = 1): List<AlpWork> =
+    parseAlpSearch(
+        alpFetch("$ALP_BASE/search?category=novel&query=" + URLEncoder.encode(query, "UTF-8") + "&page=$page")
+    )
 
 // --- episode page → title + body ----------------------------------------------------
 
