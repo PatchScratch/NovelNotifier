@@ -54,6 +54,7 @@ sealed interface Route {
     data object NuLogin : Route
     data object SyosetuLogin : Route
     data object KakuyomuLogin : Route
+    data object AlpLogin : Route
     data object Reader : Route
     data object XlateFiles : Route
 }

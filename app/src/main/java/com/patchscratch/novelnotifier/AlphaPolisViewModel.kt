@@ -30,6 +30,24 @@ class AlphaPolisViewModel(app: Application) : AndroidViewModel(app) {
     var selected by mutableStateOf<AlpWork?>(null)
         private set
 
+    // --- login (B4): the cookie jar is the session; this flag only gates UI ---
+
+    var loggedIn by mutableStateOf(
+        app.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
+            .getBoolean("alphapolis_logged_in", false)
+    )
+        private set
+
+    fun onLoggedIn() {
+        loggedIn = true
+        prefs.edit { putBoolean("alphapolis_logged_in", true) }
+    }
+
+    fun onLoggedOut() {
+        loggedIn = false
+        prefs.edit { putBoolean("alphapolis_logged_in", false) }
+    }
+
     fun openDetail(work: AlpWork) { selected = work }
     fun closeDetail() { selected = null }
 

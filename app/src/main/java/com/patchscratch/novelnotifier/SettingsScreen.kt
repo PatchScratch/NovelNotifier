@@ -61,6 +61,7 @@ fun SettingsScreen(
     nu: NuViewModel,
     syosetu: SyosetuViewModel,
     kakuyomu: KakuyomuViewModel,
+    alp: AlphaPolisViewModel,
     router: Router,
     onThemeChange: (String) -> Unit = {},
     onCustomThemeReady: (CustomTheme?) -> Unit = {},
@@ -203,7 +204,31 @@ fun SettingsScreen(
                 else -> t("Account · Novel Updates", "アカウント · ノベルアップデーツ")
             }
         ) {
-        if (site == "kakuyomu") {
+        if (site == "alphapolis") {
+            SettingsSection("AlphaPolis アルファポリス") {
+                if (alp.loggedIn) {
+                    Text(
+                        t("Logged in — the app's headless requests use this browser session (premium chapters you've paid for included).",
+                            "ログイン済み — アプリのヘッドレスリクエストはこのセッションを使用します（購入済みのプレミアム話を含む）。"),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    TextButton(onClick = { alp.onLoggedOut() }, modifier = Modifier.fillMaxWidth()) {
+                        Text(t("Log out of AlphaPolis", "アルファポリスからログアウト"))
+                    }
+                } else {
+                    Text(
+                        t("Log in for premium chapters you've purchased. Credentials stay in the app's own session — nothing goes to the external browser.",
+                            "購入済みプレミアム話の閲覧にログインしてください。認証情報はアプリ内セッションのみに保持されます。"),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Button(onClick = { router.push(Route.AlpLogin) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(t("Log in on AlphaPolis", "アルファポリスにログイン"))
+                    }
+                }
+            }
+        } else if (site == "kakuyomu") {
             if (kakuyomuStatus.isNotBlank()) {
                 Text(kakuyomuStatus, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 8.dp))
             }

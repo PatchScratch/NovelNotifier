@@ -305,6 +305,7 @@ fun NovelApp(
             nu = nu,
             syosetu = syosetu,
             kakuyomu = kakuyomu,
+            alp = alp,
             router = router,
             onThemeChange = onThemeChange,
             onCustomThemeReady = onCustomThemeReady,
@@ -522,6 +523,14 @@ fun NovelApp(
             onLoggedIn = {
                 kakuyomu.onLoggedIn()
                 router.pop()
+            },
+            onCancel = { router.pop() }
+        )
+
+        Route.AlpLogin -> AlphaPolisLoginScreen(
+            onLoggedIn = {
+                alp.onLoggedIn()
+                router.replace(Route.Settings)
             },
             onCancel = { router.pop() }
         )
