@@ -463,6 +463,23 @@ fun SyosetuDetailScreen(
             DebugLog.log("SYOSETU", "detail served from cache: ${novel.ncode}")
             if (cached.novel.story.length >= novel.story.length) meta = cached.novel
             toc = cached.toc
+        }
+        // Bookmark rows (and caches written from them) carry a bare title —
+        // no synopsis/genre/keywords for the INFO cards. One cheap
+        // official-API call fills the cards and re-seeds the cache.
+        if (meta.story.isBlank() || meta.keywords.isBlank()) {
+            runCatching {
+                syosetuApiQuery(mapOf("ncode" to novel.ncode, "lim" to "1")).firstOrNull()
+            }.getOrNull()?.let { full ->
+                if (full.story.isNotBlank()) {
+                    meta = full
+                    if (toc?.episodes?.isNotEmpty() == true) {
+                        withContext(Dispatchers.IO) { saveSyosetuSeries(context, full, toc!!) }
+                    }
+                }
+            }
+        }
+        if (cached != null) {
             loading = false
             return@LaunchedEffect
         }
@@ -470,6 +487,16 @@ fun SyosetuDetailScreen(
         loading = true
         error = ""
         try {
+            // Bookmark rows arrive with a bare title (no synopsis/genre/
+            // keywords) and the ToC scrape below doesn't carry them either —
+            // one cheap official-API call fills the INFO tab's cards.
+            if (meta.story.isBlank() || meta.keywords.isBlank()) {
+                runCatching {
+                    syosetuApiQuery(mapOf("ncode" to novel.ncode, "lim" to "1")).firstOrNull()
+                }.getOrNull()?.let { full ->
+                    if (full.story.isNotBlank()) meta = full
+                }
+            }
             val all = mutableListOf<SyosetuEpisode>()
             var page = 1
             while (true) {
@@ -492,7 +519,7 @@ fun SyosetuDetailScreen(
                 hasMorePages = false
             )
             if (episodes.isNotEmpty()) {
-                withContext(Dispatchers.IO) { saveSyosetuSeries(context, novel, toc!!) }
+                withContext(Dispatchers.IO) { saveSyosetuSeries(context, meta, toc!!) }
             }
         } catch (e: Exception) {
             // Live fetch failed (offline / site down). A stale cached ToC

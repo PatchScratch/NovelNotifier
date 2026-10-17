@@ -318,22 +318,37 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                                 }
                             }
                         }
-                        // Genres — below the synopsis, NU position
+                        // Genres — below the synopsis, NU position; JP
+                        // values carry the dimmed translation beneath.
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(t("Genres", "ジャンル"), style = MaterialTheme.typography.titleMedium)
-                                Text(state.genres.ifBlank { "None listed" }, modifier = Modifier.padding(top = 8.dp))
+                                if (state.genres.isBlank()) {
+                                    Text("None listed", modifier = Modifier.padding(top = 8.dp))
+                                } else {
+                                    TranslatedInfoText(
+                                        text = state.genres,
+                                        modifier = Modifier.padding(top = 8.dp)
+                                    )
+                                }
                             }
                         }
-                        // Tags — below genres, NU position
+                        // Tags — below genres, NU position; translated too.
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(t("Tags", "タグ"), style = MaterialTheme.typography.titleMedium)
-                                Text(state.tags.ifBlank { "None listed" }, modifier = Modifier.padding(top = 8.dp))
+                                if (state.tags.isBlank()) {
+                                    Text("None listed", modifier = Modifier.padding(top = 8.dp))
+                                } else {
+                                    TranslatedInfoText(
+                                        text = state.tags,
+                                        modifier = Modifier.padding(top = 8.dp)
+                                    )
+                                }
                             }
                         }
                         // site extras (translation coverage, AI cover, offline rows…)
