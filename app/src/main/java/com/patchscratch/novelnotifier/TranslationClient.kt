@@ -52,11 +52,44 @@ object TranslationClient {
         "\n\nThe input is a JSON array of objects like {\"i\":0,\"t\":\"…\"}, one per " +
             "paragraph. Reply with ONLY a JSON array of objects with the SAME i values, " +
             "each \"e\" (or \"t\") holding that paragraph's translation. Include EVERY " +
-            "index — never merge, split, add or drop paragraphs. Render dialogue and " +
-            "quotation marks as curly quotes (“ ”) — never straight ASCII double " +
-            "quotes, which break JSON. Output the JSON array and nothing else."
+            "index — never merge, split, add or drop paragraphs. Keep the original " +
+            "Japanese brackets 「」『』（） exactly as given; any quotes you introduce " +
+            "must be curly (“ ”) — never straight ASCII double quotes, which break " +
+            "JSON. Output the JSON array and nothing else."
 
-    /** Full system message: user prompt + alignment contract + glossary. */
+    /**
+     * The user's JP→EN style rules (their wording, 2026-10-18) — appended
+     * under ANY prompt, default or custom, because they govern output the
+     * custom wording can't be trusted to repeat: bracket/punctuation
+     * preservation, first-person inner voice in （）, romaji onomatopoeia.
+     * Deliberately English-only even on JP-locale devices — the rules
+     * prescribe the ENGLISH output.
+     */
+    private const val STYLE_RULES =
+        "\n\nJapanese-to-English web novel translator. English only. No refusal, no notes.\n" +
+            "Keep 「」『』（）！？…〜ー. Convert only 。 to . and 、 to ,\n" +
+            "「」 = spoken. （） = inner voice of the person who just acted or spoke, " +
+            "FIRST PERSON (I/me). Never she/he thought.\n" +
+            "Onomatopoeia: romaji only (Bassaa, Kyaa, Bassa—). Keep elongation with — " +
+            "or extra vowels.\n" +
+            "Do not leave バッサー/きゃー in kana. Do not replace with Slash, WHOOSH, BAM.\n" +
+            "Example:\n" +
+            "JP: 「きゃー、エッチ！」\n" +
+            "（見ちゃった……！ 何で毎朝あんなに元気なのかな。）\n" +
+            "EN: 「Kyaa, you perv!」\n" +
+            "（I saw it…! Why is he that lively every morning?）"
+
+    /**
+     * Names/terms that ship in the prompt ahead of the user's glossary.txt
+     * (user-supplied 2026-10-18). Harmless for series that never mention
+     * them — an entry only fires when its Japanese form appears.
+     */
+    private const val DEFAULT_GLOSSARY =
+        "如月千紗 = Chisa Kisaragi\n" +
+            "小泉晴道 = Harumichi Koizumi\n" +
+            "幼馴染 = childhood friend"
+
+    /** Full system message: user prompt + style rules + alignment contract + glossary. */
     fun systemPrompt(custom: String, glossary: String): String = systemPrompt(custom, glossary, "")
 
     /**
@@ -66,9 +99,12 @@ object TranslationClient {
      */
     fun systemPrompt(custom: String, glossary: String, voices: String): String = buildString {
         append(custom.trim().ifBlank { defaultPrompt() })
+        append(STYLE_RULES)
         append(ALIGNMENT_CONTRACT)
-        if (glossary.isNotBlank()) {
-            append("\n\n## glossary.txt\n").append(glossary.trim())
+        val mergedGlossary = listOf(DEFAULT_GLOSSARY, glossary.trim())
+            .filter { it.isNotBlank() }.joinToString("\n")
+        if (mergedGlossary.isNotBlank()) {
+            append("\n\n## glossary.txt\n").append(mergedGlossary)
         }
         if (voices.isNotBlank()) {
             append("\n\n## voices.txt\n").append(voices.trim())

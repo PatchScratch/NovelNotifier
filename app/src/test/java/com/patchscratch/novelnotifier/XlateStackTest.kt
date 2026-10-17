@@ -82,11 +82,14 @@ class XlateStackTest {
     fun systemPrompt_lockSectionsMirrorTheMill() {
         val s = TranslationClient.systemPrompt("P", "G", "V")
         assertTrue(s.contains("P"))
-        assertTrue(s.contains("## glossary.txt\nG"))
+        // built-in glossary entries precede the user's (merged section)
+        assertTrue(s.contains("## glossary.txt\n"))
+        assertTrue(s.contains("\nG"))
         assertTrue(s.contains("## voices.txt\nV"))
         // two-arg overload still works (no voices section)
         val s2 = TranslationClient.systemPrompt("P", "G")
-        assertTrue(s2.contains("## glossary.txt\nG"))
+        assertTrue(s2.contains("## glossary.txt\n"))
+        assertTrue(s2.contains("\nG"))
         assertTrue(!s2.contains("## voices.txt"))
     }
 }

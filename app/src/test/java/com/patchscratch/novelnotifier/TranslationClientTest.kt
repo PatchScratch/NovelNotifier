@@ -21,7 +21,6 @@ class TranslationClientTest {
         val prompt = TranslationClient.systemPrompt(custom, "")
         assertTrue(prompt.startsWith(custom))                       // user's wording leads
         assertTrue(prompt.contains("JSON array"))                   // alignment contract appended
-        assertTrue(!prompt.contains("Glossary"))
     }
 
     @Test
@@ -38,6 +37,43 @@ class TranslationClientTest {
         // novel-mill lock-file section header
         assertTrue(withGlossary.contains("## glossary.txt"))
         assertTrue(withGlossary.contains("リムル = Rimuru"))
+    }
+
+    // --- user style rules + default glossary (request 2026-10-18) ---
+
+    @Test
+    fun systemPrompt_styleRulesRideUnderAnyPrompt() {
+        // The rules must survive a custom prompt — they govern output the
+        // custom wording can't be trusted to repeat.
+        for (base in listOf("", "Translate like a pirate.")) {
+            val prompt = TranslationClient.systemPrompt(base, "")
+            assertTrue(prompt.contains("Keep 「」『』（）！？…〜ー"))
+            assertTrue(prompt.contains("FIRST PERSON (I/me). Never she/he thought."))
+            assertTrue(prompt.contains("romaji only"))
+            assertTrue("the worked example must ride along", prompt.contains("（I saw it…!"))
+        }
+    }
+
+    @Test
+    fun systemPrompt_defaultGlossaryPrecedesUserEntries() {
+        val prompt = TranslationClient.systemPrompt("custom", "リムル = Rimuru")
+        assertTrue(prompt.contains("如月千紗 = Chisa Kisaragi"))
+        assertTrue(prompt.contains("幼馴染 = childhood friend"))
+        assertTrue("user entry still present", prompt.contains("リムル = Rimuru"))
+        assertTrue(
+            "built-ins first, user entries after",
+            prompt.indexOf("幼馴染") < prompt.indexOf("リムル")
+        )
+    }
+
+    @Test
+    fun systemPrompt_bracketRuleDoesNotContradictContract() {
+        // The contract used to demand curly quotes for ALL dialogue, which
+        // fought the keep-「」 rule; now it only constrains quotes the model
+        // introduces itself.
+        val prompt = TranslationClient.systemPrompt("", "")
+        assertTrue(prompt.contains("Keep the original Japanese brackets 「」『』（）"))
+        assertTrue(!prompt.contains("Render dialogue and quotation marks as curly"))
     }
 
     @Test
