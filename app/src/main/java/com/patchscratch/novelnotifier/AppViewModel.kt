@@ -271,6 +271,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             nu.statusMessage = "Checking feed..."
             nu.statusMessage = runUpdateCheck(getApplication())
             nu.refresh()
+            // B3: Check now covers every site, same as the background worker.
+            val jp = buildList {
+                if (prefs.getBoolean("syosetu_logged_in", false)) addAll(JpNotify.pollSyosetu(getApplication()))
+                if (prefs.getBoolean("kakuyomu_logged_in", false)) addAll(JpNotify.pollKakuyomu(getApplication()))
+            }
+            if (jp.isNotEmpty()) {
+                postChapterNotifications(getApplication(), jp)
+                nu.statusMessage = "New chapters on ${jp.size} series (all sites)"
+            }
         }
     }
 }

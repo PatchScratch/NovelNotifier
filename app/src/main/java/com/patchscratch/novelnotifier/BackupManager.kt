@@ -116,6 +116,11 @@ object BackupManager {
             listOfNotNull(context.filesDir.resolve(HostProbeService.REPORT).takeIf { it.exists() }).forEach {
                 put("data/" + HostProbeService.REPORT, it.readBytes())
             }
+            // JP notification baselines (B3): Kakuyomu follows stamps —
+            // without them a restore would re-seed and miss an update.
+            listOfNotNull(context.filesDir.resolve("jp_notify_state.json").takeIf { it.exists() }).forEach {
+                put("data/jp_notify_state.json", it.readBytes())
+            }
             context.filesDir.resolve("series_cache").listFiles().orEmpty().forEach {
                 put("data/series_cache/${it.name}", it.readBytes())
             }
@@ -159,6 +164,10 @@ object BackupManager {
                     }
                     name == "data/" + HostProbeService.REPORT -> {
                         context.filesDir.resolve(HostProbeService.REPORT).writeBytes(zip.readBytes())
+                        restoredFiles++
+                    }
+                    name == "data/jp_notify_state.json" -> {
+                        context.filesDir.resolve("jp_notify_state.json").writeBytes(zip.readBytes())
                         restoredFiles++
                     }
                     name.startsWith("data/series_cache/") -> {

@@ -98,6 +98,19 @@ class UpdateCheckWorker(
             DebugLog.log("RSS", "worker could not go foreground", e)
         }
         runUpdateCheck(applicationContext)
+        // B3 unified notifications: the JP sites' checks ride the same
+        // worker — Syosetu's Atom feeds (previously foreground-only) and
+        // Kakuyomu's follows polling (new). Both are plain HTTP with the
+        // session cookie jar, no WebView, so they add no engine load.
+        val jpPrefs = applicationContext.getSharedPreferences("novel_prefs", 0)
+        val jpUpdates = buildList {
+            if (jpPrefs.getBoolean("syosetu_logged_in", false)) addAll(JpNotify.pollSyosetu(applicationContext))
+            if (jpPrefs.getBoolean("kakuyomu_logged_in", false)) addAll(JpNotify.pollKakuyomu(applicationContext))
+        }
+        if (jpUpdates.isNotEmpty()) {
+            postChapterNotifications(applicationContext, jpUpdates)
+            DebugLog.log("JPNOTIFY", "posted ${jpUpdates.size} chapter notifications")
+        }
         // A WebView-based check runs in the SyncEngineService; give it time to
         // drain (paced: one list page every 8 s), then resume any leftover
         // library download if one was stopped by a reboot or CF pause.
