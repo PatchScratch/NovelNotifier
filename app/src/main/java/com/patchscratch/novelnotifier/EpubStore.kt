@@ -74,15 +74,28 @@ object EpubStore {
     fun bookFile(context: Context, seriesUrl: String, bucket: String): File =
         dir(context).resolve(seriesUrl.hashCode().toUInt().toString() + "-" + bucket + ".epub")
 
+    /**
+     * Layout-variant twin of a bucket book (`<hash>-v2-jp.epub`), written when
+     * the saved layout is "both" so the library physically holds JP, EN and
+     * interleaved copies (user request 2026-10-18). NOT part of the canonical
+     * set — [bookFiles] skips them, so counts/badges/skip-sets never triple.
+     */
+    fun variantBookFile(context: Context, seriesUrl: String, bucket: String, variant: String): File =
+        dir(context).resolve(seriesUrl.hashCode().toUInt().toString() + "-" + bucket + "-" + variant + ".epub")
+
     /** Legacy pre-split book, if any (read for absorption / migration reads). */
     fun legacyBookFile(context: Context, seriesUrl: String): File =
         dir(context).resolve(seriesUrl.hashCode().toUInt().toString() + ".epub")
 
-    /** All bucket files that exist for the series (legacy excluded). */
+    /** Canonical bucket names only: `<hash>-(vN|pN).epub`. Layout variants
+     * (`-jp`/`-en`) and the legacy book must not match. */
+    internal val BOOK_NAME = Regex("""^\d+-(v\d+|p\d+)\.epub$""")
+
+    /** All bucket files that exist for the series (legacy + variants excluded). */
     fun bookFiles(context: Context, seriesUrl: String): List<File> {
         val prefix = seriesUrl.hashCode().toUInt().toString() + "-"
         return dir(context).listFiles().orEmpty()
-            .filter { it.name.startsWith(prefix) && it.name.endsWith(".epub") }
+            .filter { it.name.startsWith(prefix) && BOOK_NAME.matches(it.name) }
             .sorted()
     }
 
@@ -635,7 +648,9 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
             }
             val buckets = (bucketsOf(context, seriesUrl) + bucket).distinct()
             val displayTitle = bookDisplayTitle(seriesTitle, bucket, buckets)
-            writeBook(book, displayTitle, cover, "image/jpeg", ordered, bookMeta)
+            val n = writeBook(book, displayTitle, cover, "image/jpeg", ordered, bookMeta)
+            syncLayoutVariants(context, seriesUrl, bucket, displayTitle, cover, ordered, bookMeta)
+            n
         } catch (e: Exception) {
             DebugLog.log("EPUB", "appendChapter failed", e)
             -1
@@ -674,11 +689,51 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         val cover = CoverStore.localFile(context, seriesUrl)?.readBytes()
             ?: existingCover(book)
         writeBook(book, displayTitle, cover, "image/jpeg", orderDocs(docs), readBookMeta(book))
+        syncLayoutVariants(context, seriesUrl, bucket, displayTitle, cover, orderDocs(docs), readBookMeta(book))
         return true
     }
 
     fun storedCount(context: Context, seriesUrl: String): Int =
         readAllStoredDocs(context, seriesUrl).size
+
+    /**
+     * Keep a bucket's layout-variant twins in step with the saved paragraph
+     * layout (user request 2026-10-18): with "both" selected AND at least one
+     * chapter translated, the library physically holds three books — the
+     * canonical interleaved one plus single-language `-jp` / `-en` twins.
+     * Any other layout (or nothing translated yet) keeps just the canonical
+     * book, so untranslated series never pay triple storage. Twins carry the
+     * same cover/meta but a " (JP)" / " (EN)" title suffix; the canonical
+     * book is untouched and stays the reader's source of truth.
+     */
+    private fun syncLayoutVariants(
+        context: Context,
+        seriesUrl: String,
+        bucket: String,
+        displayTitle: String,
+        cover: ByteArray?,
+        docs: List<ChapterDoc>,
+        meta: BookMeta?
+    ) {
+        try {
+            val layout = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
+                .getString("xlate_layout", "both") ?: "both"
+            val translated = docs.any { !it.translation.isNullOrEmpty() }
+            for (variant in listOf("jp", "en")) {
+                val file = variantBookFile(context, seriesUrl, bucket, variant)
+                if (layout == "both" && translated) {
+                    writeBook(
+                        file, displayTitle + " (" + variant.uppercase() + ")",
+                        cover, "image/jpeg", docs, meta, variant
+                    )
+                } else if (file.exists()) {
+                    file.delete()
+                }
+            }
+        } catch (e: Exception) {
+            DebugLog.log("EPUB", "layout-variant sync failed", e)
+        }
+    }
 
     /**
      * Chapters of this series whose stored doc carries an AI translation.
@@ -729,9 +784,16 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
     fun exportName(seriesTitle: String, bucket: String, buckets: Collection<String>): String =
         bookDisplayTitle(seriesTitle, bucket, buckets).replace(" — ", " - ") + ".epub"
 
-    /** Share sheet with ALL of the series' books (one per volume/part). */
+    /** Share sheet with ALL of the series' books (one per volume/part, plus
+     *  the layout twins when the JP+EN layout saved them). */
     fun shareIntent(context: Context, seriesUrl: String): Intent? {
-        val books = bookFiles(context, seriesUrl)
+        val prefix = prefixOf(seriesUrl)
+        val books = bookFiles(context, seriesUrl).flatMap { b ->
+            val bucket = b.name.removePrefix(prefix).removeSuffix(".epub")
+            listOf(b) + listOf("jp", "en").mapNotNull { v ->
+                variantBookFile(context, seriesUrl, bucket, v).takeIf { it.exists() }
+            }
+        }
         if (books.isEmpty()) return null
         val shared = books.map {
             FileProvider.getUriForFile(context, context.packageName + ".fileprovider", it)

@@ -280,4 +280,60 @@ class EpubStoreTest {
             EpubStore.orderDocs(listOf(doc("https://h/1", "c1", "One", "p1"))))
         assertNull(EpubStore.readAllChapterDocs(book)[0].translation)
     }
+
+    // --- layout twins (user request 2026-10-18: JP+EN layout → three books) ---
+
+    @Test
+    fun bookName_distinguishesCanonicalFromVariantsAndLegacy() {
+        // canonical bucket books enumerate…
+        assertTrue(EpubStore.BOOK_NAME.matches("123456-v2.epub"))
+        assertTrue(EpubStore.BOOK_NAME.matches("123456-p1.epub"))
+        // …layout twins, legacy single-file books and junk do NOT
+        assertTrue(!EpubStore.BOOK_NAME.matches("123456-v2-jp.epub"))
+        assertTrue(!EpubStore.BOOK_NAME.matches("123456-p1-en.epub"))
+        assertTrue(!EpubStore.BOOK_NAME.matches("123456.epub"))
+        assertTrue(!EpubStore.BOOK_NAME.matches("123456-v2-jp.epub.bak"))
+    }
+
+    private fun chapterEntry(book: File): String = ZipFile(book).use { zip ->
+        zip.getInputStream(zip.getEntry("OEBPS/chapters/c0001.xhtml")).readBytes().decodeToString()
+    }
+
+    /** Rendered body only — the nn-translation sidecar script is stripped. */
+    private fun visibleBody(book: File): String = chapterEntry(book).substringBefore("<script")
+
+    @Test
+    fun layoutTwinBooks_renderSingleLanguageBodies() {
+        val docs = EpubStore.orderDocs(listOf(
+            EpubStore.ChapterDoc("https://h/1", "c1", "One", listOf("元の文", "二番目"), listOf("The first line", "The second"))
+        ))
+        val both = tempBook("both").apply { EpubStore.writeBook(this, "T — Vol 1", null, "image/jpeg", docs, layout = "both") }
+        val jp = tempBook("jp").apply { EpubStore.writeBook(this, "T — Vol 1 (JP)", null, "image/jpeg", docs, layout = "jp") }
+        val en = tempBook("en").apply { EpubStore.writeBook(this, "T — Vol 1 (EN)", null, "image/jpeg", docs, layout = "en") }
+
+        val bothBody = visibleBody(both)
+        assertTrue(bothBody.contains("元の文"))
+        assertTrue(bothBody.contains("The first line"))
+        assertTrue("interleaved EN carries the marker class", bothBody.contains("nn-en"))
+
+        val jpBody = visibleBody(jp)
+        assertTrue(jpBody.contains("元の文"))
+        assertTrue("JP twin hides the translation", !jpBody.contains("The first line"))
+        assertTrue(!jpBody.contains("nn-en"))
+        // parallel data survives in the sidecar — a twin can be re-rendered
+        assertTrue(chapterEntry(jp).contains("nn-translation"))
+
+        val enBody = visibleBody(en)
+        assertTrue(enBody.contains("The first line"))
+        assertTrue("EN twin hides the original", !enBody.contains("元の文"))
+        assertTrue(!enBody.contains("nn-en"))
+    }
+
+    @Test
+    fun enLayout_fallsBackToOriginalForUntranslatedChapters() {
+        val docs = EpubStore.orderDocs(listOf(doc("https://h/1", "c1", "One", "未翻訳")))  // no translation
+        val en = tempBook("en-fallback").apply { EpubStore.writeBook(this, "T", null, "image/jpeg", docs, layout = "en") }
+        // bodyParagraphs' contract: no translation yet → original text
+        assertTrue(visibleBody(en).contains("未翻訳"))
+    }
 }

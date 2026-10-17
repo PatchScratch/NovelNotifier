@@ -17,3 +17,4 @@ local.properties
 .zcodeignore
 .zcode/
 app/libs/*.aar
+.kotlin/
