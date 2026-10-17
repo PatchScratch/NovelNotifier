@@ -6,7 +6,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.core.content.edit
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -55,6 +57,55 @@ class AlphaPolisViewModel(app: Application) : AndroidViewModel(app) {
         val adding = bookmarks.none { it.id == work.id }
         bookmarks = if (adding) listOf(work) + bookmarks else bookmarks.filterNot { it.id == work.id }
         save()
+        // Site write-back (the sync doctrine): the site's own add/delete
+        // endpoints with the content id — the second id of the URL pair.
+        if (loggedIn) {
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                try {
+                    val contentId = work.id.substringAfter('/')
+                    val ok = alpSetFavorite(contentId, adding)
+                    DebugLog.log("ALP", "site favorite " + (if (adding) "add" else "delete") + " → " + ok)
+                } catch (e: Exception) {
+                    DebugLog.log("ALP", "site favorite skipped (offline?)", e)
+                }
+            }
+        }
+    }
+
+    /**
+     * Bookshelf sync (site-native follows): the site's list is master when
+     * logged in — local-only rows survive only if just pushed (the Kakuyomu
+     * merge rule). Pull-to-refresh and login call this.
+     */
+    var syncing by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    fun syncBookmarks() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+            syncing = true
+            try {
+                val site = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    fetchAlpBookshelf()
+                }
+                if (site.isEmpty()) return@launch
+                // Enrich rows with cached detail where we have it (title-only
+                // rows from the shelf get episode counts for badges).
+                val enriched = site.map { fresh ->
+                    bookmarks.firstOrNull { it.id == fresh.id }?.let { local ->
+                        if (local.episodeCount > fresh.episodeCount) fresh.copy(
+                            episodeCount = local.episodeCount, lastUpdate = local.lastUpdate
+                        ) else fresh
+                    } ?: fresh
+                }
+                bookmarks = enriched
+                save()
+                DebugLog.log("ALP", "bookshelf sync: ${enriched.size} works")
+            } catch (e: Exception) {
+                DebugLog.log("ALP", "bookshelf sync failed", e)
+            } finally {
+                syncing = false
+            }
+        }
     }
 
     fun readPosOf(id: String): Int =

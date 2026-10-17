@@ -638,7 +638,9 @@ fun NovelApp(
                 onToggleNsfw = { toggleNsfw() },
                 bookmarks = alp.bookmarks,
                 onToggleBookmark = { w -> alp.toggleBookmark(w) },
-                readPosById = { id -> alp.readPosOf(id) }
+                readPosById = { id -> alp.readPosOf(id) },
+                isRefreshing = alp.syncing,
+                onRefresh = { alp.syncBookmarks() }
             )
 
             else -> {

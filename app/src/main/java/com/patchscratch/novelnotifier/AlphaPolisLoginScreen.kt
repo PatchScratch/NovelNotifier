@@ -31,7 +31,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 @Composable
 fun AlphaPolisLoginScreen(
     onLoggedIn: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    // The page to open; defaults to the login page. Pointing it at a
+    // logged-in-only page doubles as a session viewer (already logged in
+    // → the cookie rule fires immediately).
+    startUrl: String = "https://www.alphapolis.co.jp/login"
 ) {
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(
@@ -66,7 +70,7 @@ fun AlphaPolisLoginScreen(
                             }
                         }
                     }
-                    loadUrl("https://www.alphapolis.co.jp/login")
+                    loadUrl(startUrl)
                 }
             }
         )

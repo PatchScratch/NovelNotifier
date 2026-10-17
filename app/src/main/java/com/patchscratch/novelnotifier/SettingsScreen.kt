@@ -216,6 +216,10 @@ fun SettingsScreen(
                     TextButton(onClick = { alp.onLoggedOut() }, modifier = Modifier.fillMaxWidth()) {
                         Text(t("Log out of AlphaPolis", "アルファポリスからログアウト"))
                     }
+                    TextButton(
+                        onClick = { router.push(Route.EditLists("https://www.alphapolis.co.jp/mypage/favorite", "AlphaPolis お気に入り小説")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(t("Open My page ↗", "マイページを開く ↗")) }
                 } else {
                     Text(
                         t("Log in for premium chapters you've purchased. Credentials stay in the app's own session — nothing goes to the external browser.",

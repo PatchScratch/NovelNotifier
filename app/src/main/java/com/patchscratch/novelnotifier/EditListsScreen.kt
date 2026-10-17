@@ -73,6 +73,18 @@ fun EditListsScreen(
                     settings.domStorageEnabled = true
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    webViewClient = object : android.webkit.WebViewClient() {
+                        override fun doUpdateVisitedHistory(
+                            view: WebView?, url: String?, isReload: Boolean
+                        ) {
+                            // Every in-page navigation logs its URL — the
+                            // recon instrument for logged-in-only areas (the
+                            // mypage bookshelf link shape, 2026-10-17) and a
+                            // breadcrumb when a Done-flow ends up somewhere
+                            // unexpected.
+                            if (url != null) DebugLog.log("EDITWEB", "→ $url")
+                        }
+                    }
                     loadUrl(url)
                 }
             }

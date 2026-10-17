@@ -53,6 +53,8 @@ fun AlphaPolisHome(
     nsfwUnlocked: Boolean = false,
     onToggleNsfw: () -> Unit = {},
     onCheckUpdate: () -> Unit = {},
+    isRefreshing: Boolean = false,
+    onRefresh: (() -> Unit)? = null,
     // Local bookmarks + reading position (client-side until bookshelf sync).
     bookmarks: List<AlpWork> = emptyList(),
     onToggleBookmark: (AlpWork) -> Unit = {},
@@ -164,7 +166,9 @@ fun AlphaPolisHome(
                     saveSortMode(prefs, it)
                 })
             },
-            sortLabel = sortModeLabel(sortMode)
+            sortLabel = sortModeLabel(sortMode),
+            isRefreshing = isRefreshing,
+            onRefresh = onRefresh
         )
     }
 }

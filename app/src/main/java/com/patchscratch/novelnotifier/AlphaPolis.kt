@@ -255,6 +255,77 @@ private fun alpStripTags(html: String): String = html
     .replace("&nbsp;", " ")
     .trim()
 
+// --- favorites (bookshelf) + write-back -------------------------------------------
+
+/**
+ * Work page HTML → whether the logged-in account has favorited it. The
+ * server renders the Vue button's props as JSON at
+ * #app-content-cover-favorite-button; anonymous pages carry isFavorite=false.
+ */
+fun parseAlpFavoriteState(html: String): Boolean = try {
+    val i = html.indexOf("app-content-cover-favorite-button")
+    if (i < 0) false else {
+        val m = Regex("""<script type="application/json">\s*(\{.*?\})\s*</script>""", RegexOption.DOT_MATCHES_ALL)
+            .find(html.substring(i))
+        m?.let { org.json.JSONObject(it.groupValues[1])
+            .optJSONObject("favoriteButton")?.optBoolean("isFavorite", false) } ?: false
+    }
+} catch (e: Exception) { false }
+
+/**
+ * ⚑ write-back (the site's own button semantics): POST add/delete with
+ * {citi_cont_id} + the XHR header, from the shared session jar.
+ */
+suspend fun alpSetFavorite(contentId: String, add: Boolean): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            val conn = URL("$ALP_BASE/mypage/favorite/" + if (add) "add" else "delete")
+                .openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 20_000
+            conn.setRequestProperty("User-Agent", ALP_UA)
+            conn.setRequestProperty("X-Requested-With", "XMLHttpRequest")
+            alpCookies().takeIf { it.isNotBlank() }?.let { conn.setRequestProperty("Cookie", it) }
+            val body = "citi_cont_id=" + URLEncoder.encode(contentId, "UTF-8")
+            conn.setFixedLengthStreamingMode(body.toByteArray().size)
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val ok = conn.responseCode in 200..299
+            conn.disconnect()
+            ok
+        } catch (e: Exception) {
+            DebugLog.log("ALP", "favorite add/remove failed", e)
+            false
+        }
+    }
+
+/**
+ * Bookshelf page HTML → works. Rows reuse the ranking card shape minus the
+ * rank span; each card links /novel/<author>/<content>.
+ */
+fun parseAlpBookshelf(html: String): List<AlpWork> {
+    val out = mutableListOf<AlpWork>()
+    for (m in Regex("""href="(/novel/\d+/\d+)""").findAll(html)) {
+        val id = m.groupValues[1].removePrefix("/novel/")
+        if (out.any { it.id == id }) continue
+        val cover = Regex("""<img src="(https://cdn-image[^"]+)"""")
+            .find(html.substring(m.range.last))?.groupValues?.get(1) ?: ""
+        val title = Regex("""<a href="/novel/$id"[^>]*>\s*([^<]{4,80})""")
+            .find(html)?.groupValues?.get(1)?.trim() ?: continue
+        out += AlpWork(id = id, title = title, author = "", coverUrl = cover)
+    }
+    return out
+}
+
+/** The logged-in bookshelf (site-native follows; the sync doctrine). */
+suspend fun fetchAlpBookshelf(): List<AlpWork> = try {
+    parseAlpBookshelf(alpFetch("$ALP_BASE/mypage/favorite/index/novel"))
+} catch (e: Exception) {
+    DebugLog.log("ALP", "bookshelf fetch failed", e)
+    emptyList()
+}
+
 // --- rankings + search -------------------------------------------------------------
 
 /**
