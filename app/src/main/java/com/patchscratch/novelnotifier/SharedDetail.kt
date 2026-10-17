@@ -118,7 +118,10 @@ data class SeriesDetailState(
     val headerExtra: @Composable () -> Unit = {},
     val infoExtra: @Composable () -> Unit = {},
     val releasesControls: @Composable () -> Unit = {},
-    val releasesFooter: @Composable () -> Unit = {}
+    val releasesFooter: @Composable () -> Unit = {},
+    // Scroll-to-load hook: invoked when the RELEASES list approaches its
+    // end while the tab is active (NU pagination; no-op default).
+    val releasesOnNearEnd: () -> Unit = {}
 )
 
 @Composable
@@ -134,7 +137,8 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
     val shown = remember(state.episodes, newestFirst, hideRead, state.readOrdinal) {
         val sorted = if (newestFirst) state.episodes.sortedByDescending { it.ordinal }
         else state.episodes.sortedBy { it.ordinal }
-        if (hideRead && state.readOrdinal > 0) sorted.filter { it.ordinal > state.readOrdinal } else sorted
+        // NU semantics: hide-read keeps the marker row itself visible.
+        if (hideRead && state.readOrdinal > 0) sorted.filter { it.ordinal >= state.readOrdinal } else sorted
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -365,6 +369,17 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                 } else {
                     // ---- RELEASES tab ----
                     Column(modifier = Modifier.fillMaxSize()) {
+                        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                        val nearEnd by androidx.compose.runtime.remember {
+                            androidx.compose.runtime.derivedStateOf {
+                                val info = listState.layoutInfo
+                                val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+                                info.totalItemsCount > 2 && last >= info.totalItemsCount - 3
+                            }
+                        }
+                        androidx.compose.runtime.LaunchedEffect(nearEnd) {
+                            if (nearEnd) state.releasesOnNearEnd()
+                        }
                         Row(modifier = Modifier.align(Alignment.End)) {
                             state.releasesControls()
                             TextButton(onClick = { showOrder = true }) {
@@ -422,6 +437,7 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                             }
                         }
                         androidx.compose.foundation.lazy.LazyColumn(
+                            state = listState,
                             modifier = Modifier.fillMaxSize()
                         ) {
                             items(

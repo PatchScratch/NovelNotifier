@@ -230,502 +230,257 @@ fun NovelDetailScreen(
 
     // Extra pages: prefetch 1..max with a 2s gap, or scroll near the end.
 
-    Box(modifier = Modifier.fillMaxSize()) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onBackClick,
-                    modifier = Modifier.size(64.dp)
-                ) {
-                    Text("←", fontSize = 36.sp)
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                Box {
-                    IconButton(
-                        onClick = { showPageMenu = true },
-                        modifier = Modifier.size(64.dp)
-                    ) {
-                        Text("⋮", fontSize = 36.sp)
-                    }
-                    DropdownMenu(
-                        expanded = showPageMenu,
-                        onDismissRequest = { showPageMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(t("Open on Novel Updates", "ノベルアップデーツで開く")) },
-                            onClick = {
-                                showPageMenu = false
-                                openUrl(novel.seriesUrl)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(t("Refresh", "更新")) },
-                            onClick = {
-                                showPageMenu = false
-                                vm.listStatus = "Refreshing..."
-                                requestPage(1)
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .navigationBarsPadding()
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.Top
-            ) {
-                CoverThumb(
-                    url = cover,
-                    seriesUrl = novel.seriesUrl,
-                    refreshKey = coverState,
-                    fullscreen = true,
-                    modifier = Modifier
-                        .width(84.dp)
-                        .height(112.dp)
-                )
-                Column(modifier = Modifier.padding(start = 12.dp)) {
-                    Text(
-                        text = page.title.ifBlank { novel.title },
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    if (page.author.isNotBlank()) {
-                        Text(page.author, style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (page.rating.isNotBlank()) {
-                        Text(prettyRating(page.rating), style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (isRealListName(page.currentList)) {
-                        Text(
-                            text = page.currentList,
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 4.dp)
-                    ) {
-                        Button(onClick = { showChangeList = true }) { Text(t("CHANGE LIST", "リスト変更")) }
-                        TextButton(onClick = onToggleNotify) {
-                            if (notifyOn) {
-                                Icon(Icons.Rounded.Notifications, contentDescription = "Notifications on",
-                                    modifier = Modifier.size(32.dp))
-                            } else {
-                                Icon(Icons.Rounded.NotificationsOff, contentDescription = "Notifications off",
-                                    modifier = Modifier.size(32.dp))
-                            }
-                        }
-                    }
-                    if (listStatus.isNotBlank()) {
-                        Text(listStatus, style = MaterialTheme.typography.bodySmall)
-                    }
-                    // Cover-less NU series can get AI art like the JP sites.
-                    if (cover.isBlank()) {
-                        GenerateCoverButton(
-                            context = context,
-                            seriesUrl = novel.seriesUrl,
-                            title = page.title.ifBlank { novel.title },
-                            author = page.author,
-                            genre = page.genres,
-                            synopsis = page.description,
-                            onGenerated = { coverState += 1 }
-                        )
-                    }
-                }
-            }
-            if (showChangeList) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(t("Change list", "リスト変更"), style = MaterialTheme.typography.titleMedium)
-                        if (changeLists.isEmpty()) {
-                            Text(
-                                "Open the hamburger menu once so lists can load, then try again.",
-                                modifier = Modifier.padding(top = 8.dp)
+    // ---- Shared NU-model template (framework B1 part 2): this screen now
+    // renders through the SAME SeriesDetailScreen the JP sites use —
+    // identity by construction. Everything above (VM scrape/pagination,
+    // group filter state, reading-order computation) is unchanged; the
+    // body below only assembles SeriesDetailState.
+    val rows = remember(page.releases, groupOff) {
+        val filtered = page.releases.filter { it.group.isBlank() || it.group !in groupOff }
+        filtered.map { release ->
+            val thisNum = chapterNum(release.chapter)
+            SeriesEpisodeRow(
+                ordinal = if (thisNum > 0) thisNum else 0,
+                label = release.chapter,
+                title = release.group,
+                date = release.date,
+                isRead = lastReadNum > 0 && thisNum > 0 && thisNum == lastReadNum,
+                onOpen = { openInReader(release) },
+                onCheck = { checked ->
+                    if (checked) {
+                        onSetLastRead(release.chapter, release.url, true)
+                        // NU keeps ONE tick per series — the read position —
+                        // and checking any row MOVES the marker there; the
+                        // site clears the old one itself. A back-track also
+                        // records a floor so the read feed's stale, higher
+                        // marks cannot undo it.
+                        if (thisNum > 0 && lastReadNum > 0 && thisNum < lastReadNum) {
+                            recordReadFloor(
+                                context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
+                                novel.title, thisNum
                             )
+                            vm.listStatus = "Moving read position back to ${release.chapter}…"
+                        }
+                        vm.queueReadMarker(rid = release.rid.ifBlank { null }, chapter = release.chapter)
+                        onMarkRead()
+                    } else {
+                        // Un-checked the marker: move it down to the highest
+                        // read chapter below — or clear it entirely (rid=0).
+                        val below = page.releases
+                            .filter {
+                                it.read && chapterNum(it.chapter) in 1 until lastReadNum &&
+                                    it.rid.isNotBlank()
+                            }
+                            .maxByOrNull { chapterNum(it.chapter) }
+                        if (below != null) {
+                            onSetLastRead(below.chapter, below.url, true)
+                            recordReadFloor(
+                                context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
+                                novel.title, chapterNum(below.chapter)
+                            )
+                            vm.queueReadMarker(rid = below.rid, chapter = null)
+                            vm.listStatus = "Read position moved to ${below.chapter}"
                         } else {
-                            changeLists.forEach { list ->
-                                TextButton(
-                                    onClick = {
-                                        vm.queueMoveList(list.id, list.name)
-                                        showChangeList = false
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(if (list.name == page.currentList) "✓  ${list.name}" else list.name)
-                                }
-                            }
-                        }
-                        TextButton(
-                            onClick = { showChangeList = false },
-                            modifier = Modifier.align(Alignment.End)
-                        ) { Text("Cancel") }
-                    }
-                }
-            }
-            TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text(t("INFO", "情報")) })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text(t("RELEASES", "各話")) })
-            }
-            if (tab == 0) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
-                ) {
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(t("Next Chapter", "次の各話"), style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = when {
-                                    nextUnread != null ->
-                                        "${nextUnread.chapter}  by ${nextUnread.group}"
-                                    expectedNextNum > 0 ->
-                                        "c$expectedNextNum is not in the loaded pages yet. Wait for cache or scroll RELEASES."
-                                    else -> "No chapter link found"
-                                },
-                                modifier = Modifier.padding(top = 8.dp)
+                            onSetLastRead(release.chapter, release.url, false)
+                            recordReadFloor(
+                                context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
+                                novel.title, 0
                             )
-                            Row(modifier = Modifier.padding(top = 8.dp)) {
-                                TextButton(
-                                    onClick = { nextUnread?.let(::openInReader) },
-                                    enabled = nextUnread?.url?.isNotBlank() == true
-                                ) { Text(t("READ CHAPTER", "読む")) }
-                                TextButton(
-                                    onClick = {
-                                        nextUnread?.let {
-                                            onSetLastRead(it.chapter, it.url, true)
-                                            vm.queueReadMarker(
-                                                rid = it.rid.ifBlank { null },
-                                                chapter = it.chapter
-                                            )
-                                        }
-                                        onMarkRead()
-                                    },
-                                    enabled = nextUnread != null
-                                ) { Text(t("MARK AS READ", "既読にする")) }
-                            }
-                        }
-                    }
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .padding(12.dp)
-                                .clickable { descExpanded = !descExpanded }
-                        ) {
-                            Text(t("Description", "あらすじ"), style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = page.description.ifBlank { "No description yet." },
-                                maxLines = if (descExpanded) Int.MAX_VALUE else 6,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                            Text(if (descExpanded) "▲" else "▼", modifier = Modifier.padding(top = 4.dp))
-                        }
-                    }
-                    if (page.type.isNotBlank() || page.status.isNotBlank()) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 12.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                if (page.type.isNotBlank()) Text("Type: ${page.type}")
-                                if (page.status.isNotBlank()) Text("Status: ${page.status}")
-                            }
-                        }
-                    }
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(t("Genres", "ジャンル"), style = MaterialTheme.typography.titleMedium)
-                            Text(page.genres.ifBlank { "None listed" }, modifier = Modifier.padding(top = 8.dp))
-                        }
-                    }
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(t("Tags", "タグ"), style = MaterialTheme.typography.titleMedium)
-                            Text(page.tags.ifBlank { "None listed" }, modifier = Modifier.padding(top = 8.dp))
+                            vm.queueReadMarker(rid = "0", chapter = null)
+                            vm.listStatus = "Read position cleared"
                         }
                     }
                 }
-            } else {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Row(modifier = Modifier.align(Alignment.End)) {
-                        val allGroups = page.releases.map { it.group.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
-                        if (groupOff.isNotEmpty()) {
-                            TextButton(onClick = { showGroups = true }) {
-                                Text("Groups: ${allGroups.size - allGroups.count { it in groupOff }}/${allGroups.size} ⛭")
-                            }
-                        }
-                        TextButton(
-                            onClick = { showGroups = true },
-                            enabled = allGroups.isNotEmpty()
-                        ) {
-                            if (groupOff.isEmpty()) Text("All groups ⛭") else Text("Filter ⛭")
-                        }
-                        TextButton(onClick = { showOrder = true }) {
-                            Text(if (newestFirst) "Newest First ▼" else "Oldest First ▼")
-                        }
-                    }
-                    if (showGroups) {
-                        AlertDialog(
-                            onDismissRequest = { showGroups = false },
-                            title = { Text("Translation groups") },
-                            text = {
-                                Column {
-                                    Text(
-                                        "Hidden groups disappear from RELEASES and are skipped by the reader and bulk download.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(bottom = 8.dp)
-                                    )
-                                    val allGroups = page.releases.map { it.group.trim() }
-                                        .filter { it.isNotEmpty() }
-                                        .groupBy { it }
-                                        .entries
-                                        .sortedBy { it.key.lowercase() }
-                                    allGroups.forEach { (name, rows) ->
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { toggleGroup(name) }
-                                        ) {
-                                            Switch(
-                                                checked = name !in groupOff,
-                                                onCheckedChange = { toggleGroup(name) }
-                                            )
-                                            Text(
-                                                "$name (${rows.size})",
-                                                modifier = Modifier.padding(start = 8.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            confirmButton = {
-                                TextButton(onClick = {
-                                    groupOff = emptySet()
-                                    saveGroupOff(
-                                        context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
-                                        novel.seriesUrl, emptySet()
-                                    )
-                                    showGroups = false
-                                }) { Text("Show all") }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showGroups = false }) { Text("Done") }
-                            }
-                        )
-                    }
-                    if (showOrder) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(t("Release Ordering", "各話の並び順"), style = MaterialTheme.typography.titleLarge)
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { newestFirst = true }
-                                        .padding(top = 12.dp)
-                                ) {
-                                    RadioButton(selected = newestFirst, onClick = { newestFirst = true })
-                                    Column {
-                                        Text(t("Newest First", "新しい順"))
-                                        Text(
-                                            "Show releases in a descending order",
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { newestFirst = false }
-                                        .padding(top = 8.dp)
-                                ) {
-                                    RadioButton(selected = !newestFirst, onClick = { newestFirst = false })
-                                    Column {
-                                        Text(t("Oldest First", "古い順"))
-                                        Text(
-                                            t("Show releases in an ascending order", "各話を昇順で表示"),
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(top = 8.dp)
-                                ) {
-                                    Text(t("Hide read releases", "既読の各話を隠す"), modifier = Modifier.weight(1f))
-                                    Switch(checked = hideRead, onCheckedChange = { hideRead = it })
-                                }
-                                TextButton(
-                                    onClick = { applyOrder(newestFirst) },
-                                    modifier = Modifier.align(Alignment.End)
-                                ) { Text(t("SAVE", "保存")) }
-                            }
-                        }
-                    }
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(
-                            count = shownReleases.size,
-                            key = { index -> shownReleases[index].chapter + shownReleases[index].url + index }
-                        ) { index ->
-                            val release = shownReleases[index]
-                            val thisNum = chapterNum(release.chapter)
-                            val isRead = lastReadNum > 0 && thisNum > 0 && thisNum == lastReadNum
-                            key("${release.chapter}|${release.url}|$index") {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = release.chapter,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        modifier = Modifier
-                                            .width(88.dp)
-                                            .clickable { openInReader(release) }
-                                    )
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(release.group)
-                                        Text(release.date, style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    Checkbox(
-                                        checked = isRead,
-                                        onCheckedChange = { checked ->
-                                            val thisNum = chapterNum(release.chapter)
-                                            if (checked) {
-                                                onSetLastRead(release.chapter, release.url, true)
-                                                // NU keeps ONE tick per series — the read position —
-                                                // and checking any row MOVES the marker there; the
-                                                // site clears the old one itself. One call is enough.
-                                                // A back-track also records a floor so the read
-                                                // feed's stale, higher marks cannot undo it.
-                                                if (thisNum > 0 && lastReadNum > 0 && thisNum < lastReadNum) {
-                                                    recordReadFloor(
-                                                        context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
-                                                        novel.title, thisNum
-                                                    )
-                                                    vm.listStatus = "Moving read position back to ${release.chapter}…"
-                                                }
-                                                vm.queueReadMarker(
-                                                    rid = release.rid.ifBlank { null },
-                                                    chapter = release.chapter
-                                                )
-                                                onMarkRead()
-                                            } else if (isRead) {
-                                                // Un-checked the marker: move it down to the highest
-                                                // read chapter below — or clear it entirely (rid=0).
-                                                val below = page.releases
-                                                    .filter {
-                                                        it.read && chapterNum(it.chapter) in 1 until lastReadNum &&
-                                                            it.rid.isNotBlank()
-                                                    }
-                                                    .maxByOrNull { chapterNum(it.chapter) }
-                                                if (below != null) {
-                                                    onSetLastRead(below.chapter, below.url, true)
-                                                    recordReadFloor(
-                                                        context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
-                                                        novel.title, chapterNum(below.chapter)
-                                                    )
-                                                    vm.queueReadMarker(rid = below.rid, chapter = null)
-                                                    vm.listStatus = "Read position moved to ${below.chapter}"
-                                                } else {
-                                                    onSetLastRead(release.chapter, release.url, false)
-                                                    recordReadFloor(
-                                                        context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
-                                                        novel.title, 0
-                                                    )
-                                                    vm.queueReadMarker(rid = "0", chapter = null)
-                                                    vm.listStatus = "Read position cleared"
-                                                }
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                            HorizontalDivider()
-                        }
-                        val moreLeft = loadedPage < maxPage
-                        item {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                when {
-                                    pageLoadFailed -> {
-                                        Text(
-                                            text = "Could not load page $wantPage. The site may be rate-limiting.",
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                        TextButton(onClick = {
-                                            retryPage()
-                                        }) { Text("RETRY") }
-                                    }
-                                    loadingMore -> {
-                                        Text(
-                                            text = "Caching page ${wantPage.coerceAtLeast(1)} of ${maxPage.coerceAtLeast(wantPage)}…",
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                    moreLeft -> {
-                                        Text(
-                                            text = "Scroll for older chapters",
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                    page.releases.isNotEmpty() -> {
-                                        Text(
-                                            text = "${page.releases.size} chapters cached",
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            )
         }
     }
+    val allGroups = remember(page.releases) {
+        page.releases.map { it.group.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
+    }
+
+    SeriesDetailScreen(
+        state = SeriesDetailState(
+            seriesUrl = novel.seriesUrl,
+            onBack = onBackClick,
+            coverUrl = cover,
+            coverSeriesUrl = novel.seriesUrl,
+            title = page.title.ifBlank { novel.title },
+            author = page.author,
+            rating = page.rating,
+            groupBadge = if (isRealListName(page.currentList)) page.currentList else "",
+            changeGroupLabel = t("CHANGE LIST", "リスト変更"),
+            onChangeGroup = { showChangeList = true },
+            notifyOn = notifyOn,
+            onToggleNotify = onToggleNotify,
+            statusLine = listStatus,
+            nextChapterLabel = when {
+                nextUnread != null -> "${nextUnread.chapter}  by ${nextUnread.group}"
+                expectedNextNum > 0 ->
+                    "c$expectedNextNum is not in the loaded pages yet. Wait for cache or scroll RELEASES."
+                else -> "No chapter link found"
+            },
+            nextChapterEnabled = nextUnread?.url?.isNotBlank() == true,
+            onReadNext = { nextUnread?.let(::openInReader) },
+            onMarkRead = {
+                nextUnread?.let {
+                    onSetLastRead(it.chapter, it.url, true)
+                    vm.queueReadMarker(rid = it.rid.ifBlank { null }, chapter = it.chapter)
+                }
+                onMarkRead()
+            },
+            synopsis = page.description,
+            typeLine = listOfNotNull(
+                page.type.takeIf { it.isNotBlank() }?.let { "Type: $it" },
+                page.status.takeIf { it.isNotBlank() }?.let { "Status: $it" }
+            ).joinToString(" ・ "),
+            genres = page.genres,
+            tags = page.tags,
+            episodes = rows,
+            readOrdinal = if (lastReadNum > 0) lastReadNum else 0,
+            openOnSiteLabel = t("Open on Novel Updates", "ノベルアップデーツで開く"),
+            onRefresh = {
+                vm.listStatus = "Refreshing..."
+                requestPage(1)
+            },
+            headerExtra = {
+                // Cover-less NU series can get AI art like the JP sites.
+                if (cover.isBlank()) {
+                    GenerateCoverButton(
+                        context = context,
+                        seriesUrl = novel.seriesUrl,
+                        title = page.title.ifBlank { novel.title },
+                        author = page.author,
+                        genre = page.genres,
+                        synopsis = page.description,
+                        onGenerated = { coverState += 1 }
+                    )
+                }
+            },
+            belowHeader = {
+                if (showChangeList) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(t("Change list", "リスト変更"), style = MaterialTheme.typography.titleMedium)
+                            if (changeLists.isEmpty()) {
+                                Text(
+                                    "Open the hamburger menu once so lists can load, then try again.",
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                            } else {
+                                changeLists.forEach { list ->
+                                    TextButton(
+                                        onClick = {
+                                            vm.queueMoveList(list.id, list.name)
+                                            showChangeList = false
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(if (list.name == page.currentList) "✓  ${list.name}" else list.name)
+                                    }
+                                }
+                            }
+                            TextButton(
+                                onClick = { showChangeList = false },
+                                modifier = Modifier.align(Alignment.End)
+                            ) { Text("Cancel") }
+                        }
+                    }
+                }
+            },
+            releasesControls = {
+                if (groupOff.isNotEmpty()) {
+                    TextButton(onClick = { showGroups = true }) {
+                        Text("Groups: ${allGroups.size - allGroups.count { it in groupOff }}/${allGroups.size} ⛭")
+                    }
+                }
+                TextButton(
+                    onClick = { showGroups = true },
+                    enabled = allGroups.isNotEmpty()
+                ) {
+                    if (groupOff.isEmpty()) Text("All groups ⛭") else Text("Filter ⛭")
+                }
+            },
+            releasesFooter = {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    val moreLeft = loadedPage < maxPage
+                    when {
+                        pageLoadFailed -> {
+                            Text(
+                                text = "Could not load page $wantPage. The site may be rate-limiting.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            TextButton(onClick = { retryPage() }) { Text("RETRY") }
+                        }
+                        loadingMore -> {
+                            Text(
+                                text = "Caching page ${wantPage.coerceAtLeast(1)} of ${maxPage.coerceAtLeast(wantPage)}…",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        moreLeft -> {
+                            Text(
+                                text = "Scroll for older chapters",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        page.releases.isNotEmpty() -> {
+                            Text(
+                                text = "${page.releases.size} chapters cached",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            },
+            releasesOnNearEnd = {
+                if (!loadingMore && !pageLoadFailed) vm.requestNextPage()
+            }
+        )
+    )
+
+    // Group filter dialog (NU-only capability; opens from releasesControls).
+    if (showGroups) {
+        AlertDialog(
+            onDismissRequest = { showGroups = false },
+            title = { Text("Translation groups") },
+            text = {
+                Column {
+                    Text(
+                        "Hidden groups disappear from RELEASES and are skipped by the reader and bulk download.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    val grouped = page.releases.map { it.group.trim() }
+                        .filter { it.isNotEmpty() }
+                        .groupBy { it }
+                        .entries
+                        .sortedBy { it.key.lowercase() }
+                    grouped.forEach { (name, chapters) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable { toggleGroup(name) }
+                        ) {
+                            Switch(checked = name !in groupOff, onCheckedChange = { toggleGroup(name) })
+                            Text("$name (${chapters.size})", modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    groupOff = emptySet()
+                    saveGroupOff(
+                        context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE),
+                        novel.seriesUrl, emptySet()
+                    )
+                    showGroups = false
+                }) { Text("Show all") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGroups = false }) { Text("Done") }
+            }
+        )
     }
 }
