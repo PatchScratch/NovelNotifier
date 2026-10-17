@@ -1212,6 +1212,26 @@ fun ReaderScreen(
                                 request: WebResourceRequest?
                             ): WebResourceResponse? {
                                 val host = request?.url?.host ?: return null
+                                // AlphaPolis protection (Wayne's suggestion
+                                // 2026-10-18): serve a stub for
+                                // content-viewer.js — the site's anti-copy
+                                // layer that clears #novelBody on blur and
+                                // blocks copy/right-click/selection. Replacing
+                                // the script at the network layer has no
+                                // timing race (the hasFocus injection from
+                                // onPageStarted can lose to its ready
+                                // handler). Nothing else depends on the
+                                // script's exports; the stub is a comment.
+                                if (host.endsWith("alphapolis.co.jp") &&
+                                    request.url.path?.endsWith("content-viewer.js") == true
+                                ) {
+                                    return WebResourceResponse(
+                                        "application/javascript", "utf-8",
+                                        java.io.ByteArrayInputStream(
+                                            ";/* content-viewer removed by reader */".toByteArray()
+                                        )
+                                    )
+                                }
                                 if (!isBlockedReaderHost(host)) return null
                                 return WebResourceResponse(
                                     "text/plain", "utf-8",
