@@ -183,6 +183,16 @@ fun ReaderScreen(
     // path comes up empty we hop to WEB for the load, extract, then return
     // the user to the text view automatically.
     var alpWebHop by remember(target) { mutableStateOf(false) }
+    // DOM extracts captured during a hop, by chapter URL. The flip back to
+    // TEXT restarts the extraction ladder, whose AlphaPolis branch would
+    // otherwise retry the (failing) headless path and re-hop forever; the
+    // cache short-circuits that restart to the text we already hold.
+    val alpDomExtracts = remember(target) { mutableMapOf<String, ChapterExtract>() }
+    // Hops that ran their full ladder and found nothing (paywalled chapter
+    // the session doesn't own), keyed by chapter URL → the retryKey cycle
+    // they failed in. Prevents hop→fail→flip→re-hop reload loops; a manual
+    // retry (new retryKey) is always allowed another hop.
+    val alpHopExhausted = remember(target) { mutableMapOf<String, Int>() }
     var extractFailed by remember(target) { mutableStateOf(false) }
     var extracting by remember(target) { mutableStateOf(false) }
     /** True while the chapter host is showing a Cloudflare challenge. */
@@ -458,6 +468,7 @@ fun ReaderScreen(
         wv.evaluateJavascript(chapterExtractJs()) { res ->
             extractResult = parseChapterExtract(res)
             if (extractResult != null && alpWebHop && viewMode == READER_VIEW_WEB) {
+                alpDomExtracts[chapter.url] = extractResult!!
                 alpWebHop = false
                 viewMode = READER_VIEW_TEXT
             }
@@ -578,7 +589,11 @@ fun ReaderScreen(
     // extraction appends the chapter to the series' offline ePub; total
     // failure falls back to the stored copy when one exists (offline reading).
     LaunchedEffect(extractTick, retryKey, viewMode, chapter.url) {
-        if (viewMode != READER_VIEW_TEXT || extractTick == 0) return@LaunchedEffect
+        // During an AlphaPolis web-hop the ladder keeps running in WEB mode —
+        // the hop exists precisely so the VISIBLE DOM fills #novelBody for
+        // tryExtract to read; success flips the reader back to TEXT.
+        val alpHop = alpWebHop && viewMode == READER_VIEW_WEB
+        if ((viewMode != READER_VIEW_TEXT && !alpHop) || extractTick == 0) return@LaunchedEffect
         if (foxRssStage == 1) return@LaunchedEffect
         extractResult = null
         extractFailed = false
@@ -589,7 +604,16 @@ fun ReaderScreen(
         // POST /novel/episode_body — no WebView in the reading path, so the
         // site's premium chapters (session-authorized) work without any
         // scraping surface. Stored copies serve when offline.
-        if ((android.net.Uri.parse(chapter.url).host ?: "").endsWith("alphapolis.co.jp")) {
+        val isAlpChapter = (android.net.Uri.parse(chapter.url).host ?: "").endsWith("alphapolis.co.jp")
+        if (isAlpChapter) {
+            // Text we already DOM-extracted this session (the flip back to
+            // TEXT restarts this ladder) — serve it, never re-hop.
+            alpDomExtracts[chapter.url]?.let {
+                extractResult = it
+                return@LaunchedEffect
+            }
+        }
+        if (isAlpChapter && !alpHop) {
             val stored = withContext(Dispatchers.IO) {
                 EpubStore.readChapter(context, target.seriesUrl, chapter.url)
             }
@@ -631,7 +655,14 @@ fun ReaderScreen(
                 if (extractResult != null) return@LaunchedEffect
                 // Empty (typical logged-in shape): the site's viewer only
                 // fills the body in a visible WebView — hop to WEB for this
-                // load; the ladder extracts and flips back to TEXT.
+                // load; the ladder extracts and flips back to TEXT. A hop
+                // that already exhausted its ladder in this retry cycle
+                // (paywalled chapter the session doesn't own) must not
+                // re-hop — that would reload-loop; declare failure instead.
+                if (alpHopExhausted[chapter.url] == retryKey) {
+                    extractFailed = true
+                    return@LaunchedEffect
+                }
                 alpWebHop = true
                 viewMode = READER_VIEW_WEB
                 webViewRef.value?.reload()
@@ -674,6 +705,26 @@ fun ReaderScreen(
             delay(3000)
             tryExtract()
             shots++
+        }
+        // A hop that found nothing (paywalled/unentitled chapter, viewer
+        // never filled): return the user to TEXT so the failure banner and
+        // its retry controls are visible — silently leaving them on the
+        // website reads as "the reader is broken". Mark the cycle exhausted
+        // so the restart can't re-hop into a reload loop.
+        if (alpHop && extractResult == null) {
+            alpHopExhausted[chapter.url] = retryKey
+            val storedHop = withContext(Dispatchers.IO) {
+                EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+            }
+            if (storedHop != null) {
+                extractResult = storedHop
+                offlineCopy = true
+            } else {
+                extractFailed = true
+                alpWebHop = false
+                viewMode = READER_VIEW_TEXT
+            }
+            return@LaunchedEffect
         }
         if (extractResult == null && !extractFailed) {
             // Offline fallback first: if this chapter was read before, serve

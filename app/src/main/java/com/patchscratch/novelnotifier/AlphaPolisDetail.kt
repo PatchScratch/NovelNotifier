@@ -52,6 +52,17 @@ fun AlphaPolisDetailScreen(
             val html = alpFetch(work.url)
             detail = parseAlpWorkPage(html)
             if (detail == null) error = "作品情報を読み込めませんでした"
+            // Cover carry-over: the shared tile prefers CoverStore, so the
+            // work-page art needs persisting once — bare bookshelf-derived
+            // bookmarks carry no coverUrl, and ePub saves embed the store's
+            // file. Without this the cover showed only on this page.
+            detail?.work?.coverUrl?.takeIf { it.startsWith("http") }?.let { cu ->
+                runCatching {
+                    if (!CoverStore.hasLocal(context, work.url)) {
+                        CoverStore.download(context, work.url, cu)
+                    }
+                }.onFailure { DebugLog.log("ALP", "cover download failed", it as? Exception) }
+            }
         } catch (e: Exception) {
             error = "読み込み失敗: ${e.message}"
         }
