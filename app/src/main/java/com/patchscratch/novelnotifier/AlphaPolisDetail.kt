@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -39,11 +40,17 @@ fun AlphaPolisDetailScreen(
     onBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var detail by remember { mutableStateOf<AlpWorkDetail?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     // Offline ToC of last resort (stored ePub chapters).
     var storedList by remember { mutableStateOf<List<Release>>(emptyList()) }
+    // Per-chapter offline (user decision 2026-10-18: premium chapters are
+    // bought/rented one at a time, so each episode row downloads itself).
+    var storedUrls by remember(work.id) { mutableStateOf<Set<String>>(emptySet()) }
+    var downloadingUrl by remember(work.id) { mutableStateOf<String?>(null) }
+    var downloadMsg by remember(work.id) { mutableStateOf("") }
 
     LaunchedEffect(work.id) {
         loading = true
@@ -71,7 +78,42 @@ fun AlphaPolisDetailScreen(
                 EpubStore.storedChapters(context, work.url).map { it.toRelease() }
             }
         }
+        storedUrls = withContext(Dispatchers.IO) {
+            EpubStore.storedChapters(context, work.url).map { it.url }.toSet()
+        }
         loading = false
+    }
+
+    /** Headless single-chapter save. Paywalled (unentitled) chapters come
+     *  back null — those still capture in the reader's web-hop on open. */
+    fun downloadEpisode(ep: AlpEpisode, ordinal: Int) {
+        val url = ep.url
+        if (url in storedUrls || downloadingUrl != null) return
+        downloadingUrl = url
+        downloadMsg = ""
+        scope.launch {
+            val extract = fetchAlpChapterHeadless(url)
+            if (extract != null && extract.paragraphs.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    EpubStore.appendChapter(
+                        context, work.title, work.url,
+                        url, "c$ordinal", extract, null
+                    )
+                }
+                storedUrls = storedUrls + url
+            } else if (!ep.isPublic) {
+                downloadMsg = t(
+                    "Premium chapter — buy or rent it on AlphaPolis first (unlocked: your entitled chapters download instantly)",
+                    "プレミアム章節 — 先にアルファポリスで購入・レンタルしてください（購入済みはすぐ保存されます）"
+                )
+            } else {
+                downloadMsg = t(
+                    "Couldn't fetch — open the chapter in the reader to save it",
+                    "取得できません — リーダーで開くと保存できます"
+                )
+            }
+            downloadingUrl = null
+        }
     }
 
     val episodes = detail?.episodes ?: emptyList()
@@ -99,7 +141,7 @@ fun AlphaPolisDetailScreen(
             groupBadge = if (bookmarked) t("Bookmarked", "ブックマーク済み") else "",
             changeGroupLabel = if (bookmarked) t("⚑ BOOKMARKED", "⚑ ブックマーク済み") else t("⚑ BOOKMARK", "⚑ ブックマーク"),
             onChangeGroup = { onToggleBookmark(work) },
-            statusLine = error,
+            statusLine = if (downloadMsg.isNotBlank()) downloadMsg else error,
             nextChapterLabel = when {
                 nextEp != null -> nextEp.title.ifBlank { "第${nextOrdinal}話" }
                 storedList.isNotEmpty() -> t("Read from start", "最初から読む") + " (${storedList.size} " + t("stored", "保存済み") + ")"
@@ -127,7 +169,11 @@ fun AlphaPolisDetailScreen(
                     date = "",
                     isRead = i + 1 == position,
                     onOpen = { openAt(i) },
-                    onCheck = { onSetReadPos(i + 1) }
+                    onCheck = { onSetReadPos(i + 1) },
+                    downloaded = ep.url in storedUrls,
+                    downloading = downloadingUrl == ep.url,
+                    onDownload = { downloadEpisode(ep, i + 1) },
+                    premium = !ep.isPublic
                 )
             } else storedList.mapIndexed { i, rel ->
                 SeriesEpisodeRow(

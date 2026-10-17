@@ -193,6 +193,10 @@ fun ReaderScreen(
     // they failed in. Prevents hop→fail→flip→re-hop reload loops; a manual
     // retry (new retryKey) is always allowed another hop.
     val alpHopExhausted = remember(target) { mutableMapOf<String, Int>() }
+    // True while the reader sits on a PAYWALL page in web view, kept there
+    // deliberately (Wayne, 2026-10-18): the user can unlock the chapter or
+    // buy credits inside the app, then tap Retry to extract + auto-save.
+    var paywallNotice by remember(target) { mutableStateOf(false) }
     var extractFailed by remember(target) { mutableStateOf(false) }
     var extracting by remember(target) { mutableStateOf(false) }
     /** True while the chapter host is showing a Cloudflare challenge. */
@@ -600,6 +604,7 @@ fun ReaderScreen(
         imageChapter = false
         offlineCopy = false
         cfChecking = false
+        paywallNotice = false
         // AlphaPolis reads fully headless (B4): page → CSRF+episode tokens →
         // POST /novel/episode_body — no WebView in the reading path, so the
         // site's premium chapters (session-authorized) work without any
@@ -623,31 +628,11 @@ fun ReaderScreen(
                 return@LaunchedEffect
             }
             if (isNetworkOnline(context)) {
-                runCatching {
-                    val page = alpFetch(chapter.url)
-                    val (title, tokens) = parseAlpEpisodePage(page)
-                    if (tokens != null) {
-                        // (B) anonymous shape: AJAX POST for the body.
-                        val body = alpPostEpisodeBody(
-                            tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapter.url
-                        )
-                        val (paras, imgs) = parseAlpBodyWithImages(body)
-                        extractResult = ChapterExtract(title = title, paragraphs = paras, images = imgs)
-                        DebugLog.log("READER", "alphapolis headless(B): ${paras.size} paragraphs, ${imgs.size} images")
-                    } else if (alpLastBodyHtml.isNotBlank()) {
-                        // (A) rare server-rendered body (the logged-in shape
-                        // ships an EMPTY novelBody — its JS viewer fills it
-                        // client-side, so those fall through to the WebView
-                        // ladder below, which now also guards hasFocus).
-                        val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-                        if (paras.isNotEmpty()) {
-                            extractResult = ChapterExtract(title = title.ifBlank { alpLastTitle }, paragraphs = paras, images = imgs)
-                            DebugLog.log("READER", "alphapolis headless(A): ${paras.size} paragraphs, ${imgs.size} images")
-                        }
-                    }
-                }.onFailure {
-                    DebugLog.log("READER", "alphapolis headless failed", it)
-                }
+                // Shared headless path (also serves the series page's
+                // per-chapter download and EpubBulkService): (B) tokens →
+                // body POST, else (A) server-embedded body. Entitled premium
+                // included; null → paywalled/viewer-only → web-hop below.
+                extractResult = fetchAlpChapterHeadless(chapter.url)
                 if (extractResult == null && stored != null) {
                     extractResult = stored
                     offlineCopy = true
@@ -706,11 +691,12 @@ fun ReaderScreen(
             tryExtract()
             shots++
         }
-        // A hop that found nothing (paywalled/unentitled chapter, viewer
-        // never filled): return the user to TEXT so the failure banner and
-        // its retry controls are visible — silently leaving them on the
-        // website reads as "the reader is broken". Mark the cycle exhausted
-        // so the restart can't re-hop into a reload loop.
+        // A hop that found nothing: either the chapter is paywalled — keep
+        // the user IN the web view so they can unlock it or buy credits
+        // without leaving the app (Wayne, 2026-10-18), with a notice whose
+        // Retry re-runs extraction once they have — or it's a plain failure:
+        // return to TEXT so the failure banner and its controls are visible.
+        // Mark the cycle exhausted so the restart can't re-hop in a loop.
         if (alpHop && extractResult == null) {
             alpHopExhausted[chapter.url] = retryKey
             val storedHop = withContext(Dispatchers.IO) {
@@ -719,10 +705,22 @@ fun ReaderScreen(
             if (storedHop != null) {
                 extractResult = storedHop
                 offlineCopy = true
-            } else {
-                extractFailed = true
                 alpWebHop = false
-                viewMode = READER_VIEW_TEXT
+                return@LaunchedEffect
+            }
+            extractFailed = true
+            webViewRef.value?.evaluateJavascript(
+                """(function(){var t=document.body?document.body.innerText:'';
+                   return /購入|レンタル|クレジット|unlocked/i.test(t)?'PAYWALL':'')()"""
+                    .trimIndent()
+            ) { r ->
+                if (unwrapJsResult(r) == "PAYWALL") {
+                    alpWebHop = false          // hop over; STAY in the web view
+                    paywallNotice = true
+                } else {
+                    alpWebHop = false
+                    viewMode = READER_VIEW_TEXT
+                }
             }
             return@LaunchedEffect
         }
@@ -1348,6 +1346,41 @@ fun ReaderScreen(
                     }
                 }
             )
+
+            // Paywall interstitial (AlphaPolis): the web view stays up so the
+            // user can unlock the chapter / buy credits in place; Retry
+            // re-runs the whole extraction (and auto-saves once entitled).
+            if (paywallNotice && viewMode == READER_VIEW_WEB) {
+                androidx.compose.material3.Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 8.dp,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Text(
+                            t(
+                                "Paywalled chapter — unlock it or buy credits here, then Retry to read & save it offline.",
+                                "有料章節 — ここで購入・レンタル後、再試行すると読書・オフライン保存できます。"
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        androidx.compose.foundation.layout.Row {
+                            androidx.compose.material3.TextButton(onClick = {
+                                paywallNotice = false
+                                viewMode = READER_VIEW_TEXT
+                                retryKey += 1
+                            }) { Text(t("RETRY", "再試行")) }
+                            androidx.compose.material3.TextButton(onClick = { paywallNotice = false }) {
+                                Text(t("DISMISS", "閉じる"))
+                            }
+                        }
+                    }
+                }
+            }
 
             // The extracted chapter, rendered natively.
             if (showText) {

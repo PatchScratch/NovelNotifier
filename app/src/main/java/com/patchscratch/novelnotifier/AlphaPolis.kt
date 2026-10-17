@@ -513,11 +513,45 @@ internal fun alpEmbeddedBody(html: String): String {
 }
 
 /**
+ * One chapter, fully headless (no WebView): page → (B) tokens → body POST,
+ * else (A) the server-embedded body. An entitled session — owned/rented
+ * premium included — gets text; a paywalled chapter returns null and the
+ * CALLER decides (the reader hops to its visible WebView, the detail row
+ * and the bulk download treat it as skip). Shared by the reader ladder,
+ * the per-chapter download on the series page, and EpubBulkService.
+ */
+suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
+    return try {
+        val page = alpFetch(chapterUrl)
+        val (title, tokens) = parseAlpEpisodePage(page)
+        if (tokens != null) {
+            val body = alpPostEpisodeBody(
+                tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapterUrl
+            )
+            val (paras, imgs) = parseAlpBodyWithImages(body)
+            DebugLog.log("ALP", "headless chapter (B): ${paras.size} paragraphs, ${imgs.size} images")
+            ChapterExtract(title = title, paragraphs = paras, images = imgs)
+        } else if (alpLastBodyHtml.isNotBlank()) {
+            val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+            if (paras.isEmpty()) null
+            else {
+                DebugLog.log("ALP", "headless chapter (A): ${paras.size} paragraphs, ${imgs.size} images")
+                ChapterExtract(title = title.ifBlank { alpLastTitle }, paragraphs = paras, images = imgs)
+            }
+        } else {
+            null
+        }
+    } catch (e: Exception) {
+        DebugLog.log("ALP", "headless chapter fetch failed", e)
+        null
+    }
+}
+
+/**
  * Body HTML → paragraphs + images (document order, paragraph-anchored).
  * Relative image URLs absolutize against the CDN/site base.
  */
-fun parseAlpBodyWithImages(html: String): Pair<List<String>, List<Pair<Int, String>>> {
-    val paragraphs = mutableListOf<String>()
+fun parseAlpBodyWithImages(html: String): Pair<List<String>, List<Pair<Int, String>>> {    val paragraphs = mutableListOf<String>()
     val images = mutableListOf<Pair<Int, String>>()
     // walk <p>…</p> and <img …> in order
     val token = Regex("""<p[^>]*>(.*?)</p>|<img[^>]+src="([^"]+)"""", RegexOption.DOT_MATCHES_ALL)

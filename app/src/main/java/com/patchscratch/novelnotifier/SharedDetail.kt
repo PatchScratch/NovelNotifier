@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material3.Button
@@ -89,7 +92,17 @@ data class SeriesEpisodeRow(
     val date: String,
     val isRead: Boolean,
     val onOpen: () -> Unit,
-    val onCheck: ((checked: Boolean) -> Unit)? = null
+    val onCheck: ((checked: Boolean) -> Unit)? = null,
+    // Spec-gated per-chapter offline control (AlphaPolis: premium chapters
+    // are bought/rented one at a time, so "offline" is a per-chapter
+    // decision, not a series bulk). Null hides the download icon entirely.
+    val downloaded: Boolean = false,
+    val downloading: Boolean = false,
+    val onDownload: (() -> Unit)? = null,
+    // Paywalled row (ToC's own flag): renders a lock instead of the plain
+    // download arrow. Still tappable — an entitled session (rental) can
+    // store it headless; an unpaid one gets the paywall message.
+    val premium: Boolean = false
 )
 
 /** Everything the template renders. Defaults omit optional rows. */
@@ -473,6 +486,45 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(ep.title, maxLines = 2)
                                         Text(ep.date, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    if (ep.onDownload != null) {
+                                        // Per-chapter offline: filled check once
+                                        // stored; spinner while fetching; lock on
+                                        // paywalled rows (tap still tries — a
+                                        // rental entitles the headless fetch);
+                                        // download arrow otherwise.
+                                        IconButton(
+                                            onClick = ep.onDownload,
+                                            enabled = !ep.downloaded && !ep.downloading,
+                                            modifier = Modifier.size(34.dp)
+                                        ) {
+                                            when {
+                                                ep.downloading -> CircularProgressIndicator(
+                                                    modifier = Modifier.size(18.dp),
+                                                    strokeWidth = 2.dp
+                                                )
+                                                ep.downloaded -> Icon(
+                                                    Icons.Rounded.CheckCircle,
+                                                    contentDescription = "Saved offline",
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                                ep.premium -> Icon(
+                                                    Icons.Rounded.Lock,
+                                                    contentDescription = t(
+                                                        "Premium chapter — tap to try saving",
+                                                        "プレミアム章節 — タップで保存を試す"
+                                                    ),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                else -> Icon(
+                                                    Icons.Rounded.Download,
+                                                    contentDescription = t(
+                                                        "Save this chapter offline",
+                                                        "この話をオフライン保存"
+                                                    )
+                                                )
+                                            }
+                                        }
                                     }
                                     if (ep.onCheck != null) {
                                         Checkbox(checked = ep.isRead, onCheckedChange = ep.onCheck)
