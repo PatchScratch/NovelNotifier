@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.AsyncImage
 import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -593,14 +594,23 @@ fun ReaderScreen(
                     val page = alpFetch(chapter.url)
                     val (title, tokens) = parseAlpEpisodePage(page)
                     if (tokens != null) {
+                        // (B) anonymous shape: AJAX POST for the body.
                         val body = alpPostEpisodeBody(
                             tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapter.url
                         )
-                        extractResult = ChapterExtract(
-                            title = title,
-                            paragraphs = parseAlpBodyHtml(body)
-                        )
-                        DebugLog.log("READER", "alphapolis headless: ${extractResult!!.paragraphs.size} paragraphs")
+                        val (paras, imgs) = parseAlpBodyWithImages(body)
+                        extractResult = ChapterExtract(title = title, paragraphs = paras, images = imgs)
+                        DebugLog.log("READER", "alphapolis headless(B): ${paras.size} paragraphs, ${imgs.size} images")
+                    } else if (alpLastBodyHtml.isNotBlank()) {
+                        // (A) rare server-rendered body (the logged-in shape
+                        // ships an EMPTY novelBody — its JS viewer fills it
+                        // client-side, so those fall through to the WebView
+                        // ladder below, which now also guards hasFocus).
+                        val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+                        if (paras.isNotEmpty()) {
+                            extractResult = ChapterExtract(title = title.ifBlank { alpLastTitle }, paragraphs = paras, images = imgs)
+                            DebugLog.log("READER", "alphapolis headless(A): ${paras.size} paragraphs, ${imgs.size} images")
+                        }
                     }
                 }.onFailure {
                     DebugLog.log("READER", "alphapolis headless failed", it)
@@ -609,9 +619,12 @@ fun ReaderScreen(
                     if (stored != null) {
                         extractResult = stored
                         offlineCopy = true
-                    } else extractFailed = true
+                    }
+                    // else: fall through to the WebView ladder (logged-in
+                    // AlphaPolis fills #novelBody client-side; the hasFocus
+                    // override keeps content-viewer.js from clearing it).
                 }
-                return@LaunchedEffect
+                if (extractResult != null) return@LaunchedEffect
             }
             if (stored != null) {
                 extractResult = stored
@@ -1203,6 +1216,19 @@ fun ReaderScreen(
                                 if (url != null && url.contains("/ageauth/")) {
                                     DebugLog.log("READER", "Syosetu age check shown — confirm once")
                                 }
+                                // AlphaPolis anti-copy (content-viewer.js, verified from
+                                // a logged-in page save 2026-10-18): on window blur it
+                                // CLEARS #novelBody behind a gray cover ("コンテンツ保護…"),
+                                // restores on focus — a hidden/text-mode WebView never has
+                                // focus, so the body would be empty the moment our
+                                // extraction reads it. hasFocus()=>true makes both blur
+                                // guards short-circuit; the copy/right-click blocks
+                                // don't affect DOM reading.
+                                if (url != null && url.contains("alphapolis.co.jp")) {
+                                    view?.evaluateJavascript(
+                                        "(function(){try{document.hasFocus=function(){return true};}catch(e){}})()"
+                                    ) { }
+                                }
                                 super.onPageStarted(view, url, favicon)
                             }
 
@@ -1261,6 +1287,19 @@ fun ReaderScreen(
                         )
                     }
                     extract.paragraphs.forEachIndexed { i, paragraph ->
+                        // Inline illustrations anchored to this paragraph
+                        // (site-embedded images — illustrations in the
+                        // original text, Wayne's 2026-10-17 ask).
+                        extract.images.filter { it.first == i }.forEach { (_, url) ->
+                            AsyncImage(
+                                model = url,
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp)
+                            )
+                        }
                         // Saved layout choice: both (JP with EN under it),
                         // jp only, or en only once a translation exists.
                         val en = translation?.getOrNull(i)

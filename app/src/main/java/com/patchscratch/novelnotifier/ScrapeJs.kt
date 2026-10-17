@@ -625,7 +625,7 @@ fun chapterExtractJs(): String = """
     // new host before adding to this list.
     var KNOWN_SELECTORS = ['div.js-episode-body', 'div.chapter-inner', '.cha-words', '.novel-content',
       '#chr-content', '.chapter-content', '#chapter-c', '.post-content',
-      '.entry-content', 'article'];
+      '.entry-content', 'article', '#novelBody'];
     var best = null;
     for (var ks = 0; ks < KNOWN_SELECTORS.length && !best; ks++) {
       var cand = document.querySelector(KNOWN_SELECTORS[ks]);
@@ -764,7 +764,31 @@ fun chapterExtractJs(): String = """
     }
 
     var json = out.map(function(t) { return JSON.stringify(t); }).join(',');
-    return '{"title":' + JSON.stringify(title) + ',"paragraphs":[' + json + ']}';
+    // Inline illustrations (all sites): img tags inside the content container,
+    // absolute URLs, anchored to the paragraph index they precede. Ad/asset
+    // guards: skip 1px/emoji-sized and data: URIs.
+    var imgs = [];
+    try {
+      var nodes = best.querySelectorAll('p, img');
+      var pi = 0;
+      for (var ni = 0; ni < nodes.length; ni++) {
+        var nd = nodes[ni];
+        if (nd.tagName === 'IMG') {
+          var u = nd.getAttribute('src') || nd.getAttribute('data-src') || '';
+          if (!u || u.indexOf('data:') === 0) continue;
+          if (u.indexOf('//') === 0) u = 'https:' + u;
+          else if (u.indexOf('/') === 0) u = location.protocol + '//' + location.host + u;
+          var w = nd.naturalWidth || nd.width || 0;
+          if (w && w < 60) continue;
+          imgs.push([pi, u]);
+        } else {
+          pi++;
+        }
+      }
+    } catch (e) {}
+    var imgJson = imgs.map(function(p2) { return '[' + p2[0] + ',' + JSON.stringify(p2[1]) + ']'; }).join(',');
+    return '{"title":' + JSON.stringify(title) + ',"paragraphs":[' + json + ']' +
+      (imgs.length ? ',"images":[' + imgJson + ']' : '') + '}';
   } catch (e) {
     return 'FAIL:' + (e && e.message ? e.message : String(e)).slice(0, 120) + ' @out' + (typeof out !== 'undefined' ? out.length : -1);
   }

@@ -449,20 +449,18 @@ suspend fun fetchAlpSearch(query: String, page: Int = 1): List<AlpWork> =
 // --- episode page → title + body ----------------------------------------------------
 
 /**
- * Episode page HTML → (title, paragraphs). Two server shapes (2026 renewal):
- * (A) body embedded in div#novelBody (rare) and (B) the page JS's
- * .load(episode_body) with id+token — (B) is authoritative when present.
- * This parses the page only; the POST itself is [alpPostEpisodeBody] fed
- * with the values from [AlpEpisodeTokens].
+ * Episode page HTML → (title, paragraphs, images). Two server shapes:
+ * (A) body embedded in div#novelBody — the LOGGED-IN page serves this
+ * (premium included: the session owns the rental, so the server just
+ * renders the text; no AJAX loader, no tokens — the live premium test
+ * taught this) and (B) the anonymous page's .load(episode_body) AJAX
+ * with id+token. Images: <img> tags inside the body harvest to absolute
+ * URLs with their paragraph anchors.
  */
 fun parseAlpEpisodePage(html: String): Pair<String, AlpEpisodeTokens?> {
-    val title = Regex("""<h2[^>]*class="[^"]*p-novel-episode__episode-title[^"]*"[^>]*>([^<]+)</h2>""")
-        .find(html)?.groupValues?.get(1)?.trim()
-        .orEmpty()
-        .ifBlank {
-            Regex("""<h2[^>]*class="[^"]*episode-title[^"]*"[^>]*>([^<]+)</h2>""")
-                .find(html)?.groupValues?.get(1)?.trim().orEmpty()
-        }
+    alpLastTitle = alpEpisodeTitle(html)
+    alpLastBodyHtml = alpEmbeddedBody(html)
+    val title = alpLastTitle
 
     val csrf = Regex("""X-CSRF-TOKEN['"]?\s*:\s*['"]([^'"]+)['"]""")
         .find(html)?.groupValues?.get(1)
@@ -483,6 +481,67 @@ fun parseAlpEpisodePage(html: String): Pair<String, AlpEpisodeTokens?> {
 
 /** Values scraped from an episode page that authorize the body POST. */
 data class AlpEpisodeTokens(val episodeId: String, val episodeToken: String, val csrfToken: String)
+
+// Side-channel from parseAlpEpisodePage for the embedded-body path (A):
+// the title + raw body HTML the server rendered inline.
+@Volatile internal var alpLastTitle: String = ""
+@Volatile internal var alpLastBodyHtml: String = ""
+
+/** Episode title (both layouts). */
+internal fun alpEpisodeTitle(html: String): String =
+    Regex("""<h2[^>]*class="[^"]*p-novel-episode__episode-title[^"]*"[^>]*>([^<]+)</h2>""")
+        .find(html)?.groupValues?.get(1)?.trim()
+        .orEmpty()
+        .ifBlank {
+            Regex("""<h2[^>]*class="[^"]*episode-title[^"]*"[^>]*>([^<]+)</h2>""")
+                .find(html)?.groupValues?.get(1)?.trim().orEmpty()
+        }
+
+/**
+ * Path (A): div#novelBody's inner HTML when the server embedded the body
+ * (logged-in pages; the LoadingEpisode spinner div is stripped). Blank
+ * when the page uses the AJAX loader instead.
+ */
+internal fun alpEmbeddedBody(html: String): String {
+    val m = Regex("""<div[^>]*id="novelBody"[^>]*>(.*?)</div>""", RegexOption.DOT_MATCHES_ALL)
+        .find(html) ?: return ""
+    var body = m.groupValues[1]
+        .replace(Regex("""<div[^>]*id="LoadingEpisode"[^>]*>.*?</div>""", RegexOption.DOT_MATCHES_ALL), "")
+    // trim the trailing like-area that shares the container on some layouts
+    body = body.substringBefore("""<div class="c-like""")
+    return body.trim()
+}
+
+/**
+ * Body HTML → paragraphs + images (document order, paragraph-anchored).
+ * Relative image URLs absolutize against the CDN/site base.
+ */
+fun parseAlpBodyWithImages(html: String): Pair<List<String>, List<Pair<Int, String>>> {
+    val paragraphs = mutableListOf<String>()
+    val images = mutableListOf<Pair<Int, String>>()
+    // walk <p>…</p> and <img …> in order
+    val token = Regex("""<p[^>]*>(.*?)</p>|<img[^>]+src="([^"]+)"""", RegexOption.DOT_MATCHES_ALL)
+    for (m in token.findAll(html)) {
+        if (m.groupValues[2].isNotBlank()) {
+            var u = m.groupValues[2]
+            if (u.startsWith("/")) u = ALP_BASE + u
+            images += paragraphs.size to u   // anchor: before the NEXT paragraph
+        } else {
+            val text = m.groupValues[1]
+                .replace(Regex("""<br\s*/?>"""), "\n")
+                .replace(Regex("<[^>]+>"), "")
+                .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+                .replace("&nbsp;", " ").replace("&ldquo;", "\u201c").replace("&rdquo;", "\u201d")
+                .trim()
+            if (text.isNotBlank()) paragraphs += text
+        }
+    }
+    if (paragraphs.isEmpty()) {
+        // no <p> structure — fall back to the plain <br> body
+        return parseAlpBodyHtml(html) to images
+    }
+    return paragraphs to images
+}
 
 /**
  * Episode page → paragraph list, end to end (embedded shape only — for

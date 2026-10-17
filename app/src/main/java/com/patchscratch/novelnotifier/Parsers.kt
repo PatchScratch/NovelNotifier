@@ -491,7 +491,10 @@ data class FinderPage(
 /** Extracted chapter text for reader mode (chapterExtractJs). */
 data class ChapterExtract(
     val title: String,
-    val paragraphs: List<String>
+    val paragraphs: List<String>,
+    // Inline illustration URLs (absolute), in document order — the reader
+    // renders them between paragraphs at their anchors. Empty = text-only.
+    val images: List<Pair<Int, String>> = emptyList()   // (paragraphIndex, url)
 )
 
 /**
@@ -510,7 +513,15 @@ fun parseChapterExtract(raw: String): ChapterExtract? {
             arr.optString(i).trim().ifBlank { null }
         }
         if (paragraphs.size < 3) return null
-        ChapterExtract(title = json.optString("title"), paragraphs = paragraphs)
+        val images = json.optJSONArray("images")?.let { arr ->
+            (0 until arr.length()).mapNotNull { i ->
+                val pair = arr.optJSONArray(i) ?: return@mapNotNull null
+                val idx = pair.optInt(0)
+                val url = pair.optString(1)
+                if (url.startsWith("http") && idx >= 0) idx to url else null
+            }
+        } ?: emptyList()
+        ChapterExtract(title = json.optString("title"), paragraphs = paragraphs, images = images)
     } catch (e: Exception) {
         null
     }
