@@ -295,7 +295,11 @@ data class SyosetuBookmark(
     // Local mirror of the site しおり (reading position, episode number).
     // 0 = unknown/unset; the auto-advance rule compares against this so a
     // recomposition never re-fires the same move.
-    val shioriPos: Int = 0
+    val shioriPos: Int = 0,
+    // Total episodes (B2 unread parity). The bookmark list page doesn't
+    // carry it — hydrated from the series cache/API when the detail opens;
+    // 0 = unknown, badges suppressed until known.
+    val episodeCount: Int = 0
 ) {
     val url: String get() = "https://ncode.syosetu.com/${ncode.lowercase()}/"
 }
@@ -760,7 +764,7 @@ fun syosetuBookmarksFile(context: Context) =
 fun saveSyosetuBookmarks(context: Context, bookmarks: List<SyosetuBookmark>) {
     val arr = JSONArray()
     bookmarks.forEach {
-        arr.put(JSONObject().put("n", it.ncode).put("t", it.title).put("c", it.category).put("u", it.updated).put("f", it.userfavId).put("s", it.shioriPos))
+        arr.put(JSONObject().put("n", it.ncode).put("t", it.title).put("c", it.category).put("u", it.updated).put("f", it.userfavId).put("s", it.shioriPos).put("e", it.episodeCount))
     }
     syosetuBookmarksFile(context).writeText(arr.toString())
 }
@@ -769,7 +773,7 @@ fun loadSyosetuBookmarks(context: Context): List<SyosetuBookmark> = try {
     val arr = JSONArray(syosetuBookmarksFile(context).readText())
     (0 until arr.length()).mapNotNull { i ->
         val row = arr.optJSONObject(i) ?: return@mapNotNull null
-        SyosetuBookmark(row.optString("n"), row.optString("t"), row.optString("c"), row.optString("u"), row.optString("f"), row.optInt("s"))
+        SyosetuBookmark(row.optString("n"), row.optString("t"), row.optString("c"), row.optString("u"), row.optString("f"), row.optInt("s"), row.optInt("e"))
     }
 } catch (e: Exception) { emptyList() }
 

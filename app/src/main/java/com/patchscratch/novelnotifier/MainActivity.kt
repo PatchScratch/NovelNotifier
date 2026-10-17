@@ -383,6 +383,7 @@ fun NovelApp(
                 onSetHistory = { episodeId, ordinal ->
                     kakuyomu.recordReadingHistory(episodeId, ordinal, manual = true)
                 },
+                onPositionMirrored = { readPos -> kakuyomu.mirrorPosition(readPos) },
                 onBack = {
                     kakuyomu.closeDetail()
                     router.pop()
@@ -425,6 +426,7 @@ fun NovelApp(
                     syosetu.bookmarks.firstOrNull { it.url == novel.url }
                         ?.let { bm -> syosetu.updateShioriManual(bm, ep) }
                 },
+                onEpisodeCountKnown = { count -> syosetu.setEpisodeCount(novel.ncode, count) },
                 onBack = {
                     syosetu.closeDetail()
                     router.pop()

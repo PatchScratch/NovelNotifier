@@ -2,6 +2,7 @@ package com.patchscratch.novelnotifier
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -131,4 +132,23 @@ fun ErrorDialog(
             }
         }
     )
+}
+
+/**
+ * NU-home unread badge, shared by every site's tiles (B2 parity).
+ */
+@Composable
+fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
+    if (count <= 0) return
+    Box(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = count.toString(),
+            color = MaterialTheme.colorScheme.onPrimary,
+            style = MaterialTheme.typography.labelSmall
+        )
+    }
 }

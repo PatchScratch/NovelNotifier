@@ -92,6 +92,19 @@ fun SyosetuHome(
     // In-place category selection (NU list-switcher parity).
     var selectedCategory by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
+    // B2 NU-parity: the four sort modes over しおり-position unread.
+    val prefs = androidx.compose.ui.platform.LocalContext.current
+        .getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+    var sortMode by remember { mutableStateOf(loadSortMode(prefs)) }
+    fun shioriUnread(bm: SyosetuBookmark): Int =
+        if (bm.shioriPos > 0) bm.episodeCount.minus(bm.shioriPos).coerceAtLeast(0)
+        else bm.episodeCount   // never opened → everything is unread
+    fun sortBookmarks(list: List<SyosetuBookmark>): List<SyosetuBookmark> = when (sortMode) {
+        SORT_ALPHA -> list.sortedBy { it.title.lowercase() }
+        SORT_UNREAD_COUNT -> list.sortedByDescending { shioriUnread(it) }
+        SORT_UPDATE_TIME -> list.sortedByDescending { it.updated }
+        else -> list.sortedByDescending { shioriUnread(it) > 0 }
+    }
     androidx.compose.material3.ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -189,13 +202,15 @@ fun SyosetuHome(
         BookmarkLibraryBody(
             heading = if (selectedCategory.isBlank()) t("All", "すべて") + " (${visible.size})"
             else "$selectedCategory (${visible.size})",
-            rows = visible.map { bm ->
+            rows = sortBookmarks(visible).map { bm ->
                 BookmarkRow(
                     title = bm.title,
                     subtitle = bm.category,
                     coverUrl = "",
                     seriesUrl = bm.url,
-                    open = { onOpenNovel(hydratedStub(bm)) }
+                    open = { onOpenNovel(hydratedStub(bm)) },
+                    unread = shioriUnread(bm),
+                    latestLabel = if (bm.shioriPos > 0) t("read ep ", "読了 ") + "${bm.shioriPos}" else ""
                 )
             },
             emptyMessage = if (!loggedIn) t(
@@ -208,7 +223,14 @@ fun SyosetuHome(
                 managed = visible.firstOrNull { it.url == row.seriesUrl }
             },
             isRefreshing = isRefreshing,
-            onRefresh = onRefresh
+            onRefresh = onRefresh,
+            sortControl = {
+                SortMenu(sortMode = sortMode, onSort = {
+                    sortMode = it
+                    saveSortMode(prefs, it)
+                })
+            },
+            sortLabel = sortModeLabel(sortMode)
         )
         // Long-press management (same dialogs as the library screen).
         managed?.let { bm ->
@@ -438,7 +460,10 @@ fun SyosetuDetailScreen(
     onAddBookmark: (SyosetuAddBookmarkForm, Int) -> Unit = { _, _ -> },
     // MARK AS READ / checkbox: set the site しおり to this episode (manual
     // may move back). Framework B1's NU-parity write-back.
-    onSetShiori: (episodeNo: Int) -> Unit = {}
+    onSetShiori: (episodeNo: Int) -> Unit = {},
+    // B2: the API row carried the episode total — persist it on the
+    // bookmark for the home badge.
+    onEpisodeCountKnown: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
     var toc by remember { mutableStateOf<SyosetuToc?>(null) }

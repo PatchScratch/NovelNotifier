@@ -101,7 +101,18 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
         categories = withContext(Dispatchers.IO) { loadSyosetuCategories(getApplication()) }
         try {
             val html = fetchSyosetuWithSession("https://syosetu.com/favnovelmain/list/")
-            val fresh = syncBookmarkPage(html)
+            var fresh = syncBookmarkPage(html)
+            // B2 unread parity: fill episode counts from the series caches
+            // (the bookmark page carries none) so home badges have a total.
+            fresh = withContext(Dispatchers.IO) {
+                fresh.map { bm ->
+                    if (bm.episodeCount == 0) {
+                        val cached = loadSyosetuSeries(getApplication(), bm.ncode, "", allowStale = true)
+                        val n = cached?.novel?.episodeCount ?: 0
+                        if (n > 0) bm.copy(episodeCount = n) else bm
+                    } else bm
+                }
+            }
             if (fresh.isNotEmpty()) {
                 withContext(Dispatchers.IO) { saveSyosetuBookmarks(getApplication(), fresh) }
                 bookmarks = fresh
@@ -297,6 +308,13 @@ class SyosetuViewModel(app: Application) : AndroidViewModel(app) {
     // --- しおり (read position), from the reader callbacks ---------------------
 
     /** Auto-advance on episode open: no status chatter, silent mirror update. */
+    /** B2: home-badge total learned from the detail/API — persist it. */
+    fun setEpisodeCount(ncode: String, count: Int) {
+        if (count <= 0) return
+        bookmarks = bookmarks.map { if (it.ncode == ncode) it.copy(episodeCount = count) else it }
+        viewModelScope.launch(Dispatchers.IO) { saveSyosetuBookmarks(getApplication(), bookmarks) }
+    }
+
     fun updateShioriAuto(bm: SyosetuBookmark, ep: Int) {
         if (bm.userfavId.isBlank()) return
         viewModelScope.launch {

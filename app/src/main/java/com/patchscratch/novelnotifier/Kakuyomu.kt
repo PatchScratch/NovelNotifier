@@ -43,7 +43,11 @@ data class KakuyomuWork(
     val coverUrl: String,       // adminCoverImageUrl ("" when absent)
     val isSexual: Boolean = false,  // the site's R18 flag (no separate genre)
     val introduction: String = "",  // synopsis — detail pages only
-    val tags: String = ""           // tagLabels joined — detail pages only
+    val tags: String = "",          // tagLabels joined — detail pages only
+    // Reading-position mirror (B2): episode count read, from the site's
+    // ReadingHistory via the work-page Apollo cache. Drives unread badges
+    // exactly like NU's last_read / Syosetu's shioriPos.
+    val readPos: Int = 0
 ) {
     val url: String get() = "https://kakuyomu.jp/works/$id"
 }
@@ -379,7 +383,9 @@ fun parseKakuyomuWorkPage(html: String): KakuyomuWorkDetail? {
         } ?: ""
     )
     if (work.id.isBlank()) return null
-
+    // Reading position (B2): ReadingHistory:<uid>/<wid> → episodeUnion ref
+    // resolves to an Episode id; its index in the ordered ToC = read count.
+    val readEpisodeId = parseKakuyomuReadingHistory(html)?.first
     // Ordered ToC: tableOfContentsV2 → [chapterRef] → episodeUnions → refs.
     val episodes = mutableListOf<KakuyomuEpisode>()
     val tocArray = workNode.optJSONArray("tableOfContentsV2")
@@ -413,7 +419,10 @@ fun parseKakuyomuWorkPage(html: String): KakuyomuWorkDetail? {
             )
         }.sortedWith(compareBy({ it.publishedAt }, { it.id })).toList().let { episodes += it }
     }
-    return KakuyomuWorkDetail(work, episodes.filter { it.id.isNotBlank() }.distinctBy { it.id })
+    val ordered = episodes.filter { it.id.isNotBlank() }.distinctBy { it.id }
+    val readPos = readEpisodeId?.let { rid -> ordered.indexOfFirst { it.id == rid } + 1 }
+        ?.takeIf { it > 0 } ?: 0
+    return KakuyomuWorkDetail(work.copy(readPos = readPos), ordered)
 }
 
 /** Detail in one call: fetch the work page and parse it. */
@@ -532,7 +541,7 @@ private fun KakuyomuWork.toBookmarkJson(): JSONObject = JSONObject().apply {
     put("genre", genre); put("author", author); put("end", isCompleted)
     put("eps", episodeCount); put("pts", points); put("chars", charCount)
     put("pub", publishedAt); put("up", lastUpdate); put("cover", coverUrl)
-    put("r18", isSexual)
+    put("r18", isSexual); put("rp", readPos)
 }
 
 internal fun kakuyomuBookmarksJson(works: List<KakuyomuWork>): String =
@@ -556,7 +565,8 @@ internal fun parseKakuyomuBookmarks(json: String): List<KakuyomuWork> = try {
             // them until the next sync rewrites the rows.
             coverUrl = row.optString("cover")
                 .takeIf { it.startsWith("http") && !it.contains("/ogimage.png") } ?: "",
-            isSexual = row.optBoolean("r18")
+            isSexual = row.optBoolean("r18"),
+            readPos = row.optInt("rp")
         )
     }
 } catch (e: Exception) {
@@ -719,8 +729,12 @@ internal fun mergeKakuyomuBookmarks(
     pushedIds: Set<String> = emptySet()
 ): List<KakuyomuWork> {
     // site rows win for shared ids; local-only rows survive only if they
-    // were just pushed (otherwise the site's removal of them is the truth)
+    // were just pushed (otherwise the site's removal of them is the truth).
+    // readPos is LOCAL-only state (the follows query doesn't carry it) —
+    // the local mirror survives every sync.
     val ids = site.map { it.id }.toSet()
+    val posById = local.associate { it.id to it.readPos }
+    val merged = site.map { it.copy(readPos = posById[it.id] ?: it.readPos) }
     val survivors = local.filter { it.id !in ids && it.id in pushedIds }
-    return site + survivors
+    return merged + survivors
 }

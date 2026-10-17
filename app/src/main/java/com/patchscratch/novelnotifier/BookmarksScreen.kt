@@ -56,7 +56,10 @@ data class BookmarkRow(
     val subtitle: String,
     val coverUrl: String,
     val seriesUrl: String,
-    val open: () -> Unit
+    val open: () -> Unit,
+    // B2 unread parity: NU-home style badge + latest-chapter line.
+    val unread: Int = 0,
+    val latestLabel: String = ""
 )
 
 @Composable
@@ -106,7 +109,11 @@ fun BookmarkLibraryBody(
     onOpenDrawer: () -> Unit,
     onManageRow: ((BookmarkRow) -> Unit)? = null,
     isRefreshing: Boolean = false,
-    onRefresh: (() -> Unit)? = null
+    onRefresh: (() -> Unit)? = null,
+    // B2 NU-parity: sort menu anchor next to the layout toggle; the
+    // heading suffix labels the active mode ("" hides it).
+    sortControl: @Composable () -> Unit = {},
+    sortLabel: String = ""
 ) {
     val context = LocalContext.current
     var layoutMode by remember { mutableStateOf(loadLayoutMode(context.getSharedPreferences("novel_prefs", 0))) }
@@ -125,13 +132,14 @@ fun BookmarkLibraryBody(
                 singleLine = true,
                 modifier = Modifier.weight(1f)
             )
+            sortControl()
             LayoutToggle(layoutMode = layoutMode, onFlip = {
                 layoutMode = if (layoutMode == LAYOUT_GRID) LAYOUT_LIST else LAYOUT_GRID
                 saveLayoutMode(context.getSharedPreferences("novel_prefs", 0), layoutMode)
             })
         }
         Text(
-            heading,
+            heading + if (sortLabel.isNotBlank()) "  ·  $sortLabel" else "",
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
             maxLines = 1
@@ -146,6 +154,32 @@ fun BookmarkLibraryBody(
             }
         } else {
             BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+        }
+    }
+}
+
+/**
+ * B2 NU-parity: the home sort menu (the four NU modes). State and
+ * filtering live with the caller — this only renders the anchor and
+ * persists the choice.
+ */
+@Composable
+fun SortMenu(sortMode: String, onSort: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }) { Text("⇅") }
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            listOf(
+                SORT_ALPHA to t("Alphabetical", "五十音順"),
+                SORT_UNREAD_COUNT to t("Unread (Count)", "未読（件数）"),
+                SORT_UNREAD_AGE to t("Unread (Update Age)", "未読（更新順）"),
+                SORT_UPDATE_TIME to t("Update Time", "更新時間")
+            ).forEach { (mode, label) ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(if (sortMode == mode) "✓ $label" else label) },
+                    onClick = { open = false; onSort(mode) }
+                )
+            }
         }
     }
 }
@@ -193,19 +227,36 @@ private fun BookmarkRowsLayout(
                         onLongClick = { onManageRow?.invoke(row) }
                     )
                 ) {
-                    CoverThumb(
-                        url = row.coverUrl,
-                        seriesUrl = row.seriesUrl,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(3f / 4f)
-                    )
+                    Box {
+                        CoverThumb(
+                            url = row.coverUrl,
+                            seriesUrl = row.seriesUrl,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(3f / 4f)
+                        )
+                        if (row.unread > 0) {
+                            UnreadBadge(
+                                count = row.unread,
+                                modifier = Modifier.align(Alignment.TopEnd)
+                            )
+                        }
+                    }
                     Text(
                         row.title,
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 2,
                         modifier = Modifier.padding(top = 4.dp)
                     )
+                    if (row.latestLabel.isNotBlank()) {
+                        Text(
+                            row.latestLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                            maxLines = 1,
+                            modifier = Modifier.padding(top = 1.dp)
+                        )
+                    }
                     if (row.subtitle.isNotBlank()) {
                         Text(
                             row.subtitle,
@@ -233,15 +284,31 @@ private fun BookmarkRowsLayout(
                         modifier = Modifier.padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CoverThumb(
-                            url = row.coverUrl,
-                            seriesUrl = row.seriesUrl,
-                            modifier = Modifier.size(56.dp)
-                        )
+                        Box {
+                            CoverThumb(
+                                url = row.coverUrl,
+                                seriesUrl = row.seriesUrl,
+                                modifier = Modifier.size(56.dp)
+                            )
+                            if (row.unread > 0) {
+                                UnreadBadge(
+                                    count = row.unread,
+                                    modifier = Modifier.align(Alignment.TopEnd)
+                                )
+                            }
+                        }
                         Column(modifier = Modifier.padding(start = 12.dp)) {
                             Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
                             if (row.subtitle.isNotBlank()) {
                                 Text(row.subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
+                            if (row.latestLabel.isNotBlank()) {
+                                Text(
+                                    row.latestLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                                    maxLines = 1
+                                )
                             }
                         }
                     }

@@ -83,6 +83,16 @@ fun KakuyomuHome(
     // In-place category selection (NU list-switcher parity).
     var selectedCategoryId by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
+    // B2 NU-parity: the four sort modes over unread/position data.
+    val prefs = androidx.compose.ui.platform.LocalContext.current
+        .getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+    var sortMode by remember { mutableStateOf(loadSortMode(prefs)) }
+    fun sortWorks(list: List<KakuyomuWork>): List<KakuyomuWork> = when (sortMode) {
+        SORT_ALPHA -> list.sortedBy { it.title.lowercase() }
+        SORT_UNREAD_COUNT -> list.sortedByDescending { (it.episodeCount - it.readPos).coerceAtLeast(0) }
+        SORT_UPDATE_TIME -> list.sortedByDescending { it.lastUpdate }
+        else -> list.sortedByDescending { (it.episodeCount - it.readPos).coerceAtLeast(0) > 0 }  // unread age proxy
+    }
     androidx.compose.material3.ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -207,13 +217,15 @@ fun KakuyomuHome(
         BookmarkLibraryBody(
             heading = if (selectedCategoryId.isBlank()) t("All", "すべて") + " (${visible.size})"
             else (categories.cats.firstOrNull { it.id == selectedCategoryId }?.name ?: "") + " (${visible.size})",
-            rows = visible.map { work ->
+            rows = sortWorks(visible).map { work ->
                 BookmarkRow(
                     title = work.title,
                     subtitle = work.author,
                     coverUrl = work.coverUrl,
                     seriesUrl = work.url,
-                    open = { onOpenWork(work) }
+                    open = { onOpenWork(work) },
+                    unread = (work.episodeCount - work.readPos).coerceAtLeast(0),
+                    latestLabel = if (work.readPos > 0) t("read ep ", "読了 ") + "${work.readPos}" else ""
                 )
             },
             emptyMessage = if (bookmarks.isEmpty() && !loggedIn) t(
@@ -226,7 +238,14 @@ fun KakuyomuHome(
                 moveTo = visible.firstOrNull { it.url == row.seriesUrl }
             },
             isRefreshing = isRefreshing,
-            onRefresh = onRefresh
+            onRefresh = onRefresh,
+            sortControl = {
+                SortMenu(sortMode = sortMode, onSort = {
+                    sortMode = it
+                    saveSortMode(prefs, it)
+                })
+            },
+            sortLabel = sortModeLabel(sortMode)
         )
         moveTo?.let { work ->
             CategoryMoveDialog(
@@ -512,7 +531,10 @@ fun KakuyomuDetailScreen(
     onCreateAndMove: (workId: String, name: String) -> Unit = { _, _ -> },
     // MARK AS READ / checkbox: record the site reading-history at this
     // episode (manual). Framework B1's NU-parity write-back.
-    onSetHistory: (episodeId: String, ordinal: Int) -> Unit = { _, _ -> }
+    onSetHistory: (episodeId: String, ordinal: Int) -> Unit = { _, _ -> },
+    // B2: the detail fetch observed a site reading position — persist it in
+    // the local bookmark mirror (drives unread badges + Next Chapter).
+    onPositionMirrored: (readPos: Int) -> Unit = {}
 ) {
     val context = LocalContext.current
     var detail by remember { mutableStateOf<KakuyomuWorkDetail?>(null) }
@@ -533,6 +555,12 @@ fun KakuyomuDetailScreen(
                 // Offline reading: every successful fetch refreshes the ToC
                 // cache the offline fallback below reads back.
                 saveKakuyomuDetail(context, detail!!)
+                // B2 unread engine: the work page's Apollo cache carries the
+                // site reading position — mirror it into the local bookmark
+                // so badges/next-chapter work like NU's last_read.
+                if (detail!!.work.readPos > 0) {
+                    onPositionMirrored(detail!!.work.readPos)
+                }
             }
             if (detail == null) error = "ToC を読み込めませんでした"
         } catch (e: Exception) {
@@ -564,9 +592,9 @@ fun KakuyomuDetailScreen(
     // ---- NU-model detail (framework B1): shared template, exact NU
     // anatomy; Kakuyomu supplies state + site extras only.
     val episodes = detail?.episodes ?: emptyList()
-    // Reading position: site history isn't mirrored locally yet (B2) —
-    // the reader writes it on open; MARK AS READ records it on demand.
-    val position = 0
+    // Reading position: the local mirror (B2) — reader callbacks and the
+    // work-page ReadingHistory both keep work.readPos in step.
+    val position = work.readPos
     val nextOrdinal = if (episodes.isNotEmpty()) (position + 1).coerceAtMost(episodes.size) else 0
     val nextEp = episodes.getOrNull(nextOrdinal - 1)
 
@@ -593,7 +621,10 @@ fun KakuyomuDetailScreen(
             },
             statusLine = error,
             nextChapterLabel = when {
-                nextEp != null -> "第${nextOrdinal}話 ${nextEp.title}"
+                // Kakuyomu episode titles usually already carry 第N話 —
+                // don't double it.
+                nextEp != null -> if (nextEp.title.startsWith("第")) nextEp.title
+                    else "第${nextOrdinal}話 ${nextEp.title}"
                 storedList.isNotEmpty() -> t("Read from start", "最初から読む") + " (${storedList.size} " + t("stored", "保存済み") + ")"
                 loading -> t("Loading…", "読み込み中…")
                 else -> "No chapter link found"

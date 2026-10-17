@@ -476,22 +476,6 @@ fun NovelListScreen(
 }
 
 @Composable
-private fun UnreadBadge(count: Int, modifier: Modifier = Modifier) {
-    if (count <= 0) return
-    Box(
-        modifier = modifier
-            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
-    ) {
-        Text(
-            text = count.toString(),
-            color = MaterialTheme.colorScheme.onPrimary,
-            style = MaterialTheme.typography.labelSmall
-        )
-    }
-}
-
-@Composable
 private fun NovelGridTile(novel: Novel, seriesUrl: String, unread: Int, onClick: () -> Unit) {
     Column(modifier = Modifier.clickable(onClick = onClick)) {
         Box {

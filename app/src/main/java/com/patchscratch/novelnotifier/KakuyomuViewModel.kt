@@ -164,10 +164,29 @@ class KakuyomuViewModel(app: Application) : AndroidViewModel(app) {
     /** Reading-history callback from the reader (manual sets show status). */
     fun recordReadingHistory(episodeId: String, ordinal: Int, manual: Boolean) {
         viewModelScope.launch {
-            val ok = kakuyomuRecordReadingHistory(episodeId, "p" + ordinal)
-            if (manual) {
-                status = if (ok) "Reading position set" else "Set failed — try again"
+            // Crash fix (2026-10-16): un-caught network failure here
+            // killed the app offline (same class as the shiori crash).
+            try {
+                val ok = kakuyomuRecordReadingHistory(episodeId, "p" + ordinal)
+                if (manual) {
+                    status = if (ok) "Reading position set" else "Set failed — try again"
+                }
+                mirrorPosition(ordinal)
+            } catch (e: Exception) {
+                DebugLog.log("KAKUYOMU", "history record skipped (offline?)", e)
+                status = t("Offline — position sets when back online", "オフライン — オンライン復帰時に設定されます")
             }
         }
+    }
+
+    /**
+     * B2 unread engine: persist the reading position into the local
+     * bookmark mirror (site rows don't carry it; mergeKakuyomuBookmarks
+     * preserves it across syncs). Drives badges + Next Chapter.
+     */
+    fun mirrorPosition(readPos: Int) {
+        val id = selectedWork?.id ?: return
+        bookmarks = bookmarks.map { if (it.id == id) it.copy(readPos = readPos) else it }
+        saveKakuyomuBookmarks(prefs, bookmarks)
     }
 }
