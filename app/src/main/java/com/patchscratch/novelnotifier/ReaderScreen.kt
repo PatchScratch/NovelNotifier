@@ -178,6 +178,11 @@ fun ReaderScreen(
     var extractTick by remember(target) { mutableIntStateOf(0) } // finished loads
     var retryKey by remember(target) { mutableIntStateOf(0) } // manual re-extract
     var extractResult by remember(target) { mutableStateOf<ChapterExtract?>(null) }
+    // AlphaPolis logged-in pages fill #novelBody only in a VISIBLE WebView
+    // (the site's paginated viewer ignores hidden views). When the headless
+    // path comes up empty we hop to WEB for the load, extract, then return
+    // the user to the text view automatically.
+    var alpWebHop by remember(target) { mutableStateOf(false) }
     var extractFailed by remember(target) { mutableStateOf(false) }
     var extracting by remember(target) { mutableStateOf(false) }
     /** True while the chapter host is showing a Cloudflare challenge. */
@@ -452,6 +457,10 @@ fun ReaderScreen(
         extracting = true
         wv.evaluateJavascript(chapterExtractJs()) { res ->
             extractResult = parseChapterExtract(res)
+            if (extractResult != null && alpWebHop && viewMode == READER_VIEW_WEB) {
+                alpWebHop = false
+                viewMode = READER_VIEW_TEXT
+            }
             if (extractResult != null) extractFailed = false
             if (extractResult != null) {
                 DebugLog.log("READER", "extracted ${extractResult!!.paragraphs.size} paragraphs")
@@ -615,16 +624,18 @@ fun ReaderScreen(
                 }.onFailure {
                     DebugLog.log("READER", "alphapolis headless failed", it)
                 }
-                if (extractResult == null) {
-                    if (stored != null) {
-                        extractResult = stored
-                        offlineCopy = true
-                    }
-                    // else: fall through to the WebView ladder (logged-in
-                    // AlphaPolis fills #novelBody client-side; the hasFocus
-                    // override keeps content-viewer.js from clearing it).
+                if (extractResult == null && stored != null) {
+                    extractResult = stored
+                    offlineCopy = true
                 }
                 if (extractResult != null) return@LaunchedEffect
+                // Empty (typical logged-in shape): the site's viewer only
+                // fills the body in a visible WebView — hop to WEB for this
+                // load; the ladder extracts and flips back to TEXT.
+                alpWebHop = true
+                viewMode = READER_VIEW_WEB
+                webViewRef.value?.reload()
+                return@LaunchedEffect
             }
             if (stored != null) {
                 extractResult = stored
