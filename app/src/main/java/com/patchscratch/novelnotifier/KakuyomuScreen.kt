@@ -509,7 +509,10 @@ fun KakuyomuDetailScreen(
     onToggleBookmark: () -> Unit = {},
     categories: CategoryState = CategoryState(),
     onMove: (workId: String, catId: String?) -> Unit = { _, _ -> },
-    onCreateAndMove: (workId: String, name: String) -> Unit = { _, _ -> }
+    onCreateAndMove: (workId: String, name: String) -> Unit = { _, _ -> },
+    // MARK AS READ / checkbox: record the site reading-history at this
+    // episode (manual). Framework B1's NU-parity write-back.
+    onSetHistory: (episodeId: String, ordinal: Int) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     var detail by remember { mutableStateOf<KakuyomuWorkDetail?>(null) }
@@ -558,202 +561,143 @@ fun KakuyomuDetailScreen(
         )
     }
 
-    // One scrollable surface (same fix as Syosetu's detail): header, intro,
-    // catchphrase, tags, buttons and every episode share a single
-    // LazyColumn so translated metadata can't box the chapter list.
-    LazyColumn(modifier = Modifier.fillMaxSize().screenInsets()) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
-            }
-        }
-        item {
-            // Cover thumb beside the title, NU-style — real art when the work
-            // has it, generated art once CoverStore has one, else the app's
-            // standard no-cover image.
-            Row(modifier = Modifier.padding(horizontal = 16.dp)) {
-                CoverThumb(
-                    url = work.coverUrl,
-                    seriesUrl = work.url,
-                    modifier = Modifier.padding(top = 8.dp, end = 12.dp).width(84.dp).height(112.dp),
-                    fullscreen = true
-                )
-                Column {
-                    Text(
-                        (if (work.isSexual) "R18 · " else "") + work.title,
-                        style = MaterialTheme.typography.headlineSmall
-                    )
-                    TranslatedHint(text = work.title, style = MaterialTheme.typography.bodySmall)
-                    // NU-layout action row (CHANGE LIST parity): bookmark
-                    // button + category picker live UNDER the title block,
-                    // never in the cramped header.
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 4.dp)
-                    ) {
-                        Button(onClick = onToggleBookmark) {
-                            Text(
-                                if (bookmarked) t("⚑ BOOKMARKED", "⚑ ブックマーク済み")
-                                else t("⚑ BOOKMARK", "⚑ ブックマーク")
-                            )
-                        }
-                        TextButton(onClick = { showMove = true }) {
-                            Text(
-                                (categories.cats.firstOrNull { it.id == categories.assign[work.id] }?.name
-                                    ?: t("All", "すべて")) + " ▾"
-                            )
-                        }
-                    }
-                    Text(
-                        "${work.author} ・ ${kakuyomuGenreName(work.genre)} ・ " +
-                            kakuyomuEpisodeLabel(work.episodeCount) + " ・ " + kakuyomuStatusLabel(work.isCompleted),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-        }
-        if (work.catchphrase.isNotBlank()) {
-            item {
-                TranslatedInfoText(
-                    text = work.catchphrase,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
-                )
-            }
-        }
-        val tags = detail?.work?.tags ?: ""
-        if (tags.isNotBlank()) {
-            item {
-                TranslatedInfoText(
-                    text = tags,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
-                )
-            }
-        }
-        val intro = detail?.work?.introduction ?: ""
-        if (intro.isNotBlank()) {
-            item {
-                TranslatedInfoText(
-                    text = intro,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-        }
-        item {
-            // Translation coverage (Wayne's 2026-10-17 ask): how many stored
-            // chapters carry an AI translation. Shown once anything is stored.
-            var xlated by remember(work.id) { mutableStateOf(-1 to -1) }
-            LaunchedEffect(work.id) {
-                xlated = withContext(Dispatchers.IO) {
-                    EpubStore.translatedCount(context, work.url) to EpubStore.storedCount(context, work.url)
-                }
-            }
-            val (xn, xm) = xlated
-            if (xm > 0) {
-                Text(
-                    if (xn >= xm) t("✓ All ", "✓ 全") + "$xm" + t(" chapters translated", "話 翻訳済み")
-                    else t("Translated: ", "翻訳済み：") + "$xn/$xm" + t(" chapters", "話"),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-            }
-        }
-        item {
-            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-                TextButton(
-                    onClick = {
-                        if (detail?.episodes?.isNotEmpty() == true) {
-                            val chapters = toChapters()
-                            if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
-                        } else if (storedList.isNotEmpty()) {
-                            // Offline with no ToC at all — read what's stored.
-                            onOpenReader(storedList, 0)
-                        }
-                    },
-                    enabled = detail?.episodes?.isNotEmpty() == true || storedList.isNotEmpty()
-                ) { Text(t("Read from start", "最初から読む")) }
-                TextButton(
-                    onClick = {
-                        val chapters = toChapters()
-                        if (chapters.isNotEmpty()) {
-                            EpubBulkService.start(
-                                context,
-                                EpubBulkService.BulkJob(
-                                    seriesTitle = work.title,
-                                    seriesUrl = work.url,
-                                    chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
-                                    meta = (detail?.work ?: work).toBookMeta()
-                                )
-                            )
-                        }
-                    },
-                    enabled = detail?.episodes?.isNotEmpty() == true
-                ) { Text(t("Download all", "全部ダウンロード") + " (" + kakuyomuEpisodeLabel(detail?.episodes?.size ?: work.episodeCount) + ")") }
-            }
-        }
-        item {
-            GenerateCoverButton(
-                context = context,
-                seriesUrl = work.url,
-                title = work.title,
-                author = work.author,
-                genre = kakuyomuGenreName(work.genre),
-                synopsis = (detail?.work?.introduction ?: "").ifBlank { work.catchphrase },
-                onGenerated = {}
-            )
-        }
-        if (loading) {
-            item { CircularProgressIndicator(modifier = Modifier.padding(24.dp)) }
-        }
-        if (error.isNotBlank()) {
-            item { Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
-        }
-        val list = detail?.episodes ?: emptyList()
-        items(list, key = { it.id }) { ep ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        val chapters = toChapters()
-                        onOpenReader(chapters, list.indexOf(ep))
-                    }
-                    .padding(horizontal = 20.dp, vertical = 10.dp)
-            ) {
-                if (ep.chapterTitle.isNotBlank()) {
-                    Text(
-                        ep.chapterTitle,
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-                }
-                Text("${list.indexOf(ep) + 1}. ${ep.title}", style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-        // Offline ToC of last resort: no live/cached ToC, but the offline
-        // books hold chapters — list exactly what can be opened.
-        if (list.isEmpty() && storedList.isNotEmpty()) {
-            item {
-                Text(
-                    t("Stored chapters (offline)", "保存済みの話（オフライン）") + " (${storedList.size})",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
-            items(storedList, key = { it.url }) { rel ->
-                Text(
-                    rel.chapter,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onOpenReader(storedList, storedList.indexOf(rel)) }
-                        .padding(horizontal = 20.dp, vertical = 10.dp)
-                )
-            }
-        }
+    // ---- NU-model detail (framework B1): shared template, exact NU
+    // anatomy; Kakuyomu supplies state + site extras only.
+    val episodes = detail?.episodes ?: emptyList()
+    // Reading position: site history isn't mirrored locally yet (B2) —
+    // the reader writes it on open; MARK AS READ records it on demand.
+    val position = 0
+    val nextOrdinal = if (episodes.isNotEmpty()) (position + 1).coerceAtMost(episodes.size) else 0
+    val nextEp = episodes.getOrNull(nextOrdinal - 1)
+
+    fun toChaptersOrNull(): List<Release>? = if (episodes.isNotEmpty()) toChapters() else null
+    fun openAt(index: Int) {
+        val chapters = toChaptersOrNull()
+        if (chapters != null && index < chapters.size) onOpenReader(chapters, index)
+        else if (index < storedList.size) onOpenReader(storedList, index)
     }
+
+    SeriesDetailScreen(
+        state = SeriesDetailState(
+            seriesUrl = work.url,
+            onBack = onBack,
+            coverUrl = work.coverUrl,
+            coverSeriesUrl = work.url,
+            title = work.title,
+            author = work.author,
+            groupBadge = categories.cats.firstOrNull { it.id == categories.assign[work.id] }?.name.orEmpty(),
+            changeGroupLabel = if (bookmarked) t("CHANGE LIST", "リスト変更") else t("⚑ BOOKMARK", "⚑ ブックマーク"),
+            onChangeGroup = {
+                if (bookmarked) showMove = true
+                else onToggleBookmark()
+            },
+            statusLine = error,
+            nextChapterLabel = when {
+                nextEp != null -> "第${nextOrdinal}話 ${nextEp.title}"
+                storedList.isNotEmpty() -> t("Read from start", "最初から読む") + " (${storedList.size} " + t("stored", "保存済み") + ")"
+                loading -> t("Loading…", "読み込み中…")
+                else -> "No chapter link found"
+            },
+            nextChapterEnabled = nextEp != null || storedList.isNotEmpty(),
+            onReadNext = { if (nextEp != null) openAt(nextOrdinal - 1) else openAt(0) },
+            onMarkRead = {
+                nextEp?.let { onSetHistory(it.id, nextOrdinal) }
+            },
+            synopsis = (detail?.work?.introduction ?: "").ifBlank { work.catchphrase },
+            typeLine = "Genre: ${kakuyomuGenreName(work.genre)} ・ " +
+                (if (work.isCompleted) t("Status: Completed", "状態: 完結") else t("Status: Ongoing", "状態: 連載中")) +
+                " ・ ${kakuyomuEpisodeLabel(if (episodes.isNotEmpty()) episodes.size else work.episodeCount)}",
+            genres = kakuyomuGenreName(work.genre),
+            tags = detail?.work?.tags ?: "",
+            episodes = if (episodes.isNotEmpty()) episodes.mapIndexed { i, ep ->
+                SeriesEpisodeRow(
+                    ordinal = i + 1,
+                    label = "第${i + 1}話",
+                    title = ep.title,
+                    date = ep.publishedAt.take(10),
+                    isRead = false,
+                    onOpen = { openAt(i) },
+                    onCheck = { onSetHistory(ep.id, i + 1) }
+                )
+            } else storedList.mapIndexed { i, rel ->
+                SeriesEpisodeRow(
+                    ordinal = i + 1,
+                    label = rel.chapter,
+                    title = "",
+                    date = "",
+                    isRead = false,
+                    onOpen = { openAt(i) }
+                )
+            },
+            readOrdinal = position,
+            openOnSiteLabel = t("Open on Kakuyomu", "カクヨムで開く"),
+            loading = loading && episodes.isEmpty() && storedList.isEmpty(),
+            infoExtra = {
+                Column {
+                    if (work.catchphrase.isNotBlank() && (detail?.work?.introduction ?: "").isNotBlank()) {
+                        Text(work.catchphrase, style = MaterialTheme.typography.bodySmall)
+                    }
+                    // Translation coverage (Wayne's 2026-10-17 ask).
+                    var xlated by remember(work.id) { mutableStateOf(-1 to -1) }
+                    LaunchedEffect(work.id) {
+                        xlated = withContext(Dispatchers.IO) {
+                            EpubStore.translatedCount(context, work.url) to EpubStore.storedCount(context, work.url)
+                        }
+                    }
+                    val (xn, xm) = xlated
+                    if (xm > 0) {
+                        Text(
+                            if (xn >= xm) t("✓ All ", "✓ 全") + "$xm" + t(" chapters translated", "話 翻訳済み")
+                            else t("Translated: ", "翻訳済み：") + "$xn/$xm" + t(" chapters", "話"),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                    Row(modifier = Modifier.padding(top = 4.dp)) {
+                        TextButton(
+                            onClick = { openAt(0) },
+                            enabled = episodes.isNotEmpty() || storedList.isNotEmpty()
+                        ) { Text(t("Read from start", "最初から読む")) }
+                        TextButton(
+                            onClick = {
+                                val chapters = toChaptersOrNull() ?: return@TextButton
+                                if (chapters.isNotEmpty()) {
+                                    EpubBulkService.start(
+                                        context,
+                                        EpubBulkService.BulkJob(
+                                            seriesTitle = work.title,
+                                            seriesUrl = work.url,
+                                            chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
+                                            meta = (detail?.work ?: work).toBookMeta()
+                                        )
+                                    )
+                                }
+                            },
+                            enabled = episodes.isNotEmpty()
+                        ) { Text(t("Download all", "全部ダウンロード") + " (" + kakuyomuEpisodeLabel(detail?.episodes?.size ?: work.episodeCount) + ")") }
+                    }
+                    GenerateCoverButton(
+                        context = context,
+                        seriesUrl = work.url,
+                        title = work.title,
+                        author = work.author,
+                        genre = kakuyomuGenreName(work.genre),
+                        synopsis = (detail?.work?.introduction ?: "").ifBlank { work.catchphrase },
+                        onGenerated = {}
+                    )
+                }
+            },
+            releasesFooter = {
+                if (episodes.isEmpty() && storedList.isEmpty()) {
+                    Text(
+                        if (loading) t("Loading episodes…", "各話を読み込み中…") else t("No chapters cached yet.", "各話はまだありません。"),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
+            }
+        )
+    )
 
     if (showMove) {
         CategoryMoveDialog(

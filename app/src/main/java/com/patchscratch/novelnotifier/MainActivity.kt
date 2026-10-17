@@ -380,6 +380,9 @@ fun NovelApp(
                     val created = kakuyomu.categories.cats.lastOrNull()
                     if (created != null) kakuyomu.moveToCategory(workId, created.id)
                 },
+                onSetHistory = { episodeId, ordinal ->
+                    kakuyomu.recordReadingHistory(episodeId, ordinal, manual = true)
+                },
                 onBack = {
                     kakuyomu.closeDetail()
                     router.pop()
@@ -418,6 +421,10 @@ fun NovelApp(
                 addFormLoading = syosetu.addFormLoading,
                 onLoadAddForm = { syosetu.loadAddBookmarkForm(novel.ncode) },
                 onAddBookmark = { form, catId -> syosetu.addBookmarkWithCategory(form, catId) },
+                onSetShiori = { ep ->
+                    syosetu.bookmarks.firstOrNull { it.url == novel.url }
+                        ?.let { bm -> syosetu.updateShioriManual(bm, ep) }
+                },
                 onBack = {
                     syosetu.closeDetail()
                     router.pop()

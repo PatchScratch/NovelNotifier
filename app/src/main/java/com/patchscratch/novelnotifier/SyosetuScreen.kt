@@ -435,7 +435,10 @@ fun SyosetuDetailScreen(
     addForm: SyosetuAddBookmarkForm? = null,
     addFormLoading: Boolean = false,
     onLoadAddForm: () -> Unit = {},
-    onAddBookmark: (SyosetuAddBookmarkForm, Int) -> Unit = { _, _ -> }
+    onAddBookmark: (SyosetuAddBookmarkForm, Int) -> Unit = { _, _ -> },
+    // MARK AS READ / checkbox: set the site しおり to this episode (manual
+    // may move back). Framework B1's NU-parity write-back.
+    onSetShiori: (episodeNo: Int) -> Unit = {}
 ) {
     val context = LocalContext.current
     var toc by remember { mutableStateOf<SyosetuToc?>(null) }
@@ -520,284 +523,184 @@ fun SyosetuDetailScreen(
         Release(chapter = "c${ep.number}", group = "", date = "", url = url)
     }
 
-    // One scrollable surface: header, synopsis (JP + translation), buttons
-    // and every episode share a single LazyColumn — a tall translated
-    // synopsis must not squeeze the chapter list into a small box.
-    LazyColumn(modifier = Modifier.fillMaxSize().screenInsets()) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onBack) { Text("‹ " + t("Discover", "Discover")) }
-            }
-        }
-        item {
-            // Cover thumb beside the title, NU-style — shows generated art
-            // once CoverStore has one (Syosetu itself serves no covers).
-            Row(modifier = Modifier.padding(horizontal = 16.dp)) {
-                CoverThumb(
-                    url = "",
-                    seriesUrl = novel.url,
-                    modifier = Modifier.padding(top = 8.dp, end = 12.dp).width(84.dp).height(112.dp),
-                    fullscreen = true
+    // ---- NU-model detail (framework B1): the shared template renders the
+    // exact NU anatomy — header + tabs + INFO cards + RELEASES — and this
+    // screen only assembles the state. Site extras (translation coverage,
+    // offline/download rows, AI cover) ride the infoExtra slot; the
+    // bookmark 分類 card rides belowHeader like NU's Change-list card.
+    val episodes = toc?.episodes ?: emptyList()
+    val position = bookmark?.shioriPos ?: 0
+    val nextOrdinal = if (episodes.isNotEmpty()) (position + 1).coerceAtMost(episodes.size) else 0
+    val nextEp = episodes.getOrNull(nextOrdinal - 1)
+
+    fun openAt(index: Int) {
+        if (episodes.isNotEmpty()) onOpenReader(toChapters(), index)
+        else if (index < storedList.size) onOpenReader(storedList, index)
+    }
+
+    SeriesDetailScreen(
+        state = SeriesDetailState(
+            seriesUrl = novel.url,
+            onBack = onBack,
+            coverUrl = "",
+            coverSeriesUrl = novel.url,
+            title = meta.title,
+            author = meta.writer,
+            groupBadge = bookmark?.category.orEmpty(),
+            changeGroupLabel = if (bookmark != null) t("CHANGE LIST", "リスト変更")
+            else t("★ BOOKMARK", "★ ブックマーク"),
+            onChangeGroup = {
+                showBookmarkCard = !showBookmarkCard
+                if (showBookmarkCard) onLoadAddForm()
+            },
+            statusLine = error,
+            nextChapterLabel = when {
+                nextEp != null -> "第${nextEp.number}話 ${nextEp.title}"
+                storedList.isNotEmpty() -> t("Read from start", "最初から読む") + " (${storedList.size} " + t("stored", "保存済み") + ")"
+                loading -> t("Loading…", "読み込み中…")
+                else -> "No chapter link found"
+            },
+            nextChapterEnabled = nextEp != null || storedList.isNotEmpty(),
+            onReadNext = { if (nextEp != null) openAt(nextOrdinal - 1) else openAt(0) },
+            onMarkRead = { if (nextEp != null) onSetShiori(nextEp.number) },
+            synopsis = meta.story,
+            typeLine = "Genre: ${syosetuGenreName(meta.genreCode)} ・ Status: ${syosetuStatusLabel(meta.isCompleted)} ・ ${syosetuEpisodeLabel(meta.episodeCount)} ・ " + t("Updated", "最終更新") + " ${meta.lastUpdate.take(10)}",
+            genres = syosetuGenreName(meta.genreCode),
+            tags = meta.keywords,
+            episodes = if (episodes.isNotEmpty()) episodes.map { ep ->
+                SeriesEpisodeRow(
+                    ordinal = ep.number,
+                    label = "第${ep.number}話",
+                    title = ep.title,
+                    date = "",
+                    isRead = ep.number == position,
+                    onOpen = { openAt(ep.number - 1) },
+                    onCheck = { onSetShiori(ep.number) }
                 )
-                Column {
-                    Text(meta.title, style = MaterialTheme.typography.headlineSmall)
-                    TranslatedHint(text = meta.title, style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        "${meta.writer} ・ ${syosetuGenreName(meta.genreCode)} ・ " +
-                            syosetuEpisodeLabel(meta.episodeCount) + " ・ " + syosetuStatusLabel(meta.isCompleted),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                    Text(
-                        t("Updated", "最終更新") + " ${meta.lastUpdate.take(10)}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    // NU-layout action row: filled button under the title
-                    // block (CHANGE LIST parity) opening the 分類 picker.
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 4.dp)
+            } else storedList.mapIndexed { i, rel ->
+                // Offline ToC of last resort: no live/stale ToC, but the
+                // offline books hold chapters — list exactly what can open.
+                SeriesEpisodeRow(
+                    ordinal = i + 1,
+                    label = rel.chapter,
+                    title = "",
+                    date = "",
+                    isRead = false,
+                    onOpen = { openAt(i) }
+                )
+            },
+            readOrdinal = position,
+            openOnSiteLabel = t("Open on syosetu.com", "小説家になろうで開く"),
+            loading = loading && episodes.isEmpty() && storedList.isEmpty(),
+            belowHeader = {
+                if (showBookmarkCard) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     ) {
-                        Button(onClick = {
-                            showBookmarkCard = !showBookmarkCard
-                            if (showBookmarkCard) onLoadAddForm()
-                        }) {
-                            Text(
-                                if (bookmark != null) t("★ BOOKMARKED", "★ ブックマーク済み")
-                                else t("★ BOOKMARK", "★ ブックマーク")
-                            )
-                        }
-                        if (bookmark != null && bookmark.category.isNotBlank()) {
-                            Text(
-                                bookmark.category,
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(start = 8.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        if (showBookmarkCard) {
-            item {
-                // NU's Change-list card pattern: inline choices, one tap.
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(t("Bookmark 分類", "ブックマーク分類"), style = MaterialTheme.typography.titleMedium)
-                        when {
-                            addFormLoading -> Text(
-                                t("Loading categories…", "分類を読み込み中…"),
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                            addForm == null -> Text(
-                                t("Could not load the form — tap ★ again to retry.", "フォームを読み込めませんでした — ★をもう一度タップして再試行。"),
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                            addForm!!.categories.isEmpty() -> Text(
-                                t("Log in from Settings to bookmark on Syosetu.", "設定からログインするとSyosetuでブックマークできます。"),
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                            else -> addForm!!.categories.forEach { (id, name) ->
-                                TextButton(onClick = {
-                                    onAddBookmark(addForm!!, id)
-                                    showBookmarkCard = false
-                                }) {
-                                    Text((if (bookmark?.category == name) "✓ " else "") + name)
-                                }
-                            }
-                        }
-                        if (bookmark != null) {
-                            TextButton(onClick = {
-                                onRemoveBookmark()
-                                showBookmarkCard = false
-                            }) {
-                                Text(t("Remove bookmark", "ブックマーク解除"), color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                        TextButton(onClick = { showBookmarkCard = false }) {
-                            Text(t("Close", "閉じる"))
-                        }
-                    }
-                }
-            }
-        }
-        if (meta.story.isNotBlank()) {
-            item {
-                TranslatedInfoText(
-                    text = meta.story,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-        }
-        item {
-            // Translation coverage (Wayne's 2026-10-17 ask): how many stored
-            // chapters carry an AI translation. Shown once anything is stored.
-            var xlated by remember(novel.ncode) { mutableStateOf(-1 to -1) }
-            LaunchedEffect(novel.ncode) {
-                xlated = withContext(Dispatchers.IO) {
-                    EpubStore.translatedCount(context, novel.url) to EpubStore.storedCount(context, novel.url)
-                }
-            }
-            val (xn, xm) = xlated
-            if (xm > 0) {
-                Text(
-                    if (xn >= xm) t("✓ All ", "✓ 全") + "$xm" + t(" chapters translated", "話 翻訳済み")
-                    else t("Translated: ", "翻訳済み：") + "$xn/$xm" + t(" chapters", "話"),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp)
-                )
-            }
-        }
-        item {
-            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-                TextButton(
-                    onClick = {
-                        if (toc?.episodes?.isNotEmpty() == true) {
-                            val chapters = toChapters()
-                            if (chapters.isNotEmpty()) onOpenReader(chapters, 0)
-                        } else if (storedList.isNotEmpty()) {
-                            // Offline with no ToC at all — read what's stored.
-                            onOpenReader(storedList, 0)
-                        }
-                    },
-                    enabled = toc?.episodes?.isNotEmpty() == true || storedList.isNotEmpty()
-                ) { Text(t("Read from start", "最初から読む")) }
-                TextButton(
-                    onClick = {
-                        val chapters = toChapters()
-                        if (chapters.isNotEmpty()) {
-                            EpubBulkService.start(
-                                context,
-                                EpubBulkService.BulkJob(
-                                    seriesTitle = novel.title,
-                                    seriesUrl = novel.url,
-                                    chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
-                                    meta = novel.toBookMeta()
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(t("Bookmark 分類", "ブックマーク分類"), style = MaterialTheme.typography.titleMedium)
+                            when {
+                                addFormLoading -> Text(
+                                    t("Loading categories…", "分類を読み込み中…"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(top = 8.dp)
                                 )
-                            )
-                        }
-                    },
-                    enabled = toc?.episodes?.isNotEmpty() == true
-                ) { Text(t("Download all", "全部ダウンロード") + " (" + syosetuEpisodeLabel(novel.episodeCount) + ")") }
-            }
-        }
-        if (bookmark != null) {
-            item {
-                var showCats by remember { mutableStateOf(false) }
-                var confirmDelete by remember { mutableStateOf(false) }
-                Row(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    TextButton(onClick = { showCats = true }) {
-                        Text(t("Category", "カテゴリ") + ": " + bookmark.category + " ▾")
-                    }
-                    TextButton(onClick = { confirmDelete = true }) {
-                        Text(t("Remove bookmark", "ブックマーク解除"), color = MaterialTheme.colorScheme.error)
-                    }
-                }
-                if (showCats) {
-                    AlertDialog(
-                        onDismissRequest = { showCats = false },
-                        title = { Text(t("Change category", "カテゴリ変更")) },
-                        text = {
-                            Column {
-                                categories.forEach { c ->
-                                    TextButton(onClick = { showCats = false; onChangeCategory(c.id) }) {
-                                        Text(c.name + " (" + c.count + ")")
+                                addForm == null -> Text(
+                                    t("Could not load the form — tap ★ again to retry.", "フォームを読み込めませんでした — ★をもう一度タップして再試行。"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                                addForm!!.categories.isEmpty() -> Text(
+                                    t("Log in from Settings to bookmark on Syosetu.", "設定からログインするとSyosetuでブックマークできます。"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                                else -> addForm!!.categories.forEach { (id, name) ->
+                                    TextButton(onClick = {
+                                        onAddBookmark(addForm!!, id)
+                                        showBookmarkCard = false
+                                    }) {
+                                        Text((if (bookmark?.category == name) "✓ " else "") + name)
                                     }
                                 }
-                                if (categories.isEmpty()) {
-                                    Text(t("Sync bookmarks once first (open the drawer).", "先にドロワーからブックマークを同期してください。"), style = MaterialTheme.typography.bodySmall)
+                            }
+                            if (bookmark != null) {
+                                TextButton(onClick = {
+                                    onRemoveBookmark()
+                                    showBookmarkCard = false
+                                }) {
+                                    Text(t("Remove bookmark", "ブックマーク解除"), color = MaterialTheme.colorScheme.error)
                                 }
                             }
-                        },
-                        confirmButton = {
-                            TextButton(onClick = { showCats = false }) { Text(t("Cancel", "キャンセル")) }
-                        }
-                    )
-                }
-                if (confirmDelete) {
-                    AlertDialog(
-                        onDismissRequest = { confirmDelete = false },
-                        title = { Text(t("Remove bookmark?", "ブックマークを解除しますか？")) },
-                        text = { Text(novel.title) },
-                        confirmButton = {
-                            TextButton(onClick = { confirmDelete = false; onRemoveBookmark() }) {
-                                Text(t("Remove", "解除"), color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = { showBookmarkCard = false }) {
+                                Text(t("Close", "閉じる"))
                             }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { confirmDelete = false }) { Text(t("Cancel", "キャンセル")) }
                         }
+                    }
+                }
+            },
+            infoExtra = {
+                Column {
+                    // Translation coverage (Wayne's 2026-10-17 ask).
+                    var xlated by remember(novel.ncode) { mutableStateOf(-1 to -1) }
+                    LaunchedEffect(novel.ncode) {
+                        xlated = withContext(Dispatchers.IO) {
+                            EpubStore.translatedCount(context, novel.url) to EpubStore.storedCount(context, novel.url)
+                        }
+                    }
+                    val (xn, xm) = xlated
+                    if (xm > 0) {
+                        Text(
+                            if (xn >= xm) t("✓ All ", "✓ 全") + "$xm" + t(" chapters translated", "話 翻訳済み")
+                            else t("Translated: ", "翻訳済み：") + "$xn/$xm" + t(" chapters", "話"),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                    Row(modifier = Modifier.padding(top = 4.dp)) {
+                        TextButton(
+                            onClick = { openAt(0) },
+                            enabled = episodes.isNotEmpty() || storedList.isNotEmpty()
+                        ) { Text(t("Read from start", "最初から読む")) }
+                        TextButton(
+                            onClick = {
+                                if (episodes.isNotEmpty()) {
+                                    EpubBulkService.start(
+                                        context,
+                                        EpubBulkService.BulkJob(
+                                            seriesTitle = novel.title,
+                                            seriesUrl = novel.url,
+                                            chapters = toChapters().map { EpubBulkService.BulkChapter(it.url, it.chapter) },
+                                            meta = novel.toBookMeta()
+                                        )
+                                    )
+                                }
+                            },
+                            enabled = episodes.isNotEmpty()
+                        ) { Text(t("Download all", "全部ダウンロード") + " (" + syosetuEpisodeLabel(novel.episodeCount) + ")") }
+                    }
+                    GenerateCoverButton(
+                        context = context,
+                        seriesUrl = novel.url,
+                        title = novel.title,
+                        author = novel.writer,
+                        genre = syosetuGenreName(novel.genreCode),
+                        synopsis = novel.story,
+                        onGenerated = {}
+                    )
+                }
+            },
+            releasesFooter = {
+                if (episodes.isEmpty() && storedList.isEmpty()) {
+                    Text(
+                        if (loading) t("Loading episodes…", "各話を読み込み中…") else t("No chapters cached yet.", "各話はまだありません。"),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(16.dp)
                     )
                 }
             }
-        }
-        item {
-            GenerateCoverButton(
-                context = context,
-                seriesUrl = novel.url,
-                title = novel.title,
-                author = novel.writer,
-                genre = syosetuGenreName(novel.genreCode),
-                synopsis = novel.story,
-                onGenerated = {}
-            )
-        }
-        if (loading) {
-            item {
-                CircularProgressIndicator(modifier = Modifier.padding(24.dp))
-            }
-        }
-        if (error.isNotBlank()) {
-            item {
-                Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
-            }
-        }
-        val list = toc?.episodes ?: emptyList()
-        items(list, key = { it.number }) { ep ->
-            Text(
-                "${ep.number}. ${ep.title}",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        val chapters = toChapters()
-                        onOpenReader(chapters, ep.number - 1)
-                    }
-                    .padding(horizontal = 20.dp, vertical = 10.dp)
-            )
-        }
-        // Offline ToC of last resort: no live/stale ToC, but the offline
-        // books hold chapters — list exactly what can be opened.
-        if (list.isEmpty() && storedList.isNotEmpty()) {
-            item {
-                Text(
-                    t("Stored chapters (offline)", "保存済みの話（オフライン）") + " (${storedList.size})",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
-            items(storedList, key = { it.url }) { rel ->
-                Text(
-                    rel.chapter,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            onOpenReader(storedList, storedList.indexOf(rel))
-                        }
-                        .padding(horizontal = 20.dp, vertical = 10.dp)
-                )
-            }
-        }
-    }
+        )
+    )
 }
 
 /**
