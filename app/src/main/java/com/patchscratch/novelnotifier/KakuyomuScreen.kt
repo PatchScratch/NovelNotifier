@@ -261,37 +261,48 @@ fun KakuyomuHome(
 }
 
 /**
- * The three-site switcher, shared by every drawer (NU, Syosetu, Kakuyomu)
- * so switching stays one tap from any workspace. Short labels — the chip
- * row is the switcher, not a directory.
+ * The site switcher, shared by every drawer (NU, Syosetu, Kakuyomu,
+ * AlphaPolis) so switching stays one menu from any workspace. A dropdown
+ * since 2026-10-18 — four chips already filled the drawer's width and
+ * more sites are coming; the button carries the ACTIVE site (short label)
+ * and the menu lists the rest.
  */
 @Composable
 fun SiteSwitcherChips(activeSite: String, onSwitchSite: (String) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-        FilterChip(
-            selected = activeSite == "nu",
-            onClick = { onSwitchSite("nu") },
-            label = { Text("NU") },
-            modifier = Modifier.weight(1f).padding(end = 3.dp)
-        )
-        FilterChip(
-            selected = activeSite == "syosetu",
-            onClick = { onSwitchSite("syosetu") },
-            label = { Text(t("Syosetu", "なろう")) },
-            modifier = Modifier.weight(1f).padding(end = 3.dp)
-        )
-        FilterChip(
-            selected = activeSite == "kakuyomu",
-            onClick = { onSwitchSite("kakuyomu") },
-            label = { Text(t("Kakuyomu", "カクヨム")) },
-            modifier = Modifier.weight(1f).padding(end = 3.dp)
-        )
-        FilterChip(
-            selected = activeSite == "alphapolis",
-            onClick = { onSwitchSite("alphapolis") },
-            label = { Text(t("AlphaPolis", "アルポリ")) },
-            modifier = Modifier.weight(1f)
-        )
+    var open by remember { mutableStateOf(false) }
+    val sites = listOf(
+        Triple("nu", "NU", "Novel Updates"),
+        Triple("syosetu", t("Syosetu", "なろう"), "Syosetu"),
+        Triple("kakuyomu", t("Kakuyomu", "カクヨム"), "Kakuyomu"),
+        Triple("alphapolis", t("AlphaPolis", "アルファポリス"), "AlphaPolis")
+    )
+    val active = sites.firstOrNull { it.first == activeSite }?.second ?: activeSite
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        TextButton(
+            onClick = { open = !open },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                t("Site", "サイト") + ": " + active + "  ▾",
+                style = MaterialTheme.typography.titleSmall
+            )
+        }
+        androidx.compose.material3.DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false }
+        ) {
+            sites.forEach { (id, label, full) ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text((if (id == activeSite) "✓ " else "") + label + " · $full") },
+                    onClick = {
+                        open = false
+                        if (id != activeSite) onSwitchSite(id)
+                    }
+                )
+            }
+        }
     }
 }
 

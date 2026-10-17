@@ -120,6 +120,31 @@ class AlphaPolisViewModel(app: Application) : AndroidViewModel(app) {
         save()
     }
 
+    // --- client-side categories (flat-follow site; Kakuyomu pattern) ------
+    // AlphaPolis has no native folders — the app owns the grouping layer,
+    // namespaced to this site inside categories.json (see CategoryStore).
+
+    /** Live mirror of the site's category state; mutators persist at once. */
+    var categories by mutableStateOf(CategoryStore.load(app, "alphapolis"))
+        private set
+
+    private fun saveCats(next: CategoryState) {
+        categories = next
+        CategoryStore.save(getApplication(), "alphapolis", next)
+    }
+
+    fun addCategory(name: String) = saveCats(CategoryStore.add(categories, name))
+    fun renameCategory(id: String, name: String) = saveCats(CategoryStore.rename(categories, id, name))
+    fun deleteCategory(id: String) = saveCats(CategoryStore.delete(categories, id))
+    fun setCategoryHidden(id: String, hidden: Boolean) =
+        saveCats(CategoryStore.setHidden(categories, id, hidden))
+
+    fun moveToCategory(workId: String, catId: String?) =
+        saveCats(CategoryStore.move(categories, workId, catId))
+
+    fun categoryOf(workId: String): LocalCategory? =
+        categories.assign[workId]?.let { id -> categories.cats.firstOrNull { it.id == id } }
+
     private fun save() {
         prefs.edit { putString("alphapolis_bookmarks", alpBookmarksJson(bookmarks)) }
     }

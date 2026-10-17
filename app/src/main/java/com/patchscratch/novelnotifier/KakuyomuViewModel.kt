@@ -108,12 +108,12 @@ class KakuyomuViewModel(app: Application) : AndroidViewModel(app) {
     // --- client-side categories (flat-follow sites; see CategoryStore) ---
 
     /** Live mirror of categories.json; every mutator persists immediately. */
-    var categories by mutableStateOf(CategoryStore.load(getApplication()))
+    var categories by mutableStateOf(CategoryStore.load(getApplication(), "kakuyomu"))
         private set
 
     private fun saveCats(next: CategoryState) {
         categories = next
-        CategoryStore.save(getApplication(), next)
+        CategoryStore.save(getApplication(), "kakuyomu", next)
     }
 
     fun addCategory(name: String) = saveCats(CategoryStore.add(categories, name))

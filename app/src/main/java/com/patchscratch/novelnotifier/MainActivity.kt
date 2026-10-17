@@ -543,6 +543,13 @@ fun NovelApp(
                 onToggleBookmark = { alp.toggleBookmark(it) },
                 readPos = alp.readPosOf(w.id),
                 onSetReadPos = { n -> alp.setReadPos(w.id, n) },
+                categories = alp.categories,
+                onMove = { workId, catId -> alp.moveToCategory(workId, catId) },
+                onCreateAndMove = { workId, name ->
+                    alp.addCategory(name)
+                    val created = alp.categories.cats.lastOrNull()
+                    if (created != null) alp.moveToCategory(workId, created.id)
+                },
                 onOpenReader = { chapters, startAt ->
                     readerVm.open(
                         ReaderTarget(
@@ -639,6 +646,8 @@ fun NovelApp(
                 bookmarks = alp.bookmarks,
                 onToggleBookmark = { w -> alp.toggleBookmark(w) },
                 readPosById = { id -> alp.readPosOf(id) },
+                categories = alp.categories,
+                onOpenCategories = { router.push(Route.Categories("alphapolis")) },
                 isRefreshing = alp.syncing,
                 onRefresh = { alp.syncBookmarks() }
             )

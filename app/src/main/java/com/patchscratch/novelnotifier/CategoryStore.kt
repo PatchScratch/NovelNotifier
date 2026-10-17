@@ -117,13 +117,53 @@ object CategoryStore {
     }
 
     // --- device I/O ---------------------------------------------------------
+    // File shape v2 (site-namespaced; AlphaPolis joined 2026-10-18):
+    //   {"v":2,"sites":{"kakuyomu":{cats,assign},"alphapolis":{…}}}
+    // v1 (flat {cats,assign}, Kakuyomu-only) migrates to the "kakuyomu"
+    // entry on first read — parse/toJson keep the per-site shape.
 
-    fun load(context: Context): CategoryState =
-        parse(runCatching {
-            File(context.filesDir, FILE).readText()
-        }.getOrDefault(""))
+    fun parseSites(raw: String): Map<String, CategoryState> {
+        if (raw.isBlank()) return emptyMap()
+        return try {
+            val root = JSONObject(raw)
+            if (root.has("sites")) {
+                val sites = root.optJSONObject("sites") ?: return emptyMap()
+                buildMap {
+                    sites.keys().forEach { site ->
+                        put(site, parse(sites.optJSONObject(site).toString()))
+                    }
+                }
+            } else {
+                // v1: the whole file was Kakuyomu's state
+                mapOf("kakuyomu" to parse(raw))
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
 
-    fun save(context: Context, state: CategoryState) {
-        File(context.filesDir, FILE).writeText(toJson(state))
+    fun sitesToJson(sites: Map<String, CategoryState>): String =
+        JSONObject().apply {
+            put("v", 2)
+            put("sites", JSONObject().apply {
+                sites.forEach { (site, state) ->
+                    put(site, JSONObject(toJson(state)))
+                }
+            })
+        }.toString()
+
+    private fun readSites(context: Context): MutableMap<String, CategoryState> =
+        parseSites(
+            runCatching { File(context.filesDir, FILE).readText() }.getOrDefault("")
+        ).toMutableMap()
+
+    /** The site's category state (empty when the site has none yet). */
+    fun load(context: Context, site: String): CategoryState =
+        readSites(context)[site] ?: CategoryState()
+
+    fun save(context: Context, site: String, state: CategoryState) {
+        val sites = readSites(context)
+        sites[site] = state
+        File(context.filesDir, FILE).writeText(sitesToJson(sites))
     }
 }

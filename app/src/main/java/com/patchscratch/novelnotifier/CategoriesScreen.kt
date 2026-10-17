@@ -43,6 +43,7 @@ fun CategoriesScreen(
     val context = LocalContext.current
     val app = viewModel<AppViewModel>()
     val kaku = viewModel<KakuyomuViewModel>()
+    val alp = viewModel<AlphaPolisViewModel>()
     // Live state from AppViewModel — flips here re-filter every surface.
     val hiddenSyosetu = app.hiddenSyosetuCats
 
@@ -72,14 +73,28 @@ fun CategoriesScreen(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
 
-        if (site == "kakuyomu") {
-            // --- Kakuyomu: client-side categories --------------------------
-            SectionHeader(t("Kakuyomu categories", "カクヨム カテゴリ"))
-            kaku.categories.cats.forEach { cat ->
+        if (site == "kakuyomu" || site == "alphapolis") {
+            // --- flat-follow site: client-side categories ------------------
+            // (Kakuyomu + AlphaPolis share the CategoryStore layer; the
+            //  mutators route to whichever site's drawer opened this.)
+            val isAlp = site == "alphapolis"
+            val state = if (isAlp) alp.categories else kaku.categories
+            fun addCat(name: String) = if (isAlp) alp.addCategory(name) else kaku.addCategory(name)
+            fun setHidden(id: String, h: Boolean) =
+                if (isAlp) alp.setCategoryHidden(id, h) else kaku.setCategoryHidden(id, h)
+            fun rename(id: String, name: String) =
+                if (isAlp) alp.renameCategory(id, name) else kaku.renameCategory(id, name)
+            SectionHeader(
+                t(
+                    if (isAlp) "AlphaPolis categories" else "Kakuyomu categories",
+                    if (isAlp) "アルファポリス カテゴリ" else "カクヨム カテゴリ"
+                )
+            )
+            state.cats.forEach { cat ->
                 CategoryRow(
                     name = cat.name,
                     hidden = cat.hidden,
-                    onHidden = { kaku.setCategoryHidden(cat.id, it) },
+                    onHidden = { setHidden(cat.id, it) },
                     onRename = { renameCat = cat },
                     onDelete = { confirmDelete = cat }
                 )
@@ -98,7 +113,7 @@ fun CategoriesScreen(
                 TextButton(
                     enabled = newCatName.isNotBlank(),
                     onClick = {
-                        kaku.addCategory(newCatName)
+                        addCat(newCatName)
                         newCatName = ""
                     }
                 ) { Text(t("Add", "追加")) }
@@ -154,7 +169,8 @@ fun CategoriesScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    kaku.renameCategory(cat.id, name)
+                    if (site == "alphapolis") alp.renameCategory(cat.id, name)
+                    else kaku.renameCategory(cat.id, name)
                     renameCat = null
                 }) { Text(t("Save", "保存")) }
             },
@@ -178,7 +194,8 @@ fun CategoriesScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    kaku.deleteCategory(cat.id)
+                    if (site == "alphapolis") alp.deleteCategory(cat.id)
+                    else kaku.deleteCategory(cat.id)
                     confirmDelete = null
                 }) { Text(t("Delete", "削除"), color = MaterialTheme.colorScheme.error) }
             },

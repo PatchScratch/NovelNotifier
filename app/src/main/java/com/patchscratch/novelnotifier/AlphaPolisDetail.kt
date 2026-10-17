@@ -37,7 +37,12 @@ fun AlphaPolisDetailScreen(
     readPos: Int,
     onSetReadPos: (Int) -> Unit,
     onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit,
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    // Client-side categories (Kakuyomu pattern) — the ⚑ button becomes the
+    // category picker; membership is single and move-only.
+    categories: CategoryState = CategoryState(),
+    onMove: (workId: String, catId: String?) -> Unit = { _, _ -> },
+    onCreateAndMove: (workId: String, name: String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -51,6 +56,9 @@ fun AlphaPolisDetailScreen(
     var storedUrls by remember(work.id) { mutableStateOf<Set<String>>(emptySet()) }
     var downloadingUrl by remember(work.id) { mutableStateOf<String?>(null) }
     var downloadMsg by remember(work.id) { mutableStateOf("") }
+    var showCategoryPicker by remember(work.id) { mutableStateOf(false) }
+    val currentCategory = categories.assign[work.id]
+        ?.let { id -> categories.cats.firstOrNull { it.id == id } }
 
     LaunchedEffect(work.id) {
         loading = true
@@ -138,9 +146,23 @@ fun AlphaPolisDetailScreen(
             title = detail?.work?.title ?: work.title,
             author = detail?.work?.author ?: work.author,
             rating = "",
-            groupBadge = if (bookmarked) t("Bookmarked", "ブックマーク済み") else "",
-            changeGroupLabel = if (bookmarked) t("⚑ BOOKMARKED", "⚑ ブックマーク済み") else t("⚑ BOOKMARK", "⚑ ブックマーク"),
-            onChangeGroup = { onToggleBookmark(work) },
+            groupBadge = when {
+                currentCategory != null -> currentCategory.name
+                bookmarked -> t("Bookmarked", "ブックマーク済み")
+                else -> ""
+            },
+            changeGroupLabel = when {
+                currentCategory != null -> "⚑ " + currentCategory.name
+                bookmarked -> t("⚑ BOOKMARKED", "⚑ ブックマーク済み")
+                else -> t("⚑ BOOKMARK", "⚑ ブックマーク")
+            },
+            onChangeGroup = {
+                // Categorised works re-pick their category (move-only);
+                // uncategorised ones get the picker too — it doubles as the
+                // create-and-assign surface, and All leaves the bookmark as-is.
+                if (currentCategory == null && !bookmarked) onToggleBookmark(work)
+                else showCategoryPicker = true
+            },
             statusLine = if (downloadMsg.isNotBlank()) downloadMsg else error,
             nextChapterLabel = when {
                 nextEp != null -> nextEp.title.ifBlank { "第${nextOrdinal}話" }
@@ -250,4 +272,15 @@ fun AlphaPolisDetailScreen(
             }
         )
     )
+
+    if (showCategoryPicker) {
+        CategoryMoveDialog(
+            workId = work.id,
+            current = currentCategory,
+            cats = categories.cats,
+            onMove = { catId -> onMove(work.id, catId) },
+            onCreateAndMove = { name -> onCreateAndMove(work.id, name) },
+            onDismiss = { showCategoryPicker = false }
+        )
+    }
 }

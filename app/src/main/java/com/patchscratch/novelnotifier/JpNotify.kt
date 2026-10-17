@@ -90,7 +90,7 @@ object JpNotify {
         if (follows.isEmpty()) return emptyList()
 
         val hidden = NsfwFilter.hiddenKakuyomuWorkIds(
-            CategoryStore.load(context)
+            CategoryStore.load(context, "kakuyomu")
         )
         val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
         val state = withContext(Dispatchers.IO) { loadState(context) }

@@ -58,13 +58,18 @@ fun AlphaPolisHome(
     // Local bookmarks + reading position (client-side until bookshelf sync).
     bookmarks: List<AlpWork> = emptyList(),
     onToggleBookmark: (AlpWork) -> Unit = {},
-    readPosById: (String) -> Int = { 0 }
+    readPosById: (String) -> Int = { 0 },
+    // Client-side categories (Kakuyomu pattern — AlphaPolis has no folders).
+    categories: CategoryState = CategoryState(),
+    onOpenCategories: () -> Unit = {}
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(
         androidx.compose.material3.DrawerValue.Closed
     )
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var searchQuery by remember { mutableStateOf("") }
+    // In-place category selection (NU list-switcher parity).
+    var selectedCategoryId by remember { mutableStateOf("") }
     val prefs = androidx.compose.ui.platform.LocalContext.current
         .getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
     var sortMode by remember { mutableStateOf(loadSortMode(prefs)) }
@@ -106,10 +111,46 @@ fun AlphaPolisHome(
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                     )
+                    // NU-style switcher: All + one row per USED category
+                    // (hidden ones too — their rows say what's hidden, not
+                    // what's IN them); empty categories are managed in the
+                    // Categories screen.
+                    val hiddenAll = NsfwFilter.hiddenAlpWorkIds(categories)
+                    val visibleAll = if (nsfwUnlocked) bookmarks
+                        else NsfwFilter.filterAlphapolis(bookmarks, hiddenAll, unlocked = false)
                     androidx.compose.material3.NavigationDrawerItem(
-                        label = { Text(t("All", "すべて") + " (${bookmarks.size})") },
-                        selected = true,
-                        onClick = { scope.launch { drawerState.close() } }
+                        label = { Text(t("All", "すべて") + " (${visibleAll.size})") },
+                        selected = selectedCategoryId.isBlank(),
+                        onClick = {
+                            selectedCategoryId = ""
+                            scope.launch { drawerState.close() }
+                        }
+                    )
+                    categories.cats
+                        .filter { cat -> !cat.hidden || nsfwUnlocked }
+                        .filter { cat -> bookmarks.any { categories.assign[it.id] == cat.id } }
+                        .forEach { cat ->
+                            androidx.compose.material3.NavigationDrawerItem(
+                                label = {
+                                    Text(
+                                        cat.name + " (" +
+                                            visibleAll.count { categories.assign[it.id] == cat.id } + ")"
+                                    )
+                                },
+                                selected = selectedCategoryId == cat.id,
+                                onClick = {
+                                    selectedCategoryId = cat.id
+                                    scope.launch { drawerState.close() }
+                                }
+                            )
+                        }
+                    androidx.compose.material3.NavigationDrawerItem(
+                        label = { Text(t("Categories  ⚙", "カテゴリ  ⚙")) },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onOpenCategories()
+                        }
                     )
                 } else {
                     Text(
@@ -138,10 +179,18 @@ fun AlphaPolisHome(
             }
         }
     ) {
-        val visible = bookmarks
+        // SFW: hidden categories' works vanish; the selected category then
+        // filters on top.
+        val base = NsfwFilter.filterAlphapolis(
+            bookmarks, NsfwFilter.hiddenAlpWorkIds(categories), nsfwUnlocked
+        )
+        val visible = base
             .filter { searchQuery.isBlank() || it.title.contains(searchQuery, ignoreCase = true) }
+            .filter { selectedCategoryId.isBlank() || categories.assign[it.id] == selectedCategoryId }
+        val selName = categories.cats.firstOrNull { it.id == selectedCategoryId }?.name
         BookmarkLibraryBody(
-            heading = t("All", "すべて") + " (${visible.size})",
+            heading = if (selName == null) t("All", "すべて") + " (${visible.size})"
+                else "$selName (${visible.size})",
             rows = sortWorks(visible).map { w ->
                 BookmarkRow(
                     title = w.title,

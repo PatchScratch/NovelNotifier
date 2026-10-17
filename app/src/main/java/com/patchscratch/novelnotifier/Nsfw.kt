@@ -48,6 +48,13 @@ object NsfwFilter {
     fun filterKakuyomu(works: List<KakuyomuWork>, hiddenWorkIds: Set<String>, unlocked: Boolean): List<KakuyomuWork> =
         if (unlocked || hiddenWorkIds.isEmpty()) works
         else works.filter { it.id !in hiddenWorkIds }
+
+    /** AlphaPolis works in hidden client-side categories (same layer). */
+    fun hiddenAlpWorkIds(cats: CategoryState): Set<String> = hiddenKakuyomuWorkIds(cats)
+
+    fun filterAlphapolis(works: List<AlpWork>, hiddenWorkIds: Set<String>, unlocked: Boolean): List<AlpWork> =
+        if (unlocked || hiddenWorkIds.isEmpty()) works
+        else works.filter { it.id !in hiddenWorkIds }
 }
 
 /**

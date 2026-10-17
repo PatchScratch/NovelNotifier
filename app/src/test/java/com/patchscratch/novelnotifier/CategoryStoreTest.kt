@@ -85,4 +85,38 @@ class CategoryStoreTest {
         assertTrue(next.cats[1].hidden)
         assertEquals(ecchi.id, next.assign["w2"])
     }
+
+    // --- per-site file shape (v2) + v1 migration (AlphaPolis, 2026-10-18) ---
+
+    @Test
+    fun sitesFile_roundTripsAndKeepsSitesApart() {
+        var kaku = CategoryStore.add(CategoryState(), "Reading")
+        kaku = CategoryStore.move(kaku, "w1", kaku.cats[0].id)
+        var alp = CategoryStore.add(CategoryState(), "Ecchi")
+        alp = CategoryStore.move(alp, "a1", alp.cats[0].id)
+        val raw = CategoryStore.sitesToJson(mapOf("kakuyomu" to kaku, "alphapolis" to alp))
+        val sites = CategoryStore.parseSites(raw)
+        assertEquals(2, sites.size)
+        assertEquals(listOf("Reading"), sites["kakuyomu"]?.cats?.map { it.name })
+        assertEquals(mapOf("w1" to kaku.cats[0].id), sites["kakuyomu"]?.assign)
+        assertEquals(mapOf("a1" to alp.cats[0].id), sites["alphapolis"]?.assign)
+        // the two sites' ids never leak across
+        assertTrue(sites["alphapolis"]?.assign?.containsKey("w1") == false)
+    }
+
+    @Test
+    fun v1FlatFile_migratesToKakuyomu() {
+        var old = CategoryStore.add(CategoryState(), "OldCat")
+        old = CategoryStore.move(old, "w9", old.cats[0].id)
+        val v1 = CategoryStore.toJson(old)   // flat, no "sites" wrapper
+        val sites = CategoryStore.parseSites(v1)
+        assertEquals(setOf("kakuyomu"), sites.keys)
+        assertEquals(listOf("OldCat"), sites["kakuyomu"]?.cats?.map { it.name })
+    }
+
+    @Test
+    fun blankAndCorruptSitesFilesAreEmpty() {
+        assertEquals(0, CategoryStore.parseSites("").size)
+        assertEquals(0, CategoryStore.parseSites("not json {{{").size)
+    }
 }
