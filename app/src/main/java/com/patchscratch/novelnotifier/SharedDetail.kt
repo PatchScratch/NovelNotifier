@@ -65,6 +65,20 @@ import androidx.compose.foundation.layout.WindowInsets
  *   semantics), optional group-filter and footer slots (NU pagination).
  *
  * Missing data omits rows (rating, type, tags) — never rearranges them.
+ *
+ * Adding a site (the B1 contract):
+ *  1. Build a SeriesDetailState — never copy this layout into a new
+ *     screen; if the template can't express something you need, extend
+ *     it with a slot so every site gets the option.
+ *  2. Checkbox semantics are YOURS to define: NU keeps ONE tick (the
+ *     read position — checking moves it, unchecking moves down or
+ *     clears); JP sites set a forward position. Encode the site's rule
+ *     in the onCheck lambdas; the template only renders.
+ *  3. MARK AS READ must write the SITE (NU rid / しおり / Kakuyomu
+ *     history) when the site supports it — local-only positions are the
+ *     fallback, not the default (the sync doctrine).
+ *  4. readOrdinal drives hide-read and next-chapter math; keep it the
+ *     last-read episode number (0 = nothing read).
  */
 
 /** One RELEASES row. [onCheck] null hides the checkbox. */

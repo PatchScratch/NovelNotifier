@@ -26,11 +26,14 @@ Grab the latest `NovelNotifier-v<version>.apk` from [Releases](https://github.co
 - **First-run onboarding** — sizes your library, estimates the download, and lets you mark 1–3 priority lists so their chapters arrive first.
 
 ### Japanese sites: Syosetu and Kakuyomu
-Each site is its own workspace (hamburger → site chips), served by official/open APIs — no scraping.
+Each site is its own workspace (hamburger → site chips), served by official/open APIs — no scraping — and every site follows the same design language: the series page, the unread badges, the sort modes and the notifications are the NU model, everywhere.
+
+- **The same series page on every site** — INFO / RELEASES tabs, a Next Chapter card with READ CHAPTER and MARK AS READ, description/genres/tags with the translated line beneath, per-series notification toggle, group/category picker in the CHANGE LIST spot. One shared template renders all of it; sites only supply data and their site's own write-back rules (NU's reading-list marker, Syosetu's しおり, Kakuyomu's reading history).
+- **Unread badges everywhere** — reading position is tracked per site (NU's last-read, Syosetu しおり, Kakuyomu reading history) and drives tile badges, "read ep N" lines, the four sort modes, and Next Chapter — exactly like the NU home.
 - **Discover** — rankings, advanced search (full yomou parity on Syosetu), and the R18 sister sites behind an 18+ gate.
-- **Machine-translated browsing** — ranking titles, synopses and tags show a dimmed English line under the Japanese (free on-device ML Kit, cached forever; or via your own AI key).
-- **Bookmarks** — Syosetu login syncs your bookmark library with your renamed 分類 categories in the drawer; long-press any tile (or the series page) to **move it between categories or remove it** — written back to the site, NU-style. Kakuyomu login syncs follows (site is master).
-- **Update notifications** — bookmarked Syosetu series notify on new episodes via the authors' public Atom feeds, same pipeline as NU.
+- **Machine-translated browsing** — ranking titles, synopses and tags show a dimmed English line under the Japanese (free on-device ML Kit, cached forever; or via your own AI key). Translation settings apply to the Japanese sites only.
+- **Bookmarks** — Syosetu login syncs your bookmark library with your renamed 分類 categories in the drawer; long-press any tile (or the series page) to **move it between categories or remove it** — written back to the site, NU-style. Kakuyomu login syncs follows (site is master) with client-side folders for grouping.
+- **Update notifications on every site** — Syosetu via the authors' public Atom feeds, Kakuyomu by polling your follows' update stamps through its open GraphQL; both run in the same background check as NU, and hidden categories never notify.
 - **Fast series pages** — synopsis and chapter list cache on-device; re-entering a series is instant, and refreshes only happen when a new episode actually lands.
 
 ### Reading & offline
@@ -79,6 +82,9 @@ Each site is its own workspace (hamburger → site chips), served by official/op
 | `OnboardingScreen.kt` | Fresh-login flow: hydration with live counter → size warning + estimates → priority-list picker. |
 | `SyncQueue.kt` | Bulk-download job model, priority ordering, persistent queue file, conservative time estimates. |
 | `Updater.kt` / `UpdateDownloadService.kt` | In-app self-update: GitHub release check, the prompt/permission/changelog dialogs, and the foreground download streamed into a PackageInstaller session. |
+| `SharedDetail.kt` | **The NU-model series page every site renders through** — one template, capability slots, per-site checkbox semantics. Extend it, never copy it. |
+| `JpNotify.kt` | The Japanese sites' chapter checks inside the shared background worker (Syosetu Atom feeds; Kakuyomu follows polling). |
+| `AlphaPolis.kt` | Headless AlphaPolis provider core (work/ToC/body parsers, cookie-jar HTTP, the episode-body POST with its session-bound CSRF token). |
 | `SyncEngineService.kt` | The bulk downloader: paced WebView walking the queue, counter notification, Cloudflare policy. |
 | `CoverStore.kt` / `CoverUi.kt` | Cover image files on disk; thumbnails prefer local files, then the network. |
 | `BackupManager.kt` | One-zip export/import via the system file picker. Never contains login or feed tokens. |

@@ -99,7 +99,6 @@ fun NovelListScreen(
     onOpenDiscover: () -> Unit = {},
     activeSite: String = "nu",
     onSwitchSite: (String) -> Unit = {},
-    onOpenSyosetu: () -> Unit = {},
     onOpenSettings: () -> Unit,
     onEditLists: () -> Unit,
     onSaveListOptions: (Set<String>, Set<String>) -> Unit,
@@ -234,22 +233,6 @@ fun NovelListScreen(
                 // drawer below shows the ACTIVE site's lists and entries.
                 SiteSwitcherChips(activeSite, onSwitchSite)
                 HorizontalDivider()
-                if (activeSite == "syosetu") {
-                    NavigationDrawerItem(
-                        label = { Text("なろう Discover  ★") },
-                        selected = false,
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onOpenSyosetu()
-                        }
-                    )
-                    Text(
-                        "Bookmark categories sync arrives with the login slice.",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                    HorizontalDivider()
-                } else {
                 NavigationDrawerItem(
                     label = { Text(t("Search Novel Updates  ⌕", "ノベルアップデーツを検索  ⌕")) },
                     selected = false,
@@ -266,7 +249,6 @@ fun NovelListScreen(
                         onOpenDiscover()
                     }
                 )
-                }
                 // One management entry (Wayne's de-clutter rule): the Lists
                 // window holds notify/update/hidden switches per list, the
                 // site-side list editor, and the SH scan.

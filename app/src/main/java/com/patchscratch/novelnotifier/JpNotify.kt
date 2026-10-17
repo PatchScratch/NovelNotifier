@@ -7,21 +7,29 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * B3 unified notifications: the Japanese sites' chapter checks that run in
- * the shared background worker (UpdateCheckWorker), so alerts arrive like
- * NU's instead of only while the app is open.
+ * The Japanese sites' chapter checks, unified into the same background
+ * worker as NU's (framework B3). Design constraints, for whoever touches
+ * this next:
  *
- * - Syosetu: the author-Atom pipeline (SyosetuFeeds.pollBookmarks) moves
- *   here unchanged — it only needed a caller in the background. The
- *   worker path is quieter than the foreground one: no status text.
- * - Kakuyomu: ordinal polling of the logged-in follows via the open
- *   GraphQL endpoint — the follows query already carries each work's
- *   lastEpisodePublishedAt + episode count, so "update detected" is a
- *   state-file comparison, zero scraping. Baseline state rides backups
- *   alongside Syosetu's (filesDir/jp_notify_state.json).
- *
- * Gates (both sites): hidden categories never notify (the SFW rule);
- * per-series toggles arrive with the notify-toggle wiring on details.
+ * - ONE pipeline: this runs inside UpdateCheckWorker and the app's
+ *   Check-now button calls the same functions, so manual and automatic
+ *   checks can never disagree. Anything added here is automatically
+ *   covered by both.
+ * - No WebViews. Both polls are plain HTTP with the WebView session's
+ *   cookie jar — the worker promotes itself to a foreground service for
+ *   NU's WebView checks, but these must stay cheap enough to run even
+ *   when that promotion is refused.
+ * - Detection is stamp-comparison, never content fetches: Syosetu reads
+ *   authors' public Atom feeds (ep numbers only), Kakuyomu compares
+ *   follows-query episode-count/publishedAt stamps against
+ *   jp_notify_state.json. Neither ever downloads a chapter.
+ * - First-seen baselines seed silently — a fresh install or a restore
+ *   must not produce a notification storm for pre-existing episodes.
+ *   The state file rides backups for exactly that reason.
+ * - Hidden series never notify (SFW rule) — filtered before the update
+ *   list is built, in both polls.
+ * - A missing/expired session is a normal outcome, not an error: the
+ *   polls return empty and the login flags gate them at the caller.
  */
 object JpNotify {
 
@@ -68,6 +76,12 @@ object JpNotify {
      * (new episode count or newer lastEpisodePublishedAt) vs the state
      * file = update. First run only seeds baselines (no notification
      * storm for pre-existing episodes).
+     *
+     * Reviewer note: the stamp deliberately uses BOTH count and date —
+     * count alone misses same-count rewrites (authors editing a published
+     * episode), date alone would fire on unrelated metadata. If Kakuyomu
+     * ever splits these, prefer keeping date changes silent (NU's rule:
+     * only a HIGHER chapter number is an update).
      */
     suspend fun pollKakuyomu(context: Context): List<ChapterUpdate> {
         return try {
