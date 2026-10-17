@@ -404,8 +404,11 @@ fun SettingsScreen(
         }
         }
 
-        // --- Translation (shared: applies to the reader on any site) ---
-        SettingsSection(t("Translation & AI", "翻訳とAI")) {
+        // --- Translation (Japanese sites only, Wayne's rule 2026-10-17:
+        // NU is already English — no translation surface there. If a
+        // Japanese user ever asks for EN-learning support we'll add it
+        // then, not before) ---
+        if (site != "nu") SettingsSection(t("Translation & AI", "翻訳とAI")) {
         var xlateEndpoint by remember { mutableStateOf(prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty()) }
         var xlateModel by remember { mutableStateOf(prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty()) }
         var xlateKey by remember { mutableStateOf(prefs.getString("xlate_key", "").orEmpty()) }
