@@ -267,6 +267,11 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                             .verticalScroll(rememberScrollState())
                             .padding(16.dp)
                     ) {
+                        // Machine translation is serialized (~1–2/s on-device);
+                        // while this series' info is still in the queue, say so
+                        // at the top of the tab instead of leaving cards that
+                        // look permanently blank (Wayne's 2026-10-17 note).
+                        TranslatingCaption()
                         // Next Chapter card — the continue affordance, NU placement
                         Card(modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(12.dp)) {
