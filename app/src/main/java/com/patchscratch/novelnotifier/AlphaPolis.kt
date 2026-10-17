@@ -92,14 +92,26 @@ internal suspend fun alpCookies(): String =
         android.webkit.CookieManager.getInstance().getCookie(ALP_BASE).orEmpty()
     }
 
-internal suspend fun alpFetch(url: String, referer: String? = null): String =
+internal suspend fun alpFetch(
+    url: String,
+    referer: String? = null,
+    // false = anonymous GET. The LOGGED-IN shape of public long chapters
+    // ships the empty paginated viewer with no body loader; the ANONYMOUS
+    // page carries the .load(episode_body) loader that works headless
+    // (verified live 2026-10-18: episode 1832313 "1-1" quiet-nulled with the
+    // session, extracted anonymously). Paywalled chapters serve the paywall
+    // either way.
+    withCookies: Boolean = true
+): String =
     withContext(Dispatchers.IO) {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 15_000
         conn.readTimeout = 20_000
         conn.setRequestProperty("User-Agent", ALP_UA)
         conn.setRequestProperty("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
-        alpCookies().takeIf { it.isNotBlank() }?.let { conn.setRequestProperty("Cookie", it) }
+        if (withCookies) {
+            alpCookies().takeIf { it.isNotBlank() }?.let { conn.setRequestProperty("Cookie", it) }
+        }
         referer?.let { conn.setRequestProperty("Referer", it) }
         val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
         val raw = stream?.bufferedReader()?.use { it.readText() } ?: ""
@@ -111,14 +123,47 @@ internal suspend fun alpFetch(url: String, referer: String? = null): String =
     }
 
 /**
+ * Anonymous GET that also captures the page's Set-Cookie jar: the anonymous
+ * episode page issues its own session + XSRF cookies, and its body-POST
+ * token only validates when that exact jar rides along.
+ */
+internal suspend fun alpFetchAnonWithJar(url: String): Pair<String, String> =
+    withContext(Dispatchers.IO) {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 20_000
+        conn.setRequestProperty("User-Agent", ALP_UA)
+        conn.setRequestProperty("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+        val raw = stream?.bufferedReader()?.use { it.readText() } ?: ""
+        val jar = (conn.headerFields?.get("Set-Cookie") ?: emptyList())
+            .map { it.substringBefore(";").trim() }
+            .filter { it.contains("=") && !it.startsWith("=") }
+            .distinct()
+            .joinToString("; ")
+        val code = conn.responseCode
+        conn.disconnect()
+        if (code !in 200..299) {
+            throw java.io.IOException("alphapolis HTTP $code at $url")
+        }
+        raw to jar
+    }
+
+/**
  * The episode-body AJAX: POST /novel/episode_body with the page-issued
- * CSRF + per-episode token. Returns body HTML.
+ * CSRF + per-episode token. Returns body HTML. [anonCookie] pairs with an
+ * anonymously-fetched page: the anonymous page's tokens were issued under
+ * ITS OWN session (Set-Cookie), so the POST must present exactly that jar
+ * — neither cookie-less (419, verified live) nor the login session (also
+ * mismatch).
  */
 internal suspend fun alpPostEpisodeBody(
     episodeId: String,
     episodeToken: String,
     csrfToken: String,
-    referer: String
+    referer: String,
+    withCookies: Boolean = true,
+    anonCookie: String? = null
 ): String = withContext(Dispatchers.IO) {
     val conn = URL("$ALP_BASE/novel/episode_body").openConnection() as HttpURLConnection
     conn.requestMethod = "POST"
@@ -131,7 +176,12 @@ internal suspend fun alpPostEpisodeBody(
     conn.setRequestProperty("X-Requested-With", "XMLHttpRequest")
     conn.setRequestProperty("Referer", referer)
     conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-    alpCookies().takeIf { it.isNotBlank() }?.let { conn.setRequestProperty("Cookie", it) }
+    when {
+        anonCookie != null ->
+            if (anonCookie.isNotBlank()) conn.setRequestProperty("Cookie", anonCookie)
+        withCookies ->
+            alpCookies().takeIf { it.isNotBlank() }?.let { conn.setRequestProperty("Cookie", it) }
+    }
     val body = "episode=" + URLEncoder.encode(episodeId, "UTF-8") +
         "&token=" + URLEncoder.encode(episodeToken, "UTF-8")
     conn.setFixedLengthStreamingMode(body.toByteArray().size)
@@ -513,34 +563,75 @@ internal fun alpEmbeddedBody(html: String): String {
 }
 
 /**
- * One chapter, fully headless (no WebView): page → (B) tokens → body POST,
- * else (A) the server-embedded body. An entitled session — owned/rented
- * premium included — gets text; a paywalled chapter returns null and the
- * CALLER decides (the reader hops to its visible WebView, the detail row
- * and the bulk download treat it as skip). Shared by the reader ladder,
- * the per-chapter download on the series page, and EpubBulkService.
+ * One chapter, fully headless (no WebView). Pass order: (1) with the login
+ * session — owned/rented premium renders server-side, public short chapters
+ * embed or POST their body; (2) when the sessioned page comes up EMPTY
+ * (the logged-in shape of public long chapters is the paginated viewer: no
+ * loader, blank #novelBody) an ANONYMOUS retry — logged-out pages carry the
+ * .load(episode_body) loader, and public content POSTs fine without a
+ * session (a mixed jar would 419, so the retry re-parses the anonymous
+ * page for its own tokens). Null = paywalled for this account or unfetchable.
+ * Shared by the reader ladder, the per-chapter download on the series page,
+ * and EpubBulkService.
  */
 suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
+    fun build(paras: List<String>, imgs: List<Pair<Int, String>>, title: String): ChapterExtract? =
+        if (paras.isEmpty()) null
+        else ChapterExtract(title = title, paragraphs = paras, images = imgs)
+
     return try {
+        // (1) sessioned: premium renders server-side, public shorts embed
+        // or POST their body.
         val page = alpFetch(chapterUrl)
         val (title, tokens) = parseAlpEpisodePage(page)
-        if (tokens != null) {
-            val body = alpPostEpisodeBody(
-                tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapterUrl
-            )
-            val (paras, imgs) = parseAlpBodyWithImages(body)
-            DebugLog.log("ALP", "headless chapter (B): ${paras.size} paragraphs, ${imgs.size} images")
-            ChapterExtract(title = title, paragraphs = paras, images = imgs)
-        } else if (alpLastBodyHtml.isNotBlank()) {
-            val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-            if (paras.isEmpty()) null
-            else {
-                DebugLog.log("ALP", "headless chapter (A): ${paras.size} paragraphs, ${imgs.size} images")
-                ChapterExtract(title = title.ifBlank { alpLastTitle }, paragraphs = paras, images = imgs)
+        val sessioned: ChapterExtract? = when {
+            tokens != null -> {
+                val body = alpPostEpisodeBody(
+                    tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapterUrl
+                )
+                val (paras, imgs) = parseAlpBodyWithImages(body)
+                build(paras, imgs, title).also {
+                    DebugLog.log("ALP", "headless chapter (B): ${paras.size} paragraphs, ${imgs.size} images")
+                }
             }
-        } else {
-            null
+            else -> {
+                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+                if (paras.isNotEmpty()) {
+                    DebugLog.log("ALP", "headless chapter (A): ${paras.size} paragraphs, ${imgs.size} images")
+                }
+                build(paras, imgs, title.ifBlank { alpLastTitle })
+            }
         }
+        if (sessioned != null) return sessioned
+
+        // (2) anonymous retry: the logged-in shape of public LONG chapters
+        // is the paginated viewer — no loader, and #novelBody parses to zero
+        // paragraphs (whitespace residue is NOT a blank string). Logged-out
+        // pages carry the .load(episode_body) loader; the anonymous page's
+        // own Set-Cookie jar must ride with the POST (its token is bound to
+        // that anon session — cookie-less = 419, session cookies = mismatch).
+        val (anonPage, anonJar) = alpFetchAnonWithJar(chapterUrl)
+        val (anonTitle, anonTokens) = parseAlpEpisodePage(anonPage)
+        val anonExtract: ChapterExtract? = when {
+            anonTokens != null -> {
+                val body = alpPostEpisodeBody(
+                    anonTokens.episodeId, anonTokens.episodeToken, anonTokens.csrfToken,
+                    chapterUrl, anonCookie = anonJar
+                )
+                val (paras, imgs) = parseAlpBodyWithImages(body)
+                build(paras, imgs, anonTitle).also {
+                    DebugLog.log("ALP", "headless chapter (B-anon): ${paras.size} paragraphs, ${imgs.size} images")
+                }
+            }
+            else -> {
+                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+                build(paras, imgs, anonTitle.ifBlank { alpLastTitle })
+            }
+        }
+        if (anonExtract == null) {
+            DebugLog.log("ALP", "headless chapter: no body in either page shape")
+        }
+        anonExtract
     } catch (e: Exception) {
         DebugLog.log("ALP", "headless chapter fetch failed", e)
         null

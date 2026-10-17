@@ -710,8 +710,12 @@ fun ReaderScreen(
             }
             extractFailed = true
             webViewRef.value?.evaluateJavascript(
+                // Precise call-to-action phrases only: bare 購入/クレジット
+                // appear in the logged-in header (credit balance) and site
+                // chrome on EVERY page and would false-positive free
+                // chapters into the paywall path (caught live: "1-1").
                 """(function(){var t=document.body?document.body.innerText:'';
-                   return /購入|レンタル|クレジット|unlocked/i.test(t)?'PAYWALL':'')()"""
+                   return /このエピソードを購入|エピソードをレンタル|クレジットを購入|購入して読む|レンタルして読む/.test(t)?'PAYWALL':''})()"""
                     .trimIndent()
             ) { r ->
                 if (unwrapJsResult(r) == "PAYWALL") {
