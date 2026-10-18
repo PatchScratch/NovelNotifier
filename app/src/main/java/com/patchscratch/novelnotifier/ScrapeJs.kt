@@ -625,7 +625,11 @@ fun chapterExtractJs(): String = """
     // new host before adding to this list.
     var KNOWN_SELECTORS = ['div.js-episode-body', 'div.chapter-inner', '.cha-words', '.novel-content',
       '#chr-content', '.chapter-content', '#chapter-c', '.post-content',
-      '.entry-content', 'article', '#novelBody'];
+      '.entry-content', 'article', '#novelBody',
+      // JP natives (deterministic beats ancestor scoring; the shared image
+      // walk rides whichever container wins): Syosetu + R18 sisters,
+      // Kakuyomu's site body.
+      '#novel_honbun', 'div.widget-episodeBody'];
     var best = null;
     for (var ks = 0; ks < KNOWN_SELECTORS.length && !best; ks++) {
       var cand = document.querySelector(KNOWN_SELECTORS[ks]);
@@ -638,6 +642,9 @@ fun chapterExtractJs(): String = """
         if (cvt.length > 1) { cvis++; cchars += cvt.length; }
       }
       if (cvis >= 3 && cchars >= 400) best = cand;
+      // Image-led chapters (illustration episodes, manga-style posts) have
+      // little text: a known container with real illustrations still wins.
+      else if (cvis >= 1 && cand.querySelectorAll('img').length >= 2) best = cand;
     }
 
     if (!best) {
@@ -700,7 +707,26 @@ fun chapterExtractJs(): String = """
     }
 
     var out = [];
-    Array.prototype.slice.call(best.querySelectorAll('p')).forEach(function(p) {
+    // Inline illustrations (all sites), harvested in the SAME walk that
+    // emits paragraphs so anchors match the emitted index — a separate
+    // walk would count junk/short paragraphs that get dropped below and
+    // drift every anchor after them (Syosetu illustration <p>s are exactly
+    // that: image-only paragraphs produce no text). Guards: absolute URLs,
+    // no data:/1px/emoji-sized, lazy attrs honored (Wayne's 2026-10-18
+    // "every site's epub captures images").
+    var imgs = [];
+    function imgOf(nd) {
+      var u = nd.getAttribute('src') || nd.getAttribute('data-src') ||
+        nd.getAttribute('data-original') || nd.getAttribute('data-lazy-src') ||
+        (nd.getAttribute('srcset') || '').split(',')[0].trim().split(' ')[0] || '';
+      if (!u || u.indexOf('data:') === 0) return null;
+      if (u.indexOf('//') === 0) u = 'https:' + u;
+      else if (u.indexOf('/') === 0) u = location.protocol + '//' + location.host + u;
+      var w = nd.naturalWidth || nd.width || 0;
+      if (w && w < 60) return null;
+      return u;
+    }
+    function emitParagraph(p) {
       if (!nodeVisible(p)) return;
       // Anti-scrape decoys (verified: foxteller 2026-10-15): position:fixed
       // spans injected into EVERY paragraph — watermark chaff plus the
@@ -725,10 +751,32 @@ fun chapterExtractJs(): String = """
       } else {
         t = cleanText(p.innerText || '');
       }
-      if (t.length < 2 || isJunk(t, p)) return;
+      // Illustration-only paragraphs (Syosetu's <p><a><img></a></p>): emit
+      // the image at this position, not an empty text slot.
+      var pImgs = Array.prototype.slice.call(p.querySelectorAll('img')).map(imgOf).filter(Boolean);
+      if (t.length < 2 || isJunk(t, p)) {
+        pImgs.forEach(function(u) { imgs.push([out.length, u]); });
+        return;
+      }
       if (out.length && out[out.length - 1] === t) return; // consecutive repeat
       out.push(t);
-    });
+      pImgs.forEach(function(u) { imgs.push([out.length, u]); });
+    }
+    // Document-order walk at every depth: <p> emits text (+its inline imgs
+    // after it); bare <img> children (figure illustrations, host quirks)
+    // anchor at the current position; anything else recurses.
+    (function walkEl(el) {
+      Array.prototype.slice.call(el.children).forEach(function(child) {
+        if (child.tagName === 'IMG') {
+          var u = imgOf(child);
+          if (u) imgs.push([out.length, u]);
+        } else if (child.tagName === 'P') {
+          emitParagraph(child);
+        } else {
+          walkEl(child);
+        }
+      });
+    })(best);
 
     // Built-in ladder didn't fully decode (rotation, PUA ladder, partial
     // substitution)? Derive the cipher from the page's own fonts and re-decode.
@@ -755,7 +803,9 @@ fun chapterExtractJs(): String = """
       if (dup) out = out.slice(0, half);
     }
 
-    if (out.length < 3) return 'FAIL';
+    // Image-led chapters pass with fewer text lines when illustrations
+    // were harvested (pure-text chapters keep the 3-paragraph floor).
+    if (out.length < 3 && imgs.length === 0) return 'FAIL';
 
     // Title was extracted before the paragraphs (it feeds the derivation
     // sample); decode it with the derived map when one exists.
@@ -764,28 +814,6 @@ fun chapterExtractJs(): String = """
     }
 
     var json = out.map(function(t) { return JSON.stringify(t); }).join(',');
-    // Inline illustrations (all sites): img tags inside the content container,
-    // absolute URLs, anchored to the paragraph index they precede. Ad/asset
-    // guards: skip 1px/emoji-sized and data: URIs.
-    var imgs = [];
-    try {
-      var nodes = best.querySelectorAll('p, img');
-      var pi = 0;
-      for (var ni = 0; ni < nodes.length; ni++) {
-        var nd = nodes[ni];
-        if (nd.tagName === 'IMG') {
-          var u = nd.getAttribute('src') || nd.getAttribute('data-src') || '';
-          if (!u || u.indexOf('data:') === 0) continue;
-          if (u.indexOf('//') === 0) u = 'https:' + u;
-          else if (u.indexOf('/') === 0) u = location.protocol + '//' + location.host + u;
-          var w = nd.naturalWidth || nd.width || 0;
-          if (w && w < 60) continue;
-          imgs.push([pi, u]);
-        } else {
-          pi++;
-        }
-      }
-    } catch (e) {}
     var imgJson = imgs.map(function(p2) { return '[' + p2[0] + ',' + JSON.stringify(p2[1]) + ']'; }).join(',');
     return '{"title":' + JSON.stringify(title) + ',"paragraphs":[' + json + ']' +
       (imgs.length ? ',"images":[' + imgJson + ']' : '') + '}';
