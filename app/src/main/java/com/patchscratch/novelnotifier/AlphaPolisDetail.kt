@@ -186,8 +186,12 @@ fun AlphaPolisDetailScreen(
             episodes = if (episodes.isNotEmpty()) episodes.mapIndexed { i, ep ->
                 SeriesEpisodeRow(
                     ordinal = i + 1,
-                    label = "第${i + 1}話",
-                    title = ep.title,
+                    // Site-faithful numbering (Wayne 2026-10-18: the list
+                    // must read like AlphaPolis's own): volume-chapter
+                    // titles lead ("8-16"), 第N話 titles keep their 話,
+                    // unnumbered extras fall back to the ToC ordinal.
+                    label = alpRowLabel(ep.title, i + 1),
+                    title = alpRowSubtitle(ep.title),
                     date = "",
                     isRead = i + 1 == position,
                     onOpen = { openAt(i) },

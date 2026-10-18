@@ -81,6 +81,19 @@ data class AlpWorkDetail(val work: AlpWork, val episodes: List<AlpEpisode>)
  * (書籍化記念, extras) falls back to the ToC ordinal "cN" (bare chapter keys
  * sort before all volumes, which suits front-matter).
  */
+/** RELEASES-row display label: the episode's own number form ("8-16",
+ * "第29話"); extras fall back to the ToC ordinal as 第N話. */
+fun alpRowLabel(title: String, tocOrdinal: Int): String {
+    val t = title.trim()
+    Regex("^([0-9]+-[0-9]+)").find(t)?.let { return it.groupValues[1] }
+    Regex("^(第[0-9]+話)").find(t)?.let { return it.groupValues[1] }
+    return "第" + tocOrdinal + "話"
+}
+
+/** RELEASES-row subtitle: the episode title minus its leading number. */
+fun alpRowSubtitle(title: String): String =
+    title.trim().replaceFirst(Regex("^([0-9]+-[0-9]+|第[0-9]+話)[\\s　]*"), "")
+
 fun alpEpisodeLabel(title: String, tocOrdinal: Int): String {
     val t = title.trim()
     // Volume-chapter series ("1-1" = Vol 1 Ch 1 — Wayne, 2026-10-18)
