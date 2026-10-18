@@ -606,16 +606,19 @@ internal fun alpEmbeddedBody(html: String): String {
 }
 
 /**
- * One chapter, fully headless (no WebView). Pass order: (1) with the login
- * session — owned/rented premium renders server-side, public short chapters
- * embed or POST their body; (2) when the sessioned page comes up EMPTY
- * (the logged-in shape of public long chapters is the paginated viewer: no
- * loader, blank #novelBody) an ANONYMOUS retry — logged-out pages carry the
- * .load(episode_body) loader, and public content POSTs fine without a
- * session (a mixed jar would 419, so the retry re-parses the anonymous
- * page for its own tokens). Null = paywalled for this account or unfetchable.
- * Shared by the reader ladder, the per-chapter download on the series page,
- * and EpubBulkService.
+ * One chapter, fully headless (no WebView). ANONYMOUS FIRST — the logged-out
+ * page's .load(episode_body) loader is URL-bound and its POST returns
+ * exactly the URL's chapter (verified live across 1-1..1-3). The login
+ * session is the LAST resort and its embedded #novelBody is NEVER trusted:
+ * a logged-in episode page renders the VIEWER AT THE ACCOUNT'S LAST READ
+ * POSITION, so the server-side body can be a completely different
+ * episode's text (live-caught 2026-10-18: 異世界 1-2's sessioned page
+ * served a mid-story scene from Wayne's site reading position, which the
+ * library re-scrape then stored under 1-2). The session still helps for
+ * entitled premium: if its page carries a loader, the sessioned POST is
+ * token-bound and safe. Null = paywalled or unfetchable → the reader's
+ * visible-WebView hop takes over. Shared by the reader ladder, the
+ * per-chapter download, and EpubBulkService.
  */
 suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
     fun build(paras: List<String>, imgs: List<Pair<Int, String>>, title: String): ChapterExtract? =
@@ -623,58 +626,62 @@ suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
         else ChapterExtract(title = title, paragraphs = paras, images = imgs)
 
     return try {
-        // (1) sessioned: premium renders server-side, public shorts embed
-        // or POST their body.
-        val page = alpFetch(chapterUrl)
-        val (title, tokens) = parseAlpEpisodePage(page)
-        val sessioned: ChapterExtract? = when {
-            tokens != null -> {
-                val body = alpPostEpisodeBody(
-                    tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapterUrl
-                )
-                val (paras, imgs) = parseAlpBodyWithImages(body)
-                build(paras, imgs, title).also {
-                    DebugLog.log("ALP", "headless chapter (B): ${paras.size} paragraphs, ${imgs.size} images")
-                }
-            }
-            else -> {
-                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-                if (paras.isNotEmpty()) {
-                    DebugLog.log("ALP", "headless chapter (A): ${paras.size} paragraphs, ${imgs.size} images")
-                }
-                build(paras, imgs, title.ifBlank { alpLastTitle })
-            }
-        }
-        if (sessioned != null) return sessioned
-
-        // (2) anonymous retry: the logged-in shape of public LONG chapters
-        // is the paginated viewer — no loader, and #novelBody parses to zero
-        // paragraphs (whitespace residue is NOT a blank string). Logged-out
-        // pages carry the .load(episode_body) loader; the anonymous page's
-        // own Set-Cookie jar must ride with the POST (its token is bound to
-        // that anon session — cookie-less = 419, session cookies = mismatch).
+        // (1) ANONYMOUS first: loader POST is URL-bound → correct chapter
+        // for every public episode; the anon page's own Set-Cookie jar must
+        // ride with the POST (its token binds to that anon session).
         val (anonPage, anonJar) = alpFetchAnonWithJar(chapterUrl)
         val (anonTitle, anonTokens) = parseAlpEpisodePage(anonPage)
-        val anonExtract: ChapterExtract? = when {
-            anonTokens != null -> {
-                val body = alpPostEpisodeBody(
-                    anonTokens.episodeId, anonTokens.episodeToken, anonTokens.csrfToken,
-                    chapterUrl, anonCookie = anonJar
-                )
-                val (paras, imgs) = parseAlpBodyWithImages(body)
-                build(paras, imgs, anonTitle).also {
-                    DebugLog.log("ALP", "headless chapter (B-anon): ${paras.size} paragraphs, ${imgs.size} images")
-                }
+        if (anonTokens != null) {
+            val body = alpPostEpisodeBody(
+                anonTokens.episodeId, anonTokens.episodeToken, anonTokens.csrfToken,
+                chapterUrl, anonCookie = anonJar
+            )
+            val (paras, imgs) = parseAlpBodyWithImages(body)
+            if (paras.isNotEmpty()) {
+                DebugLog.log("ALP", "headless chapter (B-anon): ${paras.size} paragraphs, ${imgs.size} images")
+                return build(paras, imgs, anonTitle)
             }
-            else -> {
-                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-                build(paras, imgs, anonTitle.ifBlank { alpLastTitle })
+        } else {
+            // anonymous server-rendered shape (no loader): #novelBody is
+            // URL-bound here — no session, no viewer position. Trusted.
+            val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+            if (paras.isNotEmpty()) {
+                DebugLog.log("ALP", "headless chapter (A-anon): ${paras.size} paragraphs, ${imgs.size} images")
+                return build(paras, imgs, anonTitle.ifBlank { alpLastTitle })
             }
         }
-        if (anonExtract == null) {
-            DebugLog.log("ALP", "headless chapter: no body in either page shape")
+
+        // (2) SESSIONED fallback — this is where PAID chapters live (the
+        // anonymous page never carries them; Wayne: "anonymous first won't
+        // help when I pull paid chapters"). Two sub-paths:
+        //   (2a) a sessioned loader — its POST is token/URL-bound, safe;
+        //   (2b) the sessioned EMBEDDED body — trustworthy ONLY for owned
+        // premium (the server renders the chapter the account owns). A
+        // NOT-owned episode page instead shows the purchase UI, and a
+        // logged-in FREE page renders the viewer at the account's
+        // last-read position — both poison. Accept (2b) only when the page
+        // carries no purchase call-to-action, and log the path so paid
+        // pulls stay auditable.
+        val page = alpFetch(chapterUrl)
+        val (title, tokens) = parseAlpEpisodePage(page)
+        if (tokens != null) {
+            val body = alpPostEpisodeBody(
+                tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapterUrl
+            )
+            val (paras, imgs) = parseAlpBodyWithImages(body)
+            build(paras, imgs, title).also {
+                DebugLog.log("ALP", "headless chapter (B-session): ${paras.size} paragraphs, ${imgs.size} images")
+            }
+        } else if (!page.contains("このエピソードを購入") && !page.contains("エピソードをレンタル")) {
+            val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+            if (paras.isNotEmpty()) {
+                DebugLog.log("ALP", "headless chapter (A-session): ${paras.size} paragraphs, ${imgs.size} images")
+            }
+            build(paras, imgs, title.ifBlank { alpLastTitle })
+        } else {
+            DebugLog.log("ALP", "headless chapter: paywalled (purchase UI on session page)")
+            null
         }
-        anonExtract
     } catch (e: Exception) {
         DebugLog.log("ALP", "headless chapter fetch failed", e)
         null
