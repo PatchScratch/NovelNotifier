@@ -177,4 +177,48 @@ class AlphaPolisTest {
         assertEquals("v2", EpubStore.chapterBucket("v2c1"))
         assertEquals("v1", EpubStore.chapterBucket("v1c16"))
     }
+
+    // --- viewer-ToC ordering + padlock (Wayne: "drive the release ordering
+    //     and padlock now", 2026-10-18) ---------------------------------
+
+    private fun ep(id: String, title: String) = AlpEpisode(id = id, title = title, path = "/novel/x/y/episode/$id")
+
+    @Test
+    fun dispOrder_sortsAscendingWhenSiteAscending() {
+        val eps = listOf(ep("101", "1-1"), ep("102", "1-2"), ep("103", "1-3"), ep("104", "1-4"))
+        val viewer = mapOf(
+            101L to (10 to true), 102L to (11 to true), 103L to (12 to true), 104L to (13 to true)
+        )
+        val ordered = applyAlpDispOrder(eps, viewer)
+        assertEquals(listOf("1-1", "1-2", "1-3", "1-4"), ordered.map { it.title })
+    }
+
+    @Test
+    fun dispOrder_sortsDescendingWhenSiteDescending_andUnknownsChain() {
+        // site lists newest first: dispOrder DESC; one unknown episode stays
+        // chained to its neighbor instead of jumping
+        val eps = listOf(ep("201", "4-1"), ep("202", "3-16"), ep("203", "3-15"), ep("204", "3-14"))
+        val viewer = mapOf(
+            201L to (1 to true), 202L to (2 to true), 204L to (4 to true)  // 203 unknown
+        )
+        val ordered = applyAlpDispOrder(eps, viewer)
+        assertEquals(listOf("4-1", "3-16", "3-15", "3-14"), ordered.map { it.title })
+    }
+
+    @Test
+    fun dispOrder_belowCoverageKeepsToCOrder() {
+        val eps = listOf(ep("301", "1-1"), ep("302", "1-2"), ep("303", "1-3"), ep("304", "1-4"))
+        val viewer = mapOf(301L to (99 to true))  // 25% coverage < 50%
+        val ordered = applyAlpDispOrder(eps, viewer)
+        assertEquals(eps, ordered)
+    }
+
+    @Test
+    fun dispOrder_siteReorderWinsOverArrayOrder() {
+        // the author reordered on the site: 1-2 now displays before 1-1
+        val eps = listOf(ep("401", "1-1"), ep("402", "1-2"))
+        val viewer = mapOf(401L to (11 to true), 402L to (10 to true))
+        val ordered = applyAlpDispOrder(eps, viewer)
+        assertEquals(listOf("1-2", "1-1"), ordered.map { it.title })
+    }
 }

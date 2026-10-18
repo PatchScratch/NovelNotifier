@@ -25,6 +25,14 @@ class AlphaPolisViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
 
+    init {
+        AlpTocStore.install(app)
+    }
+
+    /** Viewer-ToC data for a series (dispOrder + availability per episode). */
+    fun viewerTocOf(seriesUrl: String): Map<Long, Pair<Int, Boolean>> =
+        AlpTocStore.forSeries(seriesUrl)
+
     var bookmarks by mutableStateOf(loadAlpBookmarks(prefs))
         private set
 

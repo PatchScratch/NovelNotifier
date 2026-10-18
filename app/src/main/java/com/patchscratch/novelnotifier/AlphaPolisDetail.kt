@@ -38,6 +38,9 @@ fun AlphaPolisDetailScreen(
     onSetReadPos: (Int) -> Unit,
     onOpenReader: (chapters: List<Release>, startIndex: Int) -> Unit,
     onBack: () -> Unit = {},
+    // Viewer-ToC (dispOrder + per-account availability) from the chapter
+    // pages' app-cover-data windows — drives release ordering + padlocks.
+    viewerToc: Map<Long, Pair<Int, Boolean>> = emptyMap(),
     // Client-side categories (Kakuyomu pattern) — the ⚑ button becomes the
     // category picker; membership is single and move-only.
     categories: CategoryState = CategoryState(),
@@ -124,7 +127,10 @@ fun AlphaPolisDetailScreen(
         }
     }
 
-    val episodes = detail?.episodes ?: emptyList()
+    // The site's own display sequence once enough viewer windows have
+    // accumulated (>=50% coverage, direction inferred); padlock from the
+    // per-account rental state when known (falls back to the ToC isPublic).
+    val episodes = applyAlpDispOrder(detail?.episodes ?: emptyList(), viewerToc)
     val position = readPos
     val nextOrdinal = if (episodes.isNotEmpty()) (position + 1).coerceAtMost(episodes.size) else 0
     val nextEp = episodes.getOrNull(nextOrdinal - 1)
@@ -199,7 +205,7 @@ fun AlphaPolisDetailScreen(
                     downloaded = ep.url in storedUrls,
                     downloading = downloadingUrl == ep.url,
                     onDownload = { downloadEpisode(ep, i + 1) },
-                    premium = !ep.isPublic
+                    premium = !(viewerToc[ep.id.toLongOrNull()]?.second ?: ep.isPublic)
                 )
             } else storedList.mapIndexed { i, rel ->
                 SeriesEpisodeRow(

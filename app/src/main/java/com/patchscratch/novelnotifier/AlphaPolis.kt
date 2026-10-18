@@ -3,6 +3,7 @@ package com.patchscratch.novelnotifier
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStream
 import java.net.HttpURLConnection
@@ -584,6 +585,97 @@ data class AlpViewerData(
     val entries: Map<Long, Pair<Int, Boolean>> = emptyMap()
 )
 
+/**
+ * Per-series accumulation of the viewer ToC windows (script#app-cover-data
+ * harvested on every episode fetch). Windows are PARTIAL (the episodes
+ * around the current one), so entries merge across reads; Wayne 2026-10-18:
+ * "drive the release ordering and padlock now" — dispOrder is the site's
+ * own display sequence and rental.isFree/isOnRental the per-account
+ * padlock state (logged-in fetches reflect the USER's entitlement).
+ */
+object AlpTocStore {
+    // series key ("/novel/<a>/<c>") → episodeNo → (dispOrder, available)
+    private val bySeries = HashMap<String, HashMap<Long, Pair<Int, Boolean>>>()
+    @Volatile private var prefs: android.content.SharedPreferences? = null
+
+    fun seriesKeyOf(url: String): String? =
+        Regex("""/novel/\d+/\d+""").find(url)?.value
+
+    fun install(context: android.content.Context) {
+        if (prefs != null) return
+        prefs = context.applicationContext
+            .getSharedPreferences("alp_viewer_toc", android.content.Context.MODE_PRIVATE)
+        synchronized(this) {
+            prefs!!.all.forEach { (key, v) ->
+                val map = HashMap<Long, Pair<Int, Boolean>>()
+                runCatching {
+                    val arr = JSONObject(v.toString())
+                    arr.keys().forEach { no ->
+                        val pair = arr.optJSONArray(no) ?: return@forEach
+                        map[no.toLong()] = pair.optInt(0) to pair.optBoolean(1)
+                    }
+                }
+                bySeries[key] = map
+            }
+        }
+    }
+
+    @Synchronized
+    fun note(episodeUrl: String, data: AlpViewerData) {
+        val key = seriesKeyOf(episodeUrl) ?: return
+        val map = bySeries.getOrPut(key) { HashMap() }
+        var changed = false
+        data.entries.forEach { (no, pair) ->
+            if (map[no] != pair) { map[no] = pair; changed = true }
+        }
+        if (changed) {
+            prefs?.edit()?.putString(key, JSONObject().apply {
+                map.forEach { (no, pr) -> put(no.toString(), JSONArray().put(pr.first).put(pr.second)) }
+            }.toString())?.apply()
+        }
+    }
+
+    @Synchronized
+    fun forSeries(seriesUrl: String): Map<Long, Pair<Int, Boolean>> =
+        (bySeries[seriesKeyOf(seriesUrl)] ?: bySeries[seriesUrl])?.toMap() ?: emptyMap()
+}
+
+/**
+ * Order episodes by the site's own display sequence. dispOrder direction is
+ * INFERRED from the covered subset (compare the first vs last covered entry
+ * in ToC order — the site may list ascending or descending); unknown
+ * episodes chain to their previous known neighbor's value so partial
+ * windows never scramble the list. Below [minCoverage] the ToC order stays
+ * (not enough viewer data yet). Pure — unit-tested.
+ */
+fun applyAlpDispOrder(
+    episodes: List<AlpEpisode>,
+    viewer: Map<Long, Pair<Int, Boolean>>,
+    minCoverage: Double = 0.5
+): List<AlpEpisode> {
+    if (episodes.size < 2 || viewer.isEmpty()) return episodes
+    val covered = episodes.count { viewer[it.id.toLongOrNull()] != null }
+    if (covered < episodes.size * minCoverage) return episodes
+    val first = viewer[episodes.first { viewer[it.id.toLongOrNull()] != null }.id.toLong()]!!.first
+    val last = viewer[episodes.last { viewer[it.id.toLongOrNull()] != null }.id.toLong()]!!.first
+    val ascending = last >= first
+    // chain: unknown takes its previous known neighbor's dispOrder
+    val keys = IntArray(episodes.size)
+    var prev = if (ascending) Int.MIN_VALUE / 2 else Int.MAX_VALUE / 2
+    episodes.forEachIndexed { i, ep ->
+        val d = viewer[ep.id.toLongOrNull()]?.first
+        keys[i] = d ?: prev
+        if (d != null) prev = d
+    }
+    return episodes.mapIndexed { i, ep -> i to ep }
+        .sortedWith { (i1, e1), (i2, e2) ->
+            val k1 = keys[i1].toLong() * 2 + (if (ascending) i1 else -i1)
+            val k2 = keys[i2].toLong() * 2 + (if (ascending) i2 else -i2)
+            k1.compareTo(k2)
+        }
+        .map { it.second }
+}
+
 /** Episode id from an /episode/<id> URL (0 when unparseable). */
 internal fun alpEpisodeIdFromUrl(url: String): Long =
     Regex("""/episode/(\d+)""").find(url)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
@@ -606,8 +698,11 @@ fun parseAlpViewerData(html: String): AlpViewerData? {
                 val ep = eps.optJSONObject(j) ?: continue
                 val no = ep.optLong("episodeNo")
                 if (no <= 0) continue
-                val free = ep.optJSONObject("rental")?.optBoolean("isFree", false) ?: false
-                entries[no] = ep.optInt("dispOrder", 0) to free
+                val rent = ep.optJSONObject("rental")
+                // availability = free OR currently rented — the padlock the
+                // site's own ToC panel shows (per-account on logged-in pages)
+                val available = rent?.let { it.optBoolean("isFree", false) || it.optBoolean("isOnRental", false) } ?: false
+                entries[no] = ep.optInt("dispOrder", 0) to available
             }
         }
         AlpViewerData(current, entries)
@@ -708,6 +803,9 @@ suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
             }
         }
 
+        // Viewer-ToC accumulation (either page shape carries the window).
+        parseAlpViewerData(anonPage)?.let { AlpTocStore.note(chapterUrl, it) }
+
         // (2) SESSIONED fallback — this is where PAID chapters live (the
         // anonymous page never carries them; Wayne: "anonymous first won't
         // help when I pull paid chapters"). Two sub-paths:
@@ -720,6 +818,7 @@ suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
         // carries no purchase call-to-action, and log the path so paid
         // pulls stay auditable.
         val page = alpFetch(chapterUrl)
+        parseAlpViewerData(page)?.let { AlpTocStore.note(chapterUrl, it) }
         val (title, tokens) = parseAlpEpisodePage(page)
         if (tokens != null) {
             val body = alpPostEpisodeBody(

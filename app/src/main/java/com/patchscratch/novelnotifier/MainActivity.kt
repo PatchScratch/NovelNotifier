@@ -591,6 +591,7 @@ fun NovelApp(
                 readPos = alp.readPosOf(w.id),
                 onSetReadPos = { n -> alp.setReadPos(w.id, n) },
                 categories = alp.categories,
+                viewerToc = alp.viewerTocOf(w.url),
                 onMove = { workId, catId -> alp.moveToCategory(workId, catId) },
                 onCreateAndMove = { workId, name ->
                     alp.addCategory(name)
