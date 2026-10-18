@@ -159,7 +159,11 @@ class AlphaPolisTest {
         assertEquals("v1c1", alpEpisodeLabel("1-1", 2))
         assertEquals("v2c1", alpEpisodeLabel("2-1", 17))
         assertEquals("v8c16", alpEpisodeLabel("8-16", 129))
-        // non-volume titles keep the ToC ordinal
+        // flat 第N話 series (the other bookmark shape): the 話 number is
+        // the label, not the ToC ordinal
+        assertEquals("c1", alpEpisodeLabel("第1話　最悪の砦と、最強の教え子", 1))
+        assertEquals("c30", alpEpisodeLabel("第30話　豊穣の女神、世界の食糧事情を変える", 31))
+        // non-numbered titles keep the ToC ordinal
         assertEquals("c1", alpEpisodeLabel("書籍化記念", 1))
         assertEquals("c40", alpEpisodeLabel("おまけ", 40))
         // ordering + bucket split follow the volume key

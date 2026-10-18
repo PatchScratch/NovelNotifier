@@ -82,8 +82,16 @@ data class AlpWorkDetail(val work: AlpWork, val episodes: List<AlpEpisode>)
  * sort before all volumes, which suits front-matter).
  */
 fun alpEpisodeLabel(title: String, tocOrdinal: Int): String {
-    Regex("^([0-9]+)-([0-9]+)$").find(title.trim())?.let {
+    val t = title.trim()
+    // Volume-chapter series ("1-1" = Vol 1 Ch 1 — Wayne, 2026-10-18)
+    Regex("^([0-9]+)-([0-9]+)$").find(t)?.let {
         return "v" + it.groupValues[1] + "c" + it.groupValues[2]
+    }
+    // Flat 第N話 series: the 話 number IS the site's own chapter key —
+    // prefer it over the ToC ordinal (front-matter extras can shift the
+    // ordinal). Bare chapter keys sort before any volume labels.
+    Regex("^第([0-9]+)話").find(t)?.let {
+        return "c" + it.groupValues[1]
     }
     return "c" + tocOrdinal
 }
