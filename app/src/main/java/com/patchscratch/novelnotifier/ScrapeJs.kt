@@ -716,7 +716,17 @@ fun chapterExtractJs(): String = """
     // "every site's epub captures images").
     var imgs = [];
     function imgOf(nd) {
-      var u = nd.getAttribute('src') || nd.getAttribute('data-src') ||
+      // An anchor wrapping the img whose href IS an image wins over the src
+      // (AlphaPolis: story_image/<id>/<uuid> serves openly while the src's
+      // /pc/ variant is CloudFront-blocked; extension-gated so lightbox
+      // PAGE links on other hosts are never mistaken for the image).
+      var u = '';
+      var ia = nd.closest ? nd.closest('a[href]') : null;
+      if (ia) {
+        var ah = ia.getAttribute('href') || '';
+        if (/\.(jpe?g|png|webp|gif)(\?|$)/i.test(ah)) u = ah;
+      }
+      if (!u) u = nd.getAttribute('src') || nd.getAttribute('data-src') ||
         nd.getAttribute('data-original') || nd.getAttribute('data-lazy-src') ||
         (nd.getAttribute('srcset') || '').split(',')[0].trim().split(' ')[0] || '';
       if (!u || u.indexOf('data:') === 0) return null;

@@ -113,4 +113,43 @@ class AlphaPolisTest {
         // no residual markup
         assertTrue(paras.none { it.contains('<') })
     }
+
+    // --- illustration URL choice + embedded-body balance (2026-10-18) -----
+
+    @Test
+    fun illustration_prefersOpenAnchorUrlOverBlockedPcSrc() {
+        // real AJAX shape: anchor = story_image (open, 200), src = /pc/ (403)
+        val html = """<div class="story-image p-novel-episode__story-image">""" +
+            """<a href="https://cdn-image.alphapolis.co.jp/story_image/99153/5acad5ac-bd60-4854-bdd6-17dbac113c05.jpeg" target="_blank">""" +
+            """<img src="https://cdn-image.alphapolis.co.jp/story_images/99153/pc/5acad5ac-bd60-4854-bdd6-17dbac113c05.jpeg" alt=""></a></div>""" +
+            """<br /> <br /> 　一章<br /> 　今日の天気は…<br />"""
+        val (paras, imgs) = parseAlpBodyWithImages(html)
+        assertTrue(imgs.size == 1)
+        assertTrue(
+            "harvests the OPEN story_image url, not the blocked /pc/ variant",
+            imgs[0].second == "https://cdn-image.alphapolis.co.jp/story_image/99153/5acad5ac-bd60-4854-bdd6-17dbac113c05.jpeg"
+        )
+        assertTrue(paras.isNotEmpty())
+    }
+
+    @Test
+    fun embeddedBody_survivesIllustrationDivAndKeepsProseAfterIt() {
+        // Wayne's saved 1-1 page shape: nested story-image div inside
+        // #novelBody, prose after it — the old lazy (.*?)</div> truncated
+        // at the image's own closing tag.
+        val html = """<html><body><div id="TextBody"><div class="p-novel-episode__page-count">1 / 64</div>""" +
+            """<div class="p-novel-episode__text js-novel-body" id="novelBody">""" +
+            """<div class="story-image p-novel-episode__story-image">""" +
+            """<a href="https://cdn-image.alphapolis.co.jp/story_image/99153/x.jpeg" target="_blank">""" +
+            """<img src="https://cdn-image.alphapolis.co.jp/story_images/99153/pc/x.jpeg" alt=""></a></div><br>""" +
+            """　一章<br><br>　今日の天気は、曇り模様だ。<br><br>　二段落目。<br><br>　三段落目。""" +
+            """</div></div><div class="c-like unauthenticated" id="likeArea"></div></body></html>"""
+        val body = alpEmbeddedBody(html)
+        assertTrue("keeps prose after the illustration", body.contains("三段落目。"))
+        assertTrue("keeps the image markup", body.contains("story-image"))
+        val (paras, imgs) = parseAlpBodyWithImages(body)
+        assertTrue("3 paragraphs survive", paras.size >= 3)
+        assertTrue(imgs.size == 1)
+        assertTrue(imgs[0].second.endsWith("/story_image/99153/x.jpeg"))
+    }
 }

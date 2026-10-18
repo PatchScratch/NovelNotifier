@@ -549,16 +549,23 @@ internal fun alpEpisodeTitle(html: String): String =
 
 /**
  * Path (A): div#novelBody's inner HTML when the server embedded the body
- * (logged-in pages; the LoadingEpisode spinner div is stripped). Blank
- * when the page uses the AJAX loader instead.
+ * (anonymous/logged-out pages; the LoadingEpisode spinner div is stripped).
+ * Balanced-close aware: the body NESTS divs (each illustration ships as
+ * <div class="story-image">), so the capture cuts at the markers that
+ * FOLLOW novelBody's own closing tag and strips only that final </div> —
+ * a lazy (.*?)</div> would truncate the chapter at the first illustration
+ * (live-caught via Wayne's saved 1-1 page). Blank when the page uses the
+ * AJAX loader instead.
  */
 internal fun alpEmbeddedBody(html: String): String {
-    val m = Regex("""<div[^>]*id="novelBody"[^>]*>(.*?)</div>""", RegexOption.DOT_MATCHES_ALL)
-        .find(html) ?: return ""
-    var body = m.groupValues[1]
-        .replace(Regex("""<div[^>]*id="LoadingEpisode"[^>]*>.*?</div>""", RegexOption.DOT_MATCHES_ALL), "")
-    // trim the trailing like-area that shares the container on some layouts
+    val open = Regex("""<div[^>]*id="novelBody"[^>]*>""").find(html) ?: return ""
+    var body = html.substring(open.range.last + 1)
+    // everything after novelBody's close starts here
     body = body.substringBefore("""<div class="c-like""")
+    body = body.substringBefore("""<div class="p-novel-episode__wrap-bookmark""")
+    body = body.trimEnd()
+    if (body.endsWith("</div>")) body = body.removeSuffix("</div>").trimEnd()
+    body = body.replace(Regex("""<div[^>]*id="LoadingEpisode"[^>]*>.*?</div>""", RegexOption.DOT_MATCHES_ALL), "")
     return body.trim()
 }
 
@@ -642,17 +649,42 @@ suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
  * Body HTML → paragraphs + images (document order, paragraph-anchored).
  * Relative image URLs absolutize against the CDN/site base.
  */
-fun parseAlpBodyWithImages(html: String): Pair<List<String>, List<Pair<Int, String>>> {    val paragraphs = mutableListOf<String>()
+fun parseAlpBodyWithImages(html: String): Pair<List<String>, List<Pair<Int, String>>> {
+    val paragraphs = mutableListOf<String>()
     val images = mutableListOf<Pair<Int, String>>()
-    // walk <p>…</p> and <img …> in order
-    val token = Regex("""<p[^>]*>(.*?)</p>|<img[^>]+src="([^"]+)"""", RegexOption.DOT_MATCHES_ALL)
+
+    /**
+     * Illustration URL choice (live-caught 2026-10-18 via Wayne's saved
+     * 1-1 page): each illustration ships as <a href="…/story_image/<id>/
+     * <uuid>.jpeg"><img src="…/story_images/<id>/pc/<uuid>.jpeg">. The
+     * ANCHOR href is the original and serves openly (200); the img src's
+     * /pc/ variant sits behind a CloudFront block (403 — it starved epub
+     * media downloads and Coil). Prefer the anchor, src as fallback.
+     */
+    fun bestImgUrl(anchorHref: String, imgSrc: String): String {
+        val candidates = listOf(anchorHref, imgSrc)
+        return candidates.firstOrNull { it.startsWith("http") && it.contains("story_image") }
+            ?: candidates.firstOrNull { it.startsWith("http") }
+            ?: imgSrc
+    }
+
+    // walk <p>…</p> and illustrations (anchor-wrapped or bare <img>) in order
+    val token = Regex(
+        """<a[^>]+href="(https?://[^"]+)"[^>]*>\s*<img[^>]+src="([^"]+)"|<p[^>]*>(.*?)</p>|<img[^>]+src="([^"]+)"""",
+        RegexOption.DOT_MATCHES_ALL
+    )
     for (m in token.findAll(html)) {
-        if (m.groupValues[2].isNotBlank()) {
-            var u = m.groupValues[2]
-            if (u.startsWith("/")) u = ALP_BASE + u
+        val anchorImg = m.groupValues[2].isNotBlank()
+        val bareImg = m.groupValues[4].isNotBlank()
+        if (anchorImg || bareImg) {
+            val anchor = m.groupValues[1]
+            val src = if (anchorImg) m.groupValues[2] else m.groupValues[4]
+            var u = bestImgUrl(anchor, src)
+            if (u.startsWith("//")) u = "https:" + u
+            else if (u.startsWith("/")) u = ALP_BASE + u
             images += paragraphs.size to u   // anchor: before the NEXT paragraph
         } else {
-            val text = m.groupValues[1]
+            val text = m.groupValues[3]
                 .replace(Regex("""<br\s*/?>"""), "\n")
                 .replace(Regex("<[^>]+>"), "")
                 .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
