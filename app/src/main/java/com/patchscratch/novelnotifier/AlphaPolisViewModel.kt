@@ -93,6 +93,7 @@ class AlphaPolisViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
             syncing = true
             try {
+                val before = bookmarks
                 val site = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     fetchAlpBookshelf()
                 }
@@ -109,6 +110,13 @@ class AlphaPolisViewModel(app: Application) : AndroidViewModel(app) {
                 bookmarks = enriched
                 save()
                 DebugLog.log("ALP", "bookshelf sync: ${enriched.size} works")
+                // On-check offline catch-up: series with new episodes that
+                // we already keep offline get a bulk job enqueued (stored
+                // chapters skip instantly; only the new ones fetch).
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { alpOfflineCatchUp(getApplication(), before, enriched) }
+                        .onFailure { DebugLog.log("ALP", "offline catch-up skipped", it) }
+                }
             } catch (e: Exception) {
                 DebugLog.log("ALP", "bookshelf sync failed", e)
             } finally {

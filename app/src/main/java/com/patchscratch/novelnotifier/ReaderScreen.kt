@@ -624,40 +624,21 @@ fun ReaderScreen(
             }
         }
         if (isAlpChapter && !alpHop) {
-            // The anonymous SERVER-RENDERED page is the truth source
-            // (2026-10-18, live-caught on 万能 1-1: the logged-in render
-            // parks at the account's reading position — a ガルム scene
-            // under 1-1's URL — while Wayne's own saved page of the same
-            // URL, logged OUT, carries the chapter's true opening). The
-            // logged-out HTML embeds the full body server-side for free
-            // chapters; harvest it directly. Only when that shape is
-            // absent (loader-only pages) fall to the WebView hop.
+            // !alpHop is load-bearing: without it this branch re-enters on
+            // every page-finish and reload()s forever — the 'pages are just
+            // cycling' live catch. Fully headless via the shared fetch (the
+            // anonymous loader POST is the proven truth path; a guarded
+            // sessioned attempt covers owned premium). Only when it yields
+            // nothing (locked premium / site error) do the stored copy and
+            // the visible-WebView hop take over — the hop is also the
+            // paywall + in-app unlock surface.
             if (isNetworkOnline(context)) {
-                // The logged-out loader POST returns the URL's TRUE chapter
-                // (proven against Wayne's saved 万能 1-1 page 2026-10-18:
-                // loader id matches the URL and the body opens 一章/《１
-                // 地球にて》 exactly as his reference). The anonymous page's
-                // own Set-Cookie jar must ride the POST (token binding).
-                val anonExtract = kotlinx.coroutines.withContext(Dispatchers.IO) {
-                    runCatching {
-                        val (anonPage, anonJar) = alpFetchAnonWithJar(chapter.url)
-                        parseAlpViewerData(anonPage)?.let { AlpTocStore.note(chapter.url, it) }
-                        val (title, tokens) = parseAlpEpisodePage(anonPage)
-                        if (tokens != null) {
-                            val body = alpPostEpisodeBody(
-                                tokens.episodeId, tokens.episodeToken, tokens.csrfToken,
-                                chapter.url, anonCookie = anonJar
-                            )
-                            val (paras, imgs) = parseAlpBodyWithImages(body)
-                            if (paras.isNotEmpty()) {
-                                DebugLog.log("ALP", "anon-loader: ${paras.size} paragraphs, ${imgs.size} images")
-                                ChapterExtract(title = title.ifBlank { chapter.chapter }, paragraphs = paras, images = imgs)
-                            } else null
-                        } else null
-                    }.getOrNull()
+                val headless = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    runCatching { fetchAlpChapterHeadless(chapter.url) }.getOrNull()
                 }
-                if (anonExtract != null) {
-                    extractResult = anonExtract
+                if (headless != null) {
+                    extractResult =
+                        if (headless.title.isBlank()) headless.copy(title = chapter.chapter) else headless
                     return@LaunchedEffect
                 }
                 if (stored != null) {

@@ -234,17 +234,37 @@ class EpubBulkService : Service() {
                 if (!scope.isActive) return
                 if (chapter.url in known && !job.refresh) { skipped++; continue }
                 if (nuHosted(chapter.url)) { pendingNu.add(chapter); continue }
-                // AlphaPolis chapters extract ONLY from the site's rendered
-                // page (Wayne's directive 2026-10-18: no anonymous fetching;
-                // every static fetch has served wrong-episode text). This
-                // service's WebView is hidden and cannot drive the
-                // visibility-gated viewer, so bulk cannot fetch them —
-                // READING saves each chapter automatically (the standing
-                // reading-is-the-opt-in rule). Skip with a clear status.
+                // AlphaPolis fetches fully headless via the anonymous
+                // loader POST (no WebView needed — see
+                // fetchAlpChapterHeadless). Locked premium returns null
+                // (guarded): opening the chapter in the READER is the
+                // unlock+save path (reading-is-the-opt-in).
                 if (chapter.url.endsWith("alphapolis.co.jp") ||
                     chapter.url.contains(".alphapolis.co.jp/")) {
-                    skipped++
-                    status("alphapolis · ${chapter.label} — open in the reader to save")
+                    // Viewer-ToC fast-skip: a known-locked episode (anon
+                    // view padlock) needs no fetch attempt — owned premium
+                    // stays reader-saved (opening is the opt-in).
+                    val epId = alpEpisodeIdFromUrl(chapter.url)
+                    if (epId != 0L && AlpTocStore.forSeries(job.seriesUrl)[epId]?.second == false) {
+                        skipped++
+                        continue
+                    }
+                    status("alphapolis · ${chapter.label}")
+                    val extract = fetchAlpChapterHeadless(chapter.url)
+                    if (extract != null) {
+                        val count = withContext(Dispatchers.IO) {
+                            EpubStore.appendChapter(
+                                context, job.seriesTitle, job.seriesUrl,
+                                chapter.url, chapter.label, extract, job.meta
+                            )
+                        }
+                        if (count > 0) saved++ else skipped++
+                        consecutiveFailures = 0
+                    } else {
+                        skipped++
+                        status("alphapolis · ${chapter.label} — locked, open in the reader to save")
+                    }
+                    delay(4000)
                     continue
                 }
                 status("direct · ${chapter.label}")

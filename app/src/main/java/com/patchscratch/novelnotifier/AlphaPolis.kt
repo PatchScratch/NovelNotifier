@@ -749,69 +749,128 @@ internal fun alpEmbeddedBody(html: String): String {
 }
 
 /**
- * One chapter, fully headless (no WebView). ANONYMOUS FIRST — the logged-out
- * page's .load(episode_body) loader is URL-bound and its POST returns
- * exactly the URL's chapter (verified live across 1-1..1-3). The login
- * session is the LAST resort and its embedded #novelBody is NEVER trusted:
- * a logged-in episode page renders the VIEWER AT THE ACCOUNT'S LAST READ
- * POSITION, so the server-side body can be a completely different
- * episode's text (live-caught 2026-10-18: 異世界 1-2's sessioned page
- * served a mid-story scene from Wayne's site reading position, which the
- * library re-scrape then stored under 1-2). The session still helps for
- * entitled premium: if its page carries a loader, the sessioned POST is
- * token-bound and safe. Null = paywalled or unfetchable → the reader's
- * visible-WebView hop takes over. Shared by the reader ladder, the
- * per-chapter download, and EpubBulkService.
+ * One chapter, fully headless (no WebView). THE ANONYMOUS LOADER POST IS
+ * THE TRUTH PATH (proven 2026-10-18/19 against Wayne's own references): a
+ * logged-in render of an episode URL can park at the account's last-read
+ * position — wrong-episode text under the URL (万能 1-1 served a ガルム
+ * scene; Wayne's saved logged-out page of the same URL carries the true
+ * opening, and this POST reproduces it word-for-word; 1-2 re-verified
+ * against his site screenshot) — while the LOGGED-OUT page's
+ * .load(episode_body) is URL-bound and returns exactly the URL's chapter.
+ * Public chapters only: the anonymous jar holds no entitlements. Entitled
+ * premium gets one GUARDED sessioned attempt (the viewer ToC block must
+ * confirm the server rendered THIS episode and no purchase UI is present —
+ * otherwise the session is parked elsewhere and its tokens/embedded body
+ * belong to a different chapter). A purchase CTA in a POST body also
+ * rejects it (bulk must never store paywall chrome as chapter text).
+ * Null → the reader's visible-WebView hop (paywall, in-app unlock) or a
+ * bulk skip. Shared by the reader ladder and EpubBulkService.
  */
 suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
+    fun paywall(text: String) =
+        text.contains("このエピソードを購入") || text.contains("エピソードをレンタル") ||
+            text.contains("購入して読む") || text.contains("レンタルして読む")
+
     fun build(paras: List<String>, imgs: List<Pair<Int, String>>, title: String): ChapterExtract? =
         if (paras.isEmpty()) null
         else ChapterExtract(title = title, paragraphs = paras, images = imgs)
 
-    return try {
-        // SESSION is the only trustworthy context (live-verified in Wayne's
-        // logged-in browser 2026-10-18): the episode_body POST returns the
-        // URL's true episode for the ACCOUNT, while the anonymous jar
-        // returns wrong-episode free-teaser bodies, and the sessioned
-        // page's EMBEDDED #novelBody renders the viewer at the account's
-        // last-read position. So: the sessioned page's LOADER drives the
-        // POST; the embedded body is accepted only when the viewer ToC
-        // block's currentEpisode matches this URL (owned premium) and no
-        // purchase UI is present; anything else → null → the reader's
-        // visible-WebView hop owns it.
-        val page = alpFetch(chapterUrl)
+    // 1. Anonymous page + its own Set-Cookie jar (the loader POST is
+    //    token-bound to exactly that jar). The anon page's viewer block
+    //    still notes display order + free/rental padlocks.
+    try {
+        val (page, jar) = alpFetchAnonWithJar(chapterUrl)
         parseAlpViewerData(page)?.let { AlpTocStore.note(chapterUrl, it) }
         val (title, tokens) = parseAlpEpisodePage(page)
         if (tokens != null) {
             val body = alpPostEpisodeBody(
-                tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapterUrl
+                tokens.episodeId, tokens.episodeToken, tokens.csrfToken,
+                chapterUrl, anonCookie = jar
             )
             val (paras, imgs) = parseAlpBodyWithImages(body)
-            if (paras.isNotEmpty()) {
-                DebugLog.log("ALP", "headless chapter (B-session): ${paras.size} paragraphs, ${imgs.size} images")
+            if (paras.isNotEmpty() && !paywall(body)) {
+                DebugLog.log("ALP", "headless (anon-loader): ${paras.size} paragraphs, ${imgs.size} images")
                 return build(paras, imgs, title)
             }
         }
+    } catch (e: Exception) {
+        DebugLog.log("ALP", "anon-loader miss: ${e.message}")
+    }
+
+    // 2. Entitled premium, guarded: the sessioned page's loader context is
+    //    trustworthy ONLY when its viewer block confirms the server
+    //    rendered THIS episode; otherwise the account's reading position
+    //    poisoned both the tokens and any embedded body.
+    return try {
+        val page = alpFetch(chapterUrl)
+        val viewer = parseAlpViewerData(page)?.also { AlpTocStore.note(chapterUrl, it) }
         val want = alpEpisodeIdFromUrl(chapterUrl)
-        val rendered = parseAlpViewerData(page)?.currentEpisodeNo ?: 0L
-        if (rendered == want && rendered != 0L &&
-            !page.contains("このエピソードを購入") && !page.contains("エピソードをレンタル")
-        ) {
-            val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-            if (paras.isNotEmpty()) {
-                DebugLog.log("ALP", "headless chapter (A-session guarded): ${paras.size} paragraphs")
-            }
-            build(paras, imgs, title.ifBlank { alpLastTitle })
-        } else {
+        val rendered = viewer?.currentEpisodeNo ?: 0L
+        if (rendered == 0L || rendered != want || paywall(page)) {
             if (rendered != 0L && rendered != want) {
-                DebugLog.log("ALP", "viewer rendered episode $rendered, URL wants $want — no trustworthy body")
+                DebugLog.log("ALP", "session parked at $rendered, URL wants $want — no trustworthy body")
             }
             null
+        } else {
+            val (title, tokens) = parseAlpEpisodePage(page)
+            tokens?.let { tk ->
+                val body = alpPostEpisodeBody(tk.episodeId, tk.episodeToken, tk.csrfToken, chapterUrl)
+                val (paras, imgs) = parseAlpBodyWithImages(body)
+                if (paras.isNotEmpty() && !paywall(body)) {
+                    DebugLog.log("ALP", "headless (session-loader, guarded): ${paras.size} paragraphs")
+                    build(paras, imgs, title)
+                } else null
+            } ?: run {
+                // Server-embedded body (short chapters) — same guard above.
+                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+                if (paras.isNotEmpty()) {
+                    DebugLog.log("ALP", "headless (session-embedded, guarded): ${paras.size} paragraphs")
+                }
+                build(paras, imgs, title.ifBlank { alpLastTitle })
+            }
         }
     } catch (e: Exception) {
         DebugLog.log("ALP", "headless chapter fetch failed", e)
         null
     }
+}
+
+/**
+ * On-check offline catch-up (Wayne, 2026-10-19: "on check download
+ * anything new offline"): after a bookshelf sync, any series whose episode
+ * count grew AND that already has stored chapters (the per-series offline
+ * opt-in marker) gets a bulk job covering the FULL episode list — the bulk
+ * service skips stored URLs instantly, so only the new chapters fetch.
+ */
+internal suspend fun alpOfflineCatchUp(
+    context: android.content.Context,
+    before: List<AlpWork>,
+    after: List<AlpWork>
+) {
+    val jobs = mutableListOf<EpubBulkService.BulkJob>()
+    for (fresh in after) {
+        val old = before.firstOrNull { it.id == fresh.id } ?: continue
+        if (fresh.episodeCount <= old.episodeCount) continue
+        if (EpubStore.storedChapters(context, fresh.url).isEmpty()) continue
+        val detail = runCatching { parseAlpWorkPage(alpFetch(fresh.url)) }.getOrNull() ?: continue
+        val ordered = applyAlpDispOrder(detail.episodes, AlpTocStore.forSeries(fresh.url))
+        if (ordered.isEmpty()) continue
+        DebugLog.log(
+            "ALP",
+            "offline catch-up: ${fresh.title} ${old.episodeCount}→${fresh.episodeCount}, enqueue ${ordered.size} episodes"
+        )
+        jobs.add(
+            EpubBulkService.BulkJob(
+                seriesTitle = fresh.title,
+                seriesUrl = fresh.url,
+                chapters = ordered.mapIndexed { i, ep ->
+                    EpubBulkService.BulkChapter(ep.url, alpEpisodeLabel(ep.title, i + 1))
+                },
+                meta = null
+            )
+        )
+    }
+    if (jobs.isNotEmpty()) EpubBulkService.startMany(context, jobs)
 }
 
 /**
