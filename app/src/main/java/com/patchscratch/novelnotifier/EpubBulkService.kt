@@ -254,13 +254,18 @@ class EpubBulkService : Service() {
                             extract.title,
                             chapter.label.removePrefix("c").toIntOrNull() ?: 0
                         )
-                        withContext(Dispatchers.IO) {
+                        // Count only REAL writes — appendChapter returns -1
+                        // on failure (its own log says why); counting those
+                        // as saved masked failed re-scrapes behind a green
+                        // "Bulk done" tally (caught auditing Wayne's
+                        // "1-2 is still wrong" report).
+                        val written = withContext(Dispatchers.IO) {
                             EpubStore.appendChapter(
                                 context, job.seriesTitle, job.seriesUrl,
                                 chapter.url, label, extract, job.meta
                             )
                         }
-                        saved++
+                        if (written > 0) saved++ else failed++
                     } else {
                         skipped++
                     }
