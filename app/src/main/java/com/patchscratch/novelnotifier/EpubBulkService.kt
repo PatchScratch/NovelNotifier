@@ -245,10 +245,19 @@ class EpubBulkService : Service() {
                     status("alphapolis · ${chapter.label}")
                     val extract = fetchAlpChapterHeadless(chapter.url)
                     if (extract != null && extract.paragraphs.isNotEmpty()) {
+                        // Re-derive the storage label from the episode's OWN
+                        // title ("1-1" → v1c1, 第N話 → cN) so a refresh pass
+                        // migrates old flat ordinals to volume/話 labels; the
+                        // cross-bucket sweep in appendChapter moves the
+                        // chapter to its new volume book when the label moves.
+                        val label = alpEpisodeLabel(
+                            extract.title,
+                            chapter.label.removePrefix("c").toIntOrNull() ?: 0
+                        )
                         withContext(Dispatchers.IO) {
                             EpubStore.appendChapter(
                                 context, job.seriesTitle, job.seriesUrl,
-                                chapter.url, chapter.label, extract, job.meta
+                                chapter.url, label, extract, job.meta
                             )
                         }
                         saved++
