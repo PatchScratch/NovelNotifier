@@ -568,6 +568,54 @@ fun parseAlpEpisodePage(html: String): Pair<String, AlpEpisodeTokens?> {
 /** Values scraped from an episode page that authorize the body POST. */
 data class AlpEpisodeTokens(val episodeId: String, val episodeToken: String, val csrfToken: String)
 
+/**
+ * The viewer's own ToC block (script#app-cover-data — Wayne's pointer
+ * 2026-10-18: "use the ToC page in a chapter"): currentEpisode identifies
+ * WHICH episode the server actually rendered on this page — the logged-in
+ * viewer renders at the account's last-read position, so the page body can
+ * belong to a different episode than the URL; currentEpisode is the truth
+ * token. entries[] carry the site's own ToC row data (dispOrder, rental
+ * state) for future ordering/lock work; the block is PARTIAL (the window
+ * around the current episode).
+ */
+data class AlpViewerData(
+    val currentEpisodeNo: Long,
+    /** episodeNo → (dispOrder, isAvailable-ish rental free flag) */
+    val entries: Map<Long, Pair<Int, Boolean>> = emptyMap()
+)
+
+/** Episode id from an /episode/<id> URL (0 when unparseable). */
+internal fun alpEpisodeIdFromUrl(url: String): Long =
+    Regex("""/episode/(\d+)""").find(url)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+
+/** Parse script#app-cover-data; null when the page carries no viewer block. */
+fun parseAlpViewerData(html: String): AlpViewerData? {
+    return try {
+        val m = Regex(
+            """<script type="application/json"[^>]*id="app-cover-data"[^>]*>(.*?)</script>""",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(html) ?: return null
+        val root = JSONObject(m.groupValues[1])
+        val current = root.optJSONObject("currentEpisode")?.optLong("episodeNo") ?: return null
+        val entries = HashMap<Long, Pair<Int, Boolean>>()
+        val chapters = root.optJSONArray("chapterEpisodes") ?: return AlpViewerData(current)
+        for (i in 0 until chapters.length()) {
+            val ch = chapters.optJSONObject(i) ?: continue
+            val eps = ch.optJSONArray("episodes") ?: continue
+            for (j in 0 until eps.length()) {
+                val ep = eps.optJSONObject(j) ?: continue
+                val no = ep.optLong("episodeNo")
+                if (no <= 0) continue
+                val free = ep.optJSONObject("rental")?.optBoolean("isFree", false) ?: false
+                entries[no] = ep.optInt("dispOrder", 0) to free
+            }
+        }
+        AlpViewerData(current, entries)
+    } catch (e: Exception) {
+        null
+    }
+}
+
 // Side-channel from parseAlpEpisodePage for the embedded-body path (A):
 // the title + raw body HTML the server rendered inline.
 @Volatile internal var alpLastTitle: String = ""
@@ -642,12 +690,21 @@ suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
                 return build(paras, imgs, anonTitle)
             }
         } else {
-            // anonymous server-rendered shape (no loader): #novelBody is
-            // URL-bound here — no session, no viewer position. Trusted.
-            val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-            if (paras.isNotEmpty()) {
-                DebugLog.log("ALP", "headless chapter (A-anon): ${paras.size} paragraphs, ${imgs.size} images")
-                return build(paras, imgs, anonTitle.ifBlank { alpLastTitle })
+            // Anonymous server-rendered shape (no loader). The viewer block's
+            // currentEpisode still names whose body the page rendered —
+            // accept #novelBody only when it matches this URL's episode
+            // (defense in depth; anon pages are normally URL-bound).
+            parseAlpViewerData(anonPage)?.let { vd ->
+                val want = alpEpisodeIdFromUrl(chapterUrl)
+                if (vd.currentEpisodeNo != want) {
+                    DebugLog.log("ALP", "viewer says episode ${vd.currentEpisodeNo}, URL wants $want — body ignored")
+                    return@let
+                }
+                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+                if (paras.isNotEmpty()) {
+                    DebugLog.log("ALP", "headless chapter (A-anon): ${paras.size} paragraphs, ${imgs.size} images")
+                    return build(paras, imgs, anonTitle.ifBlank { alpLastTitle })
+                }
             }
         }
 
@@ -673,11 +730,22 @@ suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
                 DebugLog.log("ALP", "headless chapter (B-session): ${paras.size} paragraphs, ${imgs.size} images")
             }
         } else if (!page.contains("このエピソードを購入") && !page.contains("エピソードをレンタル")) {
-            val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-            if (paras.isNotEmpty()) {
-                DebugLog.log("ALP", "headless chapter (A-session): ${paras.size} paragraphs, ${imgs.size} images")
+            // The ToC block's currentEpisode is the authority on whose text
+            // the server rendered (the viewer parks at the account's
+            // last-read position); a paid chapter the account OWNS renders
+            // its own episode. Mismatch → this body is not ours.
+            val want = alpEpisodeIdFromUrl(chapterUrl)
+            val rendered = parseAlpViewerData(page)?.currentEpisodeNo ?: 0L
+            if (rendered != 0L && rendered != want) {
+                DebugLog.log("ALP", "session viewer rendered episode $rendered, URL wants $want — body rejected")
+                null
+            } else {
+                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+                if (paras.isNotEmpty()) {
+                    DebugLog.log("ALP", "headless chapter (A-session): ${paras.size} paragraphs, ${imgs.size} images")
+                }
+                build(paras, imgs, title.ifBlank { alpLastTitle })
             }
-            build(paras, imgs, title.ifBlank { alpLastTitle })
         } else {
             DebugLog.log("ALP", "headless chapter: paywalled (purchase UI on session page)")
             null
