@@ -623,7 +623,7 @@ fun ReaderScreen(
                 return@LaunchedEffect
             }
         }
-        if (isAlpChapter) {
+        if (isAlpChapter && !alpHop) {
             // ALWAYS the rendered page (Wayne's standing directive: no
             // anonymous fetching, fetch via the site's own ToC/render —
             // 2026-10-18). Every static shortcut has served wrong-episode
@@ -633,6 +633,10 @@ fun ReaderScreen(
             // the ToC panel links to, the site's own JS renders it, and
             // chapterExtractJs harvests that DOM — the only source that
             // has matched the logged-in browser on every live test.
+            // (!alpHop is load-bearing: without it this branch re-enters
+            // on every page-finish and reload()s forever — the "pages are
+            // just cycling" live catch. During the hop the ladder falls
+            // through to the DOM extraction below.)
             if (isNetworkOnline(context)) {
                 if (alpHopExhausted[chapter.url] == retryKey) {
                     extractFailed = true
