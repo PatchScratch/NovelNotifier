@@ -769,54 +769,16 @@ suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
         else ChapterExtract(title = title, paragraphs = paras, images = imgs)
 
     return try {
-        // (1) ANONYMOUS first: loader POST is URL-bound → correct chapter
-        // for every public episode; the anon page's own Set-Cookie jar must
-        // ride with the POST (its token binds to that anon session).
-        val (anonPage, anonJar) = alpFetchAnonWithJar(chapterUrl)
-        val (anonTitle, anonTokens) = parseAlpEpisodePage(anonPage)
-        if (anonTokens != null) {
-            val body = alpPostEpisodeBody(
-                anonTokens.episodeId, anonTokens.episodeToken, anonTokens.csrfToken,
-                chapterUrl, anonCookie = anonJar
-            )
-            val (paras, imgs) = parseAlpBodyWithImages(body)
-            if (paras.isNotEmpty()) {
-                DebugLog.log("ALP", "headless chapter (B-anon): ${paras.size} paragraphs, ${imgs.size} images")
-                return build(paras, imgs, anonTitle)
-            }
-        } else {
-            // Anonymous server-rendered shape (no loader). The viewer block's
-            // currentEpisode still names whose body the page rendered —
-            // accept #novelBody only when it matches this URL's episode
-            // (defense in depth; anon pages are normally URL-bound).
-            parseAlpViewerData(anonPage)?.let { vd ->
-                val want = alpEpisodeIdFromUrl(chapterUrl)
-                if (vd.currentEpisodeNo != want) {
-                    DebugLog.log("ALP", "viewer says episode ${vd.currentEpisodeNo}, URL wants $want — body ignored")
-                    return@let
-                }
-                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-                if (paras.isNotEmpty()) {
-                    DebugLog.log("ALP", "headless chapter (A-anon): ${paras.size} paragraphs, ${imgs.size} images")
-                    return build(paras, imgs, anonTitle.ifBlank { alpLastTitle })
-                }
-            }
-        }
-
-        // Viewer-ToC accumulation (either page shape carries the window).
-        parseAlpViewerData(anonPage)?.let { AlpTocStore.note(chapterUrl, it) }
-
-        // (2) SESSIONED fallback — this is where PAID chapters live (the
-        // anonymous page never carries them; Wayne: "anonymous first won't
-        // help when I pull paid chapters"). Two sub-paths:
-        //   (2a) a sessioned loader — its POST is token/URL-bound, safe;
-        //   (2b) the sessioned EMBEDDED body — trustworthy ONLY for owned
-        // premium (the server renders the chapter the account owns). A
-        // NOT-owned episode page instead shows the purchase UI, and a
-        // logged-in FREE page renders the viewer at the account's
-        // last-read position — both poison. Accept (2b) only when the page
-        // carries no purchase call-to-action, and log the path so paid
-        // pulls stay auditable.
+        // SESSION is the only trustworthy context (live-verified in Wayne's
+        // logged-in browser 2026-10-18): the episode_body POST returns the
+        // URL's true episode for the ACCOUNT, while the anonymous jar
+        // returns wrong-episode free-teaser bodies, and the sessioned
+        // page's EMBEDDED #novelBody renders the viewer at the account's
+        // last-read position. So: the sessioned page's LOADER drives the
+        // POST; the embedded body is accepted only when the viewer ToC
+        // block's currentEpisode matches this URL (owned premium) and no
+        // purchase UI is present; anything else → null → the reader's
+        // visible-WebView hop owns it.
         val page = alpFetch(chapterUrl)
         parseAlpViewerData(page)?.let { AlpTocStore.note(chapterUrl, it) }
         val (title, tokens) = parseAlpEpisodePage(page)
@@ -825,28 +787,25 @@ suspend fun fetchAlpChapterHeadless(chapterUrl: String): ChapterExtract? {
                 tokens.episodeId, tokens.episodeToken, tokens.csrfToken, chapterUrl
             )
             val (paras, imgs) = parseAlpBodyWithImages(body)
-            build(paras, imgs, title).also {
+            if (paras.isNotEmpty()) {
                 DebugLog.log("ALP", "headless chapter (B-session): ${paras.size} paragraphs, ${imgs.size} images")
+                return build(paras, imgs, title)
             }
-        } else if (!page.contains("このエピソードを購入") && !page.contains("エピソードをレンタル")) {
-            // The ToC block's currentEpisode is the authority on whose text
-            // the server rendered (the viewer parks at the account's
-            // last-read position); a paid chapter the account OWNS renders
-            // its own episode. Mismatch → this body is not ours.
-            val want = alpEpisodeIdFromUrl(chapterUrl)
-            val rendered = parseAlpViewerData(page)?.currentEpisodeNo ?: 0L
-            if (rendered != 0L && rendered != want) {
-                DebugLog.log("ALP", "session viewer rendered episode $rendered, URL wants $want — body rejected")
-                null
-            } else {
-                val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
-                if (paras.isNotEmpty()) {
-                    DebugLog.log("ALP", "headless chapter (A-session): ${paras.size} paragraphs, ${imgs.size} images")
-                }
-                build(paras, imgs, title.ifBlank { alpLastTitle })
+        }
+        val want = alpEpisodeIdFromUrl(chapterUrl)
+        val rendered = parseAlpViewerData(page)?.currentEpisodeNo ?: 0L
+        if (rendered == want && rendered != 0L &&
+            !page.contains("このエピソードを購入") && !page.contains("エピソードをレンタル")
+        ) {
+            val (paras, imgs) = parseAlpBodyWithImages(alpLastBodyHtml)
+            if (paras.isNotEmpty()) {
+                DebugLog.log("ALP", "headless chapter (A-session guarded): ${paras.size} paragraphs")
             }
+            build(paras, imgs, title.ifBlank { alpLastTitle })
         } else {
-            DebugLog.log("ALP", "headless chapter: paywalled (purchase UI on session page)")
+            if (rendered != 0L && rendered != want) {
+                DebugLog.log("ALP", "viewer rendered episode $rendered, URL wants $want — no trustworthy body")
+            }
             null
         }
     } catch (e: Exception) {

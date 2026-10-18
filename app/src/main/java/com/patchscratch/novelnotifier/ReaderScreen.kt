@@ -624,14 +624,19 @@ fun ReaderScreen(
             }
         }
         if (isAlpChapter) {
-            // ALWAYS the rendered-WebView path (Wayne's live catches
-            // 2026-10-18): BOTH static fetches have served wrong-episode
-            // text — the anonymous episode_body POST is mis-mapped for some
-            // series (異世界 1-2 returns another chapter's scene), and the
-            // sessioned page renders the viewer at the account's last-read
-            // position. Only the site's own JS, running on the URL in a
-            // visible WebView, reliably renders the URL's true episode.
+            // Sessioned headless first (the account's loader POST returns
+            // the URL's true episode — verified in Wayne's logged-in
+            // browser); the anonymous jar and the embedded sessioned body
+            // are both rejected inside the fetch. Null (paywall / viewer
+            // shape) → the visible-WebView hop, where the site's own JS
+            // renders the URL's true episode.
             if (isNetworkOnline(context)) {
+                extractResult = fetchAlpChapterHeadless(chapter.url)
+                if (extractResult == null && stored != null) {
+                    extractResult = stored
+                    offlineCopy = true
+                }
+                if (extractResult != null) return@LaunchedEffect
                 if (alpHopExhausted[chapter.url] == retryKey) {
                     extractFailed = true
                     return@LaunchedEffect

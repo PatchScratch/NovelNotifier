@@ -114,28 +114,28 @@ fun AlphaPolisDetailScreen(
         downloadingUrl = url
         downloadMsg = ""
         scope.launch {
-            // Extraction must run in a WebView (static fetches proved
-            // unreliable — see the reader's always-hop note); the bulk
-            // service owns one, so the row download rides a single-chapter
-            // refresh job through it. Stored-check keeps translations safe.
-            withContext(Dispatchers.IO) {
-                val storedAlready = EpubStore.readChapter(context, work.url, url) != null
-                EpubBulkService.start(
-                    context,
-                    EpubBulkService.BulkJob(
-                        seriesTitle = work.title,
-                        seriesUrl = work.url,
-                        chapters = listOf(EpubBulkService.BulkChapter(url, alpEpisodeLabel(ep.title, ordinal))),
-                        meta = null,
-                        refresh = !storedAlready
+            // The sessioned loader POST (account context) is the only
+            // trusted headless source — see fetchAlpChapterHeadless.
+            val extract = fetchAlpChapterHeadless(url)
+            if (extract != null && extract.paragraphs.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    EpubStore.appendChapter(
+                        context, work.title, work.url,
+                        url, alpEpisodeLabel(ep.title, ordinal), extract, null
                     )
+                }
+                storedUrls = storedUrls + url
+            } else if (!ep.isPublic) {
+                downloadMsg = t(
+                    "Premium chapter — buy or rent it on AlphaPolis first (unlocked: your entitled chapters download instantly)",
+                    "プレミアム章節 — 先にアルファポリスで購入・レンタルしてください（購入済みはすぐ保存されます）"
+                )
+            } else {
+                downloadMsg = t(
+                    "Couldn\u0027t fetch — open the chapter in the reader to save it",
+                    "取得できません — リーダーで開くと保存できます"
                 )
             }
-            storedUrls = storedUrls + url
-            downloadMsg = t(
-                "Downloading in the background — progress in the notification",
-                "バックグラウンドで取得中 — 通知に進捗があります"
-            )
             downloadingUrl = null
         }
     }

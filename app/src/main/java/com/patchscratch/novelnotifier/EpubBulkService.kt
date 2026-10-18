@@ -234,13 +234,36 @@ class EpubBulkService : Service() {
                 if (!scope.isActive) return
                 if (chapter.url in known && !job.refresh) { skipped++; continue }
                 if (nuHosted(chapter.url)) { pendingNu.add(chapter); continue }
-                // AlphaPolis rides the SAME WebView ladder now (2026-10-18):
-                // static fetches proved unreliable — the anonymous
-                // episode_body POST mis-maps some series and the sessioned
-                // page renders the viewer at the account's reading
-                // position. The rendered DOM (this service's WebView +
-                // chapterExtractJs, content-viewer stub included on the
-                // reader side) carries the URL's true episode.
+                // AlphaPolis: the SESSIONED loader POST (account context —
+                // the anonymous jar returns wrong-episode teasers and the
+                // sessioned embedded body renders the reading position, so
+                // fetchAlpChapterHeadless trusts only the loader POST and
+                // the currentEpisode-guarded embedded shape). An unentitled
+                // chapter is an EXPECTED miss — skip, never feed the
+                // 8-failure abort (the hidden service WebView cannot drive
+                // AlphaPolis's visibility-gated viewer).
+                if (chapter.url.endsWith("alphapolis.co.jp") ||
+                    chapter.url.contains(".alphapolis.co.jp/")) {
+                    status("alphapolis · ${chapter.label}")
+                    val extract = fetchAlpChapterHeadless(chapter.url)
+                    if (extract != null && extract.paragraphs.isNotEmpty()) {
+                        val label = alpEpisodeLabel(
+                            extract.title,
+                            chapter.label.removePrefix("c").toIntOrNull() ?: 0
+                        )
+                        val written = withContext(Dispatchers.IO) {
+                            EpubStore.appendChapter(
+                                context, job.seriesTitle, job.seriesUrl,
+                                chapter.url, label, extract, job.meta
+                            )
+                        }
+                        if (written > 0) saved++ else failed++
+                    } else {
+                        skipped++
+                    }
+                    delay(2000)
+                    continue
+                }
                 status("direct · ${chapter.label}")
                 val extract = loadAndExtract(chapter.url)
                 if (extract != null) {
