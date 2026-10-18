@@ -730,6 +730,21 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
                 val legacyDocs = readAllChapterDocs(legacy)
                 if (legacyDocs.all { it.url in bucketCovered }) legacy.delete()
             }
+            // A re-label can MOVE this chapter's bucket (flat cN → volume
+            // vNcM); sweep sibling books so the URL lives in exactly one.
+            for (sibling in bookFiles(context, seriesUrl).filter { it != book }) {
+                val sib = readAllChapterDocs(sibling).filter { it.url != chapterUrl }
+                if (sib.size != readAllChapterDocs(sibling).size) {
+                    val sbucket = sibling.name.removePrefix(prefixOf(seriesUrl)).removeSuffix(".epub")
+                    val stitle = readBookMeta(sibling)?.title ?: seriesTitle
+                    writeBook(sibling, bookDisplayTitle(stitle, sbucket, bucketsOf(context, seriesUrl) + sbucket),
+                        cover, "image/jpeg", orderDocs(sib), readBookMeta(sibling),
+                        mediaLookup = { u -> EpubMediaStore.bytes(context, u) })
+                    syncLayoutVariants(context, seriesUrl, sbucket,
+                        bookDisplayTitle(stitle, sbucket, bucketsOf(context, seriesUrl) + sbucket),
+                        cover, orderDocs(sib), readBookMeta(sibling))
+                }
+            }
             val buckets = (bucketsOf(context, seriesUrl) + bucket).distinct()
             val displayTitle = bookDisplayTitle(seriesTitle, bucket, buckets)
             val n = writeBook(book, displayTitle, cover, "image/jpeg", ordered, bookMeta,

@@ -105,7 +105,7 @@ fun AlphaPolisDetailScreen(
                 withContext(Dispatchers.IO) {
                     EpubStore.appendChapter(
                         context, work.title, work.url,
-                        url, "c$ordinal", extract, null
+                        url, alpEpisodeLabel(ep.title, ordinal), extract, null
                     )
                 }
                 storedUrls = storedUrls + url
@@ -130,7 +130,7 @@ fun AlphaPolisDetailScreen(
     val nextEp = episodes.getOrNull(nextOrdinal - 1)
 
     fun toChapters(): List<Release> = episodes.mapIndexed { i, ep ->
-        Release(chapter = "c${i + 1}", group = "", date = "", url = ep.url)
+        Release(chapter = alpEpisodeLabel(ep.title, i + 1), group = "", date = "", url = ep.url)
     }
     fun openAt(index: Int) {
         if (episodes.isNotEmpty()) onOpenReader(toChapters(), index)

@@ -73,6 +73,21 @@ data class AlpEpisode(
 
 /** Work detail + ordered ToC (one GET of the work page). */
 data class AlpWorkDetail(val work: AlpWork, val episodes: List<AlpEpisode>)
+/**
+ * Storage label for an AlphaPolis episode (Wayne's rule 2026-10-18: the
+ * title "1-1" IS Volume 1 Chapter 1, "2-1" Volume 2 Chapter 1). Volume-
+ * labeled episodes get "vNcM" so EpubStore sorts by (volume, chapter) and
+ * SPLITS one book per volume — the standing bucket rule; anything else
+ * (書籍化記念, extras) falls back to the ToC ordinal "cN" (bare chapter keys
+ * sort before all volumes, which suits front-matter).
+ */
+fun alpEpisodeLabel(title: String, tocOrdinal: Int): String {
+    Regex("^([0-9]+)-([0-9]+)$").find(title.trim())?.let {
+        return "v" + it.groupValues[1] + "c" + it.groupValues[2]
+    }
+    return "c" + tocOrdinal
+}
+
 
 // --- HTTP core ------------------------------------------------------------------
 

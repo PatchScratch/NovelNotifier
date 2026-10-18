@@ -152,4 +152,25 @@ class AlphaPolisTest {
         assertTrue(imgs.size == 1)
         assertTrue(imgs[0].second.endsWith("/story_image/99153/x.jpeg"))
     }
+
+    @Test
+    fun alpEpisodeLabel_volumeTitlesMapToVolumeKeys() {
+        // Wayne's rule: "1-1" = Volume 1 Chapter 1, "2-1" = Volume 2 Ch 1
+        assertEquals("v1c1", alpEpisodeLabel("1-1", 2))
+        assertEquals("v2c1", alpEpisodeLabel("2-1", 17))
+        assertEquals("v8c16", alpEpisodeLabel("8-16", 129))
+        // non-volume titles keep the ToC ordinal
+        assertEquals("c1", alpEpisodeLabel("書籍化記念", 1))
+        assertEquals("c40", alpEpisodeLabel("おまけ", 40))
+        // ordering + bucket split follow the volume key
+        val ordered = EpubStore.orderDocs(listOf(
+            EpubStore.ChapterDoc("https://h/a", "v2c1", "", listOf("p")),
+            EpubStore.ChapterDoc("https://h/b", "v1c16", "", listOf("p")),
+            EpubStore.ChapterDoc("https://h/c", "v1c1", "", listOf("p")),
+            EpubStore.ChapterDoc("https://h/d", "c1", "", listOf("p"))
+        ))
+        assertEquals(listOf("c1", "v1c1", "v1c16", "v2c1"), ordered.map { it.label })
+        assertEquals("v2", EpubStore.chapterBucket("v2c1"))
+        assertEquals("v1", EpubStore.chapterBucket("v1c16"))
+    }
 }
