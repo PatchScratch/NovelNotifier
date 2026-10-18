@@ -234,34 +234,17 @@ class EpubBulkService : Service() {
                 if (!scope.isActive) return
                 if (chapter.url in known && !job.refresh) { skipped++; continue }
                 if (nuHosted(chapter.url)) { pendingNu.add(chapter); continue }
-                // AlphaPolis: the SESSIONED loader POST (account context —
-                // the anonymous jar returns wrong-episode teasers and the
-                // sessioned embedded body renders the reading position, so
-                // fetchAlpChapterHeadless trusts only the loader POST and
-                // the currentEpisode-guarded embedded shape). An unentitled
-                // chapter is an EXPECTED miss — skip, never feed the
-                // 8-failure abort (the hidden service WebView cannot drive
-                // AlphaPolis's visibility-gated viewer).
+                // AlphaPolis chapters extract ONLY from the site's rendered
+                // page (Wayne's directive 2026-10-18: no anonymous fetching;
+                // every static fetch has served wrong-episode text). This
+                // service's WebView is hidden and cannot drive the
+                // visibility-gated viewer, so bulk cannot fetch them —
+                // READING saves each chapter automatically (the standing
+                // reading-is-the-opt-in rule). Skip with a clear status.
                 if (chapter.url.endsWith("alphapolis.co.jp") ||
                     chapter.url.contains(".alphapolis.co.jp/")) {
-                    status("alphapolis · ${chapter.label}")
-                    val extract = fetchAlpChapterHeadless(chapter.url)
-                    if (extract != null && extract.paragraphs.isNotEmpty()) {
-                        val label = alpEpisodeLabel(
-                            extract.title,
-                            chapter.label.removePrefix("c").toIntOrNull() ?: 0
-                        )
-                        val written = withContext(Dispatchers.IO) {
-                            EpubStore.appendChapter(
-                                context, job.seriesTitle, job.seriesUrl,
-                                chapter.url, label, extract, job.meta
-                            )
-                        }
-                        if (written > 0) saved++ else failed++
-                    } else {
-                        skipped++
-                    }
-                    delay(2000)
+                    skipped++
+                    status("alphapolis · ${chapter.label} — open in the reader to save")
                     continue
                 }
                 status("direct · ${chapter.label}")

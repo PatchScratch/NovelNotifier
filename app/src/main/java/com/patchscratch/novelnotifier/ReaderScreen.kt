@@ -624,19 +624,16 @@ fun ReaderScreen(
             }
         }
         if (isAlpChapter) {
-            // Sessioned headless first (the account's loader POST returns
-            // the URL's true episode — verified in Wayne's logged-in
-            // browser); the anonymous jar and the embedded sessioned body
-            // are both rejected inside the fetch. Null (paywall / viewer
-            // shape) → the visible-WebView hop, where the site's own JS
-            // renders the URL's true episode.
+            // ALWAYS the rendered page (Wayne's standing directive: no
+            // anonymous fetching, fetch via the site's own ToC/render —
+            // 2026-10-18). Every static shortcut has served wrong-episode
+            // text at some point (anonymous jar = wrong teasers; the
+            // sessioned loader POST and embedded body = the account's
+            // reading position). The visible WebView loads the SAME page
+            // the ToC panel links to, the site's own JS renders it, and
+            // chapterExtractJs harvests that DOM — the only source that
+            // has matched the logged-in browser on every live test.
             if (isNetworkOnline(context)) {
-                extractResult = fetchAlpChapterHeadless(chapter.url)
-                if (extractResult == null && stored != null) {
-                    extractResult = stored
-                    offlineCopy = true
-                }
-                if (extractResult != null) return@LaunchedEffect
                 if (alpHopExhausted[chapter.url] == retryKey) {
                     extractFailed = true
                     return@LaunchedEffect

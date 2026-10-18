@@ -106,40 +106,6 @@ fun AlphaPolisDetailScreen(
         loading = false
     }
 
-    /** Headless single-chapter save. Paywalled (unentitled) chapters come
-     *  back null — those still capture in the reader's web-hop on open. */
-    fun downloadEpisode(ep: AlpEpisode, ordinal: Int) {
-        val url = ep.url
-        if (url in storedUrls || downloadingUrl != null) return
-        downloadingUrl = url
-        downloadMsg = ""
-        scope.launch {
-            // The sessioned loader POST (account context) is the only
-            // trusted headless source — see fetchAlpChapterHeadless.
-            val extract = fetchAlpChapterHeadless(url)
-            if (extract != null && extract.paragraphs.isNotEmpty()) {
-                withContext(Dispatchers.IO) {
-                    EpubStore.appendChapter(
-                        context, work.title, work.url,
-                        url, alpEpisodeLabel(ep.title, ordinal), extract, null
-                    )
-                }
-                storedUrls = storedUrls + url
-            } else if (!ep.isPublic) {
-                downloadMsg = t(
-                    "Premium chapter — buy or rent it on AlphaPolis first (unlocked: your entitled chapters download instantly)",
-                    "プレミアム章節 — 先にアルファポリスで購入・レンタルしてください（購入済みはすぐ保存されます）"
-                )
-            } else {
-                downloadMsg = t(
-                    "Couldn\u0027t fetch — open the chapter in the reader to save it",
-                    "取得できません — リーダーで開くと保存できます"
-                )
-            }
-            downloadingUrl = null
-        }
-    }
-
     // The site's own display sequence once enough viewer windows have
     // accumulated (>=50% coverage, direction inferred); padlock from the
     // per-account rental state when known (falls back to the ToC isPublic).
@@ -216,8 +182,7 @@ fun AlphaPolisDetailScreen(
                     onOpen = { openAt(i) },
                     onCheck = { onSetReadPos(i + 1) },
                     downloaded = ep.url in storedUrls,
-                    downloading = downloadingUrl == ep.url,
-                    onDownload = { downloadEpisode(ep, i + 1) },
+                    onDownload = { openAt(i) },   // opening IS the download (reader auto-save)
                     premium = !(viewerToc[ep.id.toLongOrNull()]?.second ?: ep.isPublic)
                 )
             } else storedList.mapIndexed { i, rel ->
