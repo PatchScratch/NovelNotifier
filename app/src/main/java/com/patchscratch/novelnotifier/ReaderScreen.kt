@@ -1411,7 +1411,9 @@ fun ReaderScreen(
                         // original text, Wayne's 2026-10-17 ask).
                         extract.images.filter { it.first == i }.forEach { (_, url) ->
                             AsyncImage(
-                                model = url,
+                                // Offline-first: prefer the cached epub media
+                                // bytes; the URL serves when never stored.
+                                model = EpubMediaStore.localFor(context, url) ?: url,
                                 contentDescription = null,
                                 contentScale = androidx.compose.ui.layout.ContentScale.FillWidth,
                                 modifier = Modifier

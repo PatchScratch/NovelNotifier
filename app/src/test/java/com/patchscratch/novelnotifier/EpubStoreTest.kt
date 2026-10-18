@@ -336,4 +336,55 @@ class EpubStoreTest {
         // bodyParagraphs' contract: no translation yet → original text
         assertTrue(visibleBody(en).contains("未翻訳"))
     }
+
+    // --- inline illustrations in exported books (user report 2026-10-18) ---
+
+    @Test
+    fun images_embedAsMediaEntriesAndRoundTrip() {
+        val fakeJpg = byteArrayOf(0xFF.toByte(), 0xD8.toByte()) + ByteArray(32) { 7 }
+        val docs = listOf(
+            doc("https://h/1", "c1", "One", "p1", "p2").copy(
+                images = listOf(0 to "https://cdn/img/a.jpg", 2 to "https://cdn/img/b.jpg")
+            )
+        )
+        val book = tempBook("imgs")
+        EpubStore.writeBook(book, "T", null, "image/jpeg", docs,
+            mediaLookup = { u -> if (u.endsWith("a.jpg")) fakeJpg else null })
+        ZipFile(book).use { zip ->
+            // only the resolvable image embeds; the missing one is skipped
+            val names = zip.entries().toList().map { it.name }
+            val media = names.filter { it.startsWith("OEBPS/media/") }
+            assertEquals(1, media.size)
+            assertTrue(zip.getInputStream(zip.getEntry(media[0])).readBytes().contentEquals(fakeJpg))
+            val body = zip.getInputStream(zip.getEntry("OEBPS/chapters/c0001.xhtml")).readBytes().decodeToString()
+            assertTrue("img tag present before its anchor paragraph", body.contains("nn-img"))
+            assertTrue(body.contains("src=\"" + media[0].removePrefix("OEBPS/") + "\""))
+            assertTrue("missing-byte image leaves no broken img", !body.contains("b.jpg"))
+            val opf = zip.getInputStream(zip.getEntry("OEBPS/content.opf")).readBytes().decodeToString()
+            assertTrue("manifest lists the media item", Regex("item id=\"img-0\"").containsMatchIn(opf))
+        }
+        // index/doc round-trip carries the anchors
+        val idx = EpubStore.readBookIndex(book)
+        assertEquals(listOf(0 to "https://cdn/img/a.jpg", 2 to "https://cdn/img/b.jpg"), idx[0].images)
+        val back = EpubStore.readChapterDoc(book, "https://h/1")!!
+        assertEquals(docs[0].images, back.images)
+        assertEquals(listOf("p1", "p2"), back.paragraphs)
+    }
+
+    @Test
+    fun images_surviveAppendMergeAndServeOffline() {
+        val fakePng = byteArrayOf(0x89.toByte(), 0x50.toByte()) + ByteArray(16) { 1 }
+        val book = tempBook("merge-img")
+        EpubStore.writeBook(book, "T", null, "image/jpeg",
+            listOf(doc("https://h/1", "c1", "One", "p1")),
+            mediaLookup = { null })
+        // re-append the same URL WITH an image — merge must keep it
+        EpubStore.writeBook(book, "T", null, "image/jpeg",
+            listOf(doc("https://h/1", "c1", "One", "p1-rev").copy(images = listOf(0 to "https://cdn/x.png"))),
+            mediaLookup = { u -> if (u.endsWith("x.png")) fakePng else null })
+        val docBack = EpubStore.readChapterDoc(book, "https://h/1")
+        assertNotNull(docBack)
+        assertEquals("p1-rev", docBack!!.paragraphs[0])
+        assertEquals(listOf(0 to "https://cdn/x.png"), docBack.images)
+    }
 }

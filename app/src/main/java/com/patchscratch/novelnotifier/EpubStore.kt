@@ -161,7 +161,13 @@ object EpubStore {
         val paragraphs: List<String>,
         /** Optional AI translation, paragraph-for-paragraph. Renders in our
          *  reader (toggle); external e-readers ignore the embedded JSON. */
-        val translation: List<String>? = null
+        val translation: List<String>? = null,
+        /** Inline illustrations, paragraph-anchored like ChapterExtract's:
+         *  (paragraph index the image sits BEFORE, source URL). Persisted in
+         *  chapters.json ("m"); the bytes live in EpubMediaStore and embed
+         *  into the book's media/ at write time (user report 2026-10-18:
+         *  "images don't get exported as rendered in reader"). */
+        val images: List<Pair<Int, String>> = emptyList()
     )
 
     /** Index row for chapters.json (file + order metadata). */
@@ -170,7 +176,10 @@ object EpubStore {
         val label: String,
         val title: String,
         val file: String,
-        val num: Int            // chapterNum(label) when parseable, else 0
+        val num: Int,            // chapterNum(label) when parseable, else 0
+        /** Paragraph-anchored illustrations carried from ChapterDoc (the
+         *  "m" column) — feeds the offline reader + rewrites. */
+        val images: List<Pair<Int, String>> = emptyList()
     )
 
     // --- write (pure JVM) ----------------------------------------------------
@@ -188,7 +197,12 @@ object EpubStore {
         meta: BookMeta? = null,
         // Saved-file paragraph layout: both (JP+EN interleaved), jp, en —
         // mirrors the reader's xlate_layout pref at export/write time.
-        layout: String = "both"
+        layout: String = "both",
+        // Inline-illustration bytes by source URL (EpubMediaStore on device,
+        // a fake in tests). Null/sparse → those images are skipped, never a
+        // failed write. Books are rewritten whole on every append, so bytes
+        // resolve per write and stay out of ChapterDoc.
+        mediaLookup: ((String) -> ByteArray?)? = null
     ): Int {
         val metaTitle = meta?.title?.ifBlank { title } ?: title
         val uuid = UUID.nameUUIDFromBytes(metaTitle.toByteArray()).toString()
@@ -202,6 +216,24 @@ object EpubStore {
         val spine = StringBuilder()
         val navItems = StringBuilder()
         val ncxNavPoints = StringBuilder()
+
+        // --- media pass: resolve each distinct illustration once ----------
+        val mediaNames = HashMap<String, String>()   // source URL → media/<hash>.<ext>
+        if (mediaLookup != null) {
+            chapters.flatMap { it.images }
+                .distinctBy { it.second }
+                .forEach { (_, url) ->
+                    val bytes = mediaLookup(url) ?: return@forEach
+                    val name = "media/" + EpubMediaStore.key(url) + "." + EpubMediaStore.ext(url)
+                    entries["OEBPS/$name"] = bytes
+                    mediaNames[url] = name
+                }
+        }
+        mediaNames.values.sorted().forEachIndexed { i, name ->
+            manifest.append(
+                "    <item id=\"img-$i\" href=\"$name\" media-type=\"${mediaMime(name)}\"/>\n"
+            )
+        }
 
         if (coverBytes != null && coverBytes.isNotEmpty()) {
             entries["OEBPS/cover.jpg"] = coverBytes
@@ -222,7 +254,7 @@ object EpubStore {
 
         chapters.forEachIndexed { index, doc ->
             val file = "chapters/c" + "%04d".format(index + 1) + ".xhtml"
-            entries["OEBPS/$file"] = chapterXhtml(doc, layout).toByteArray()
+            entries["OEBPS/$file"] = chapterXhtml(doc, layout, mediaNames).toByteArray()
             val id = "c" + "%04d".format(index + 1)
             manifest.append("    <item id=\"$id\" href=\"$file\" media-type=\"application/xhtml+xml\"/>\n")
             spine.append("    <itemref idref=\"$id\"/>\n")
@@ -265,12 +297,21 @@ object EpubStore {
                 val arr = JSONArray(zip.getInputStream(entry).bufferedReader().readText())
                 (0 until arr.length()).mapNotNull { i ->
                     val row = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val imgs = row.optJSONArray("m")?.let { m ->
+                        (0 until m.length()).mapNotNull { k ->
+                            val pair = m.optJSONArray(k) ?: return@mapNotNull null
+                            val idx = pair.optInt(0, -1)
+                            val u = pair.optString(1)
+                            if (idx >= 0 && u.startsWith("http")) idx to u else null
+                        }
+                    } ?: emptyList()
                     StoredChapter(
                         url = row.optString("u"),
                         label = row.optString("c"),
                         title = row.optString("t"),
                         file = row.optString("f"),
-                        num = row.optInt("n")
+                        num = row.optInt("n"),
+                        images = imgs
                     )
                 }
             }
@@ -314,7 +355,7 @@ object EpubStore {
                 (0 until arr.length()).map { arr.optString(it) }.takeIf { it.isNotEmpty() }
             } catch (e: Exception) { null }
         }
-        return ChapterDoc(row.url, row.label, title.ifBlank { row.title }, paragraphs, translation)
+        return ChapterDoc(row.url, row.label, title.ifBlank { row.title }, paragraphs, translation, row.images)
     }
 
     // --- document templates --------------------------------------------------
@@ -336,7 +377,9 @@ body.titlepage { margin: 1.5em 1em; }
 .titlepage table.meta th { text-align: left; vertical-align: top; width: 34%; padding: 0.3em 0.6em 0.3em 0; font-weight: bold; }
 .titlepage table.meta td { padding: 0.3em 0; }
 .titlepage h2 { font-size: 1.2em; }
-.titlepage .description { text-indent: 0; }"""
+.titlepage .description { text-indent: 0; }
+.nn-img { margin: 1em 0; text-indent: 0; text-align: center; }
+.nn-img img { max-width: 100%; height: auto; }"""
 
     private val COVER_XHTML = """<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
@@ -485,32 +528,68 @@ $navPoints  </navMap>
     </navPoint>
 """
 
-    private fun chapterXhtml(doc: ChapterDoc, layout: String = "both") = """<?xml version="1.0" encoding="utf-8"?>
+    private fun chapterXhtml(
+        doc: ChapterDoc,
+        layout: String = "both",
+        mediaNames: Map<String, String> = emptyMap()
+    ): String = """<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><title>${xmlEscape(doc.label)}</title></head>
 <body>
-${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${bodyParagraphs(doc, layout)}
+${if (doc.title.isNotBlank()) "<h1>${xmlEscape(doc.title)}</h1>\n" else ""}${bodyParagraphs(doc, layout, mediaNames)}
 ${if (doc.translation != null) """<script type="application/json" id="nn-translation">${JSONArray(doc.translation)}</script>""" else ""}
 </body>
 </html>"""
 
     /** Visible body per the saved layout; the nn-translation block always
-     * keeps the full parallel data so the reader can re-render any layout. */
-    private fun bodyParagraphs(doc: ChapterDoc, layout: String): String {
+     *  keeps the full parallel data so the reader can re-render any layout.
+     *  Inline illustrations sit BEFORE their anchor paragraph (the harvest
+     *  contract: index = paragraphs.size when the <img> was passed). */
+    private fun bodyParagraphs(
+        doc: ChapterDoc,
+        layout: String,
+        mediaNames: Map<String, String>
+    ): String {
         val jp = doc.paragraphs.map { xmlEscape(it) }
         val en = doc.translation?.map { xmlEscape(it) }
-        return when (layout) {
-            "en" -> en?.filter { it.isNotBlank() }?.joinToString("\n") { "<p>$it</p>" }
-                ?: jp.joinToString("\n") { "<p>$it</p>" }   // no translation yet → original
-            "jp" -> jp.joinToString("\n") { "<p>$it</p>" }
+        fun imgDivs(idx: Int): String = doc.images
+            .filter { it.first == idx }
+            .mapNotNull { mediaNames[it.second] }
+            .joinToString("\n") { n -> "<div class=\"nn-img\"><img src=\"$n\" alt=\"\"/></div>" }
+        // anchors at/beyond the paragraph count render after the last line
+        val tailImgs = ((jp.size)..(jp.size + 32)).mapNotNull { i ->
+            imgDivs(i).ifEmpty { null }
+        }.joinToString("\n")
+
+        fun textOf(i: Int): String = when (layout) {
+            "en" -> {
+                val e = en?.getOrNull(i)
+                if (!e.isNullOrBlank()) "<p>$e</p>"
+                else "<p>${jp.getOrNull(i) ?: ""}</p>"   // no translation yet → original
+            }
+            "jp" -> "<p>${jp.getOrNull(i) ?: ""}</p>"
             else -> buildString {
-                jp.forEachIndexed { i, p ->
-                    append("<p>").append(p).append("</p>\n")
-                    val e = en?.getOrNull(i)
-                    if (!e.isNullOrBlank()) append("<p class=\"nn-en\">").append(e).append("</p>\n")
-                }
-            }.trimEnd('\n')
+                append("<p>").append(jp.getOrNull(i) ?: "").append("</p>")
+                val e = en?.getOrNull(i)
+                if (!e.isNullOrBlank()) append("\n<p class=\"nn-en\">").append(e).append("</p>")
+            }
         }
+
+        return buildString {
+            imgDivs(0).ifEmpty { null }?.let { append(it).append("\n") }
+            jp.forEachIndexed { i, _ ->
+                append(textOf(i)).append("\n")
+                imgDivs(i + 1).ifEmpty { null }?.let { append(it).append("\n") }
+            }
+            if (tailImgs.isNotEmpty()) append(tailImgs)
+        }.trimEnd('\n')
+    }
+
+    private fun mediaMime(name: String): String = when (name.substringAfterLast('.')) {
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        else -> "image/jpeg"
     }
 
     private fun chaptersJson(chapters: List<ChapterDoc>): String {
@@ -523,6 +602,10 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
                     .put("t", doc.title)
                     .put("f", "chapters/c" + "%04d".format(index + 1) + ".xhtml")
                     .put("n", chapterNum(doc.label))
+                    .put(
+                        "m",
+                        JSONArray(doc.images.map { (i, u) -> JSONArray().put(i).put(u) })
+                    )
             )
         }
         return arr.toString()
@@ -627,7 +710,8 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
             // rebuild replaces the URL's row) — carry it across so a plain
             // re-read never wipes translated chapters.
             val priorTranslation = existing.firstOrNull { it.url == chapterUrl }?.translation
-            val docs = kept + ChapterDoc(chapterUrl, label, extract.title, extract.paragraphs, priorTranslation)
+            val doc = ChapterDoc(chapterUrl, label, extract.title, extract.paragraphs, priorTranslation, extract.images)
+            val docs = kept + doc
             val ordered = orderDocs(docs)
             val cover = CoverStore.localFile(context, seriesUrl)?.readBytes()
                 ?: existingCover(book) ?: if (legacy.exists()) existingCover(legacy) else null
@@ -648,7 +732,8 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
             }
             val buckets = (bucketsOf(context, seriesUrl) + bucket).distinct()
             val displayTitle = bookDisplayTitle(seriesTitle, bucket, buckets)
-            val n = writeBook(book, displayTitle, cover, "image/jpeg", ordered, bookMeta)
+            val n = writeBook(book, displayTitle, cover, "image/jpeg", ordered, bookMeta,
+                mediaLookup = { u -> EpubMediaStore.bytes(context, u) })
             syncLayoutVariants(context, seriesUrl, bucket, displayTitle, cover, ordered, bookMeta)
             n
         } catch (e: Exception) {
@@ -688,7 +773,8 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         val displayTitle = bookDisplayTitle(seriesTitle, bucket, bucketsOf(context, seriesUrl))
         val cover = CoverStore.localFile(context, seriesUrl)?.readBytes()
             ?: existingCover(book)
-        writeBook(book, displayTitle, cover, "image/jpeg", orderDocs(docs), readBookMeta(book))
+        writeBook(book, displayTitle, cover, "image/jpeg", orderDocs(docs), readBookMeta(book),
+            mediaLookup = { u -> EpubMediaStore.bytes(context, u) })
         syncLayoutVariants(context, seriesUrl, bucket, displayTitle, cover, orderDocs(docs), readBookMeta(book))
         return true
     }
@@ -724,7 +810,8 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
                 if (layout == "both" && translated) {
                     writeBook(
                         file, displayTitle + " (" + variant.uppercase() + ")",
-                        cover, "image/jpeg", docs, meta, variant
+                        cover, "image/jpeg", docs, meta, variant,
+                        mediaLookup = { u -> EpubMediaStore.bytes(context, u) }
                     )
                 } else if (file.exists()) {
                     file.delete()
@@ -748,7 +835,9 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         val files = bookFiles(context, seriesUrl) +
             listOfNotNull(legacyBookFile(context, seriesUrl).takeIf { it.exists() })
         for (f in files) {
-            readChapterDoc(f, chapterUrl)?.let { return ChapterExtract(title = it.title, paragraphs = it.paragraphs) }
+            readChapterDoc(f, chapterUrl)?.let {
+                return ChapterExtract(title = it.title, paragraphs = it.paragraphs, images = it.images)
+            }
         }
         return null
     }
@@ -766,7 +855,8 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
             val tmp = File(context.cacheDir, "export-${System.currentTimeMillis()}.epub")
             writeBook(
                 tmp, bookDisplayTitle(seriesTitle, bucket, bucketsOf(context, seriesUrl)),
-                existingCover(book), "image/jpeg", orderDocs(docs), readBookMeta(book), layout
+                existingCover(book), "image/jpeg", orderDocs(docs), readBookMeta(book), layout,
+                mediaLookup = { u -> EpubMediaStore.bytes(context, u) }
             )
             context.contentResolver.openOutputStream(uri)?.use { out ->
                 tmp.inputStream().use { it.copyTo(out) }
