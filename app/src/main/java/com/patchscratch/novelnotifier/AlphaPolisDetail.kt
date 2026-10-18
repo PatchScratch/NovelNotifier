@@ -60,6 +60,17 @@ fun AlphaPolisDetailScreen(
     var downloadingUrl by remember(work.id) { mutableStateOf<String?>(null) }
     var downloadMsg by remember(work.id) { mutableStateOf("") }
     var showCategoryPicker by remember(work.id) { mutableStateOf(false) }
+    var confirmWipe by remember(work.id) { mutableStateOf(false) }
+
+    /** Nuke every stored book for the series and refresh the local state. */
+    fun wipeStored() {
+        scope.launch {
+            withContext(Dispatchers.IO) { EpubStore.deleteSeries(context, work.url) }
+            storedUrls = emptySet()
+            storedList = emptyList()
+            confirmWipe = false
+        }
+    }
     val currentCategory = categories.assign[work.id]
         ?.let { id -> categories.cats.firstOrNull { it.id == id } }
 
@@ -244,6 +255,10 @@ fun AlphaPolisDetailScreen(
                             enabled = episodes.isNotEmpty() || storedList.isNotEmpty()
                         ) { Text(t("Read from start", "最初から読む")) }
                         TextButton(
+                            onClick = { confirmWipe = true },
+                            enabled = storedUrls.isNotEmpty()
+                        ) { Text(t("Delete stored", "保存済みを削除")) }
+                        TextButton(
                             onClick = {
                                 if (episodes.isNotEmpty()) {
                                     EpubBulkService.start(
@@ -282,6 +297,31 @@ fun AlphaPolisDetailScreen(
             }
         )
     )
+
+    if (confirmWipe) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmWipe = false },
+            title = { Text(t("Delete stored chapters?", "保存済みの章を削除しますか？")) },
+            text = {
+                Text(
+                    t(
+                        "Every offline chapter for this series is removed (including translations). Nothing is unfollowed; reading or Download all rebuilds it.",
+                        "このシリーズのオフライン章をすべて削除します（翻訳も含む）。フォローは解除されず、読書または一括ダウンロードで再構築できます。"
+                    )
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { wipeStored() }) {
+                    Text(t("Delete", "削除"))
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmWipe = false }) {
+                    Text(t("Cancel", "キャンセル"))
+                }
+            }
+        )
+    }
 
     if (showCategoryPicker) {
         CategoryMoveDialog(

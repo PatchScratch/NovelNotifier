@@ -798,6 +798,20 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         readAllStoredDocs(context, seriesUrl).size
 
     /**
+     * Remove every stored book for the series (buckets, layout twins,
+     * legacy). Translations and cached illustration bytes ride with the
+     * books; the media cache itself is URL-keyed and shared, so it stays.
+     */
+    fun deleteSeries(context: Context, seriesUrl: String) {
+        val prefix = prefixOf(seriesUrl)
+        dir(context).listFiles().orEmpty()
+            .filter { it.name.startsWith(prefix) && it.name.endsWith(".epub") }
+            .forEach { it.delete() }
+        legacyBookFile(context, seriesUrl).takeIf { it.exists() }?.delete()
+        DebugLog.log("EPUB", "deleted all stored books for $seriesUrl")
+    }
+
+    /**
      * Keep a bucket's layout-variant twins in step with the saved paragraph
      * layout (user request 2026-10-18): with "both" selected AND at least one
      * chapter translated, the library physically holds three books — the
