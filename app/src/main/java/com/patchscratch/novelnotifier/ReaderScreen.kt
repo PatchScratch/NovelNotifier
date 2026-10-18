@@ -610,6 +610,11 @@ fun ReaderScreen(
         // site's premium chapters (session-authorized) work without any
         // scraping surface. Stored copies serve when offline.
         val isAlpChapter = (android.net.Uri.parse(chapter.url).host ?: "").endsWith("alphapolis.co.jp")
+        val stored = if (isAlpChapter) {
+            withContext(Dispatchers.IO) {
+                EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+            }
+        } else null
         if (isAlpChapter) {
             // Text we already DOM-extracted this session (the flip back to
             // TEXT restarts this ladder) — serve it, never re-hop.
@@ -618,32 +623,15 @@ fun ReaderScreen(
                 return@LaunchedEffect
             }
         }
-        if (isAlpChapter && !alpHop) {
-            val stored = withContext(Dispatchers.IO) {
-                EpubStore.readChapter(context, target.seriesUrl, chapter.url)
-            }
-            if (stored != null && !isNetworkOnline(context)) {
-                extractResult = stored
-                offlineCopy = true
-                return@LaunchedEffect
-            }
+        if (isAlpChapter) {
+            // ALWAYS the rendered-WebView path (Wayne's live catches
+            // 2026-10-18): BOTH static fetches have served wrong-episode
+            // text — the anonymous episode_body POST is mis-mapped for some
+            // series (異世界 1-2 returns another chapter's scene), and the
+            // sessioned page renders the viewer at the account's last-read
+            // position. Only the site's own JS, running on the URL in a
+            // visible WebView, reliably renders the URL's true episode.
             if (isNetworkOnline(context)) {
-                // Shared headless path (also serves the series page's
-                // per-chapter download and EpubBulkService): (B) tokens →
-                // body POST, else (A) server-embedded body. Entitled premium
-                // included; null → paywalled/viewer-only → web-hop below.
-                extractResult = fetchAlpChapterHeadless(chapter.url)
-                if (extractResult == null && stored != null) {
-                    extractResult = stored
-                    offlineCopy = true
-                }
-                if (extractResult != null) return@LaunchedEffect
-                // Empty (typical logged-in shape): the site's viewer only
-                // fills the body in a visible WebView — hop to WEB for this
-                // load; the ladder extracts and flips back to TEXT. A hop
-                // that already exhausted its ladder in this retry cycle
-                // (paywalled chapter the session doesn't own) must not
-                // re-hop — that would reload-loop; declare failure instead.
                 if (alpHopExhausted[chapter.url] == retryKey) {
                     extractFailed = true
                     return@LaunchedEffect

@@ -234,44 +234,13 @@ class EpubBulkService : Service() {
                 if (!scope.isActive) return
                 if (chapter.url in known && !job.refresh) { skipped++; continue }
                 if (nuHosted(chapter.url)) { pendingNu.add(chapter); continue }
-                // AlphaPolis chapters are fully headless (session-authorized;
-                // no WebView, no CF). An unentitled chapter (premium not
-                // bought/rented) is an EXPECTED miss here, not a site fault —
-                // skip it instead of feeding the 8-failure abort, so a bulk
-                // run over a partly-paid series stores everything the user
-                // owns (user decision 2026-10-18: offline is per-chapter).
-                if (chapter.url.endsWith("alphapolis.co.jp") ||
-                    chapter.url.contains(".alphapolis.co.jp/")) {
-                    status("alphapolis · ${chapter.label}")
-                    val extract = fetchAlpChapterHeadless(chapter.url)
-                    if (extract != null && extract.paragraphs.isNotEmpty()) {
-                        // Re-derive the storage label from the episode's OWN
-                        // title ("1-1" → v1c1, 第N話 → cN) so a refresh pass
-                        // migrates old flat ordinals to volume/話 labels; the
-                        // cross-bucket sweep in appendChapter moves the
-                        // chapter to its new volume book when the label moves.
-                        val label = alpEpisodeLabel(
-                            extract.title,
-                            chapter.label.removePrefix("c").toIntOrNull() ?: 0
-                        )
-                        // Count only REAL writes — appendChapter returns -1
-                        // on failure (its own log says why); counting those
-                        // as saved masked failed re-scrapes behind a green
-                        // "Bulk done" tally (caught auditing Wayne's
-                        // "1-2 is still wrong" report).
-                        val written = withContext(Dispatchers.IO) {
-                            EpubStore.appendChapter(
-                                context, job.seriesTitle, job.seriesUrl,
-                                chapter.url, label, extract, job.meta
-                            )
-                        }
-                        if (written > 0) saved++ else failed++
-                    } else {
-                        skipped++
-                    }
-                    delay(2000)
-                    continue
-                }
+                // AlphaPolis rides the SAME WebView ladder now (2026-10-18):
+                // static fetches proved unreliable — the anonymous
+                // episode_body POST mis-maps some series and the sessioned
+                // page renders the viewer at the account's reading
+                // position. The rendered DOM (this service's WebView +
+                // chapterExtractJs, content-viewer stub included on the
+                // reader side) carries the URL's true episode.
                 status("direct · ${chapter.label}")
                 val extract = loadAndExtract(chapter.url)
                 if (extract != null) {
