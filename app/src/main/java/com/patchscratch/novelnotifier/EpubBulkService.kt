@@ -52,7 +52,11 @@ class EpubBulkService : Service() {
         val seriesTitle: String,
         val seriesUrl: String,
         val chapters: List<BulkChapter>,
-        val meta: EpubStore.BookMeta?
+        val meta: EpubStore.BookMeta?,
+        // Re-scrape chapters that are ALREADY stored (library refresh after
+        // extractor fixes): appendChapter replaces by URL and carries stored
+        // AI translations, so a refresh re-captures text AND illustrations.
+        val refresh: Boolean = false
     )
 
     private var session: SiteClient.Session? = null
@@ -228,7 +232,7 @@ class EpubBulkService : Service() {
             val pendingNu = mutableListOf<BulkChapter>()
             for (chapter in job.chapters) {
                 if (!scope.isActive) return
-                if (chapter.url in known) { skipped++; continue }
+                if (chapter.url in known && !job.refresh) { skipped++; continue }
                 if (nuHosted(chapter.url)) { pendingNu.add(chapter); continue }
                 // AlphaPolis chapters are fully headless (session-authorized;
                 // no WebView, no CF). An unentitled chapter (premium not
@@ -281,7 +285,7 @@ class EpubBulkService : Service() {
             // ---- pass 2: NU-routed chapters — ToC direct, else slow NU ------
             for (chapter in pendingNu) {
                 if (!scope.isActive) return
-                if (chapter.url in known) { skipped++; continue }
+                if (chapter.url in known && !job.refresh) { skipped++; continue }
                 val key = chapterKey(chapter.label)
                 val directUrl = key?.let { resolveToc(it) }
                 if (directUrl != null && !nuHosted(directUrl)) {
@@ -334,8 +338,17 @@ class EpubBulkService : Service() {
             val summary = "Bulk done · saved $saved (ToC $viaToc · NU $viaNu) · skipped $skipped · failed $failed"
             writeStatus(context, summary)
             DebugLog.log("EPUB", "bulk ${job.seriesTitle}: $summary")
-            updateNotification("done · $saved chapters")
-            stopSelf()
+            // Library refresh chains series: pull the next queued job (if
+            // any) instead of stopping, so one action re-scrapes everything.
+            val next = popQueue(context)
+            if (next != null) {
+                saveBulkJob(context, next)
+                updateNotification("next · ${next.seriesTitle}")
+                scope.launch { runBulk(next) }
+            } else {
+                updateNotification("done · $saved chapters")
+                stopSelf()
+            }
         } catch (e: Exception) {
             DebugLog.log("EPUB", "bulk service crashed", e)
             writeStatus(context, "Bulk failed: ${e.message}")
@@ -426,10 +439,59 @@ class EpubBulkService : Service() {
             }
         }
 
+        private const val QUEUE_FILE = "epub_bulk_queue.json"
+
+        /** Queue a whole-library refresh: series run back-to-back in one
+         *  foreground session (each finishes into the next). */
+        fun startMany(context: Context, jobs: List<BulkJob>) {
+            if (jobs.isEmpty()) return
+            val arr = JSONArray()
+            jobs.forEach { job ->
+                arr.put(JSONObject()
+                    .put("title", job.seriesTitle)
+                    .put("url", job.seriesUrl)
+                    .put("refresh", job.refresh)
+                    .put("chapters", JSONArray(job.chapters.map {
+                        JSONObject().put("u", it.url).put("c", it.label)
+                    })))
+            }
+            context.filesDir.resolve(QUEUE_FILE).writeText(arr.toString())
+            val first = popQueue(context) ?: return
+            start(context, first)
+        }
+
+        /** Remove and return the first queued job (null when empty). */
+        private fun popQueue(context: Context): BulkJob? {
+            return try {
+                val file = context.filesDir.resolve(QUEUE_FILE)
+                if (!file.exists()) return null
+                val arr = JSONArray(file.readText())
+                if (arr.length() == 0) { file.delete(); return null }
+                val first = arr.optJSONObject(0) ?: run { file.delete(); return null }
+                val rest = JSONArray()
+                for (i in 1 until arr.length()) rest.put(arr.get(i))
+                if (rest.length() > 0) file.writeText(rest.toString()) else file.delete()
+                val chapters = first.optJSONArray("chapters") ?: JSONArray()
+                BulkJob(
+                    seriesTitle = first.optString("title"),
+                    seriesUrl = first.optString("url"),
+                    chapters = (0 until chapters.length()).mapNotNull { i ->
+                        val row = chapters.optJSONObject(i) ?: return@mapNotNull null
+                        BulkChapter(row.optString("u"), row.optString("c"))
+                    },
+                    meta = null,
+                    refresh = first.optBoolean("refresh", false)
+                )
+            } catch (e: Exception) {
+                null
+            }
+        }
+
         fun saveBulkJob(context: Context, job: BulkJob) {
             val json = JSONObject()
                 .put("title", job.seriesTitle)
                 .put("url", job.seriesUrl)
+                .put("refresh", job.refresh)
             job.meta?.let { m ->
                 json.put("meta", JSONObject()
                     .put("title", m.title).put("description", m.description)
@@ -468,7 +530,8 @@ class EpubBulkService : Service() {
                     val row = arr.optJSONObject(i) ?: return@mapNotNull null
                     BulkChapter(row.optString("u"), row.optString("c"))
                 },
-                meta = meta
+                meta = meta,
+                refresh = json.optBoolean("refresh", false)
             )
             } catch (e: Exception) {
                 null

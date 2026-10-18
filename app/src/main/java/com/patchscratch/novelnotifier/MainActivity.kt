@@ -28,6 +28,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.patchscratch.novelnotifier.ui.theme.NovelNotifierTheme
 
@@ -300,7 +304,9 @@ fun NovelApp(
             onCancel = { router.replace(Route.Settings) }
         )
 
-        Route.Settings -> SettingsScreen(
+        Route.Settings -> {
+        val libScope = androidx.compose.runtime.rememberCoroutineScope()
+        SettingsScreen(
             app = app,
             nu = nu,
             syosetu = syosetu,
@@ -319,8 +325,49 @@ fun NovelApp(
                 } else {
                     app.startCoverSync(nu)
                 }
+            },
+            onRescrapeLibrary = {
+                libScope.launch {
+                    val jobs = withContext(Dispatchers.IO) {
+                        // Every bookmarked series that has stored chapters,
+                        // across all four sites — a refresh job per series,
+                        // chained by the bulk service.
+                        val series: List<Pair<String, String>> = buildList {
+                            alp.bookmarks.forEach { add(it.title to it.url) }
+                            syosetu.bookmarks.forEach { add(it.title to it.url) }
+                            kakuyomu.bookmarks.forEach { add(it.title to it.url) }
+                            nu.novels.forEach { add(it.title to it.seriesUrl) }
+                        }.distinctBy { it.second }
+                        series.mapNotNull { (title, url) ->
+                            val stored = EpubStore.storedChapters(context, url)
+                            if (stored.isEmpty()) return@mapNotNull null
+                            EpubBulkService.BulkJob(
+                                seriesTitle = title,
+                                seriesUrl = url,
+                                chapters = stored.map {
+                                    EpubBulkService.BulkChapter(it.url, it.label)
+                                },
+                                meta = null,
+                                refresh = true
+                            )
+                        }
+                    }
+                    if (jobs.isEmpty()) {
+                        android.widget.Toast.makeText(
+                            context, "No stored chapters to refresh", android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Re-scraping ${jobs.size} series — progress in the notification",
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                        EpubBulkService.startMany(context, jobs)
+                    }
+                }
             }
         )
+        }
 
         is Route.EditLists -> EditListsScreen(
             url = route.url,

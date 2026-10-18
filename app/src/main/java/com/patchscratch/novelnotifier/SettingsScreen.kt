@@ -70,7 +70,10 @@ fun SettingsScreen(
     onRequestNsfwUnlock: () -> Unit = {},
     // Wraps startCoverSync in the POST_NOTIFICATIONS permission request —
     // the launcher is activity-scoped.
-    onStartCoverSync: () -> Unit = {}
+    onStartCoverSync: () -> Unit = {},
+    // Re-scrapes every stored chapter across all sites (library refresh
+    // after extractor fixes) — the bulk service chains the series.
+    onRescrapeLibrary: () -> Unit = {}
 ) {
     // Local aliases keep the 850-line body unchanged while the signature
     // above stays small.
@@ -950,6 +953,16 @@ fun SettingsScreen(
         }
         TextButton(onClick = onStopCoverSync, modifier = Modifier.fillMaxWidth()) {
             Text(t("Stop sync", "同期を停止"))
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Text(
+            text = t("Re-fetches every chapter you have stored offline (all sites) with the current extractor — refreshes text and captures illustrations into the books. Runs in a notification; translations are kept.", "保存済みの全章（全サイト）を現在の抽出器で再取得します — 本文を更新し、挿絵を本に取り込みます。通知で実行、翻訳は保持されます。"),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        Button(onClick = onRescrapeLibrary, modifier = Modifier.fillMaxWidth()) {
+            Text(t("Re-scrape offline library", "オフライン書庫を再取得"))
         }
 
         }
