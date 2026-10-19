@@ -222,10 +222,26 @@ class HostProbeService : Service() {
                 // already harvested on a previous run — reuse, no fetch
                 chapter = done.optString(1).takeIf { it.startsWith("http") }
             } else {
-                val raw = loadJs(sess, g.key, harvestGroupJs())
-                if (raw == null) continue
-                if (raw == "CF") {
+                // CF retries are CAPPED and logged: the pre-fix loop sat
+                // silent for 2+ days on one challenge (rig 2026-10-20 —
+                // service alive, zero log lines, notification blocked).
+                // A CF-walled or dead group is skipped WITHOUT a checkpoint
+                // so the next run retries it once.
+                var raw: String? = null
+                var cfTries = 0
+                while (cfTries < 5) {
+                    raw = loadJs(sess, g.key, harvestGroupJs())
+                    if (raw != "CF") break
+                    cfTries++
+                    DebugLog.log("PROBE", "group ${g.value} CF-blocked (try $cfTries/5)")
                     delay(30_000)
+                }
+                if (raw == null) {
+                    DebugLog.log("PROBE", "group ${g.value} load timed out — skipped this run")
+                    continue
+                }
+                if (raw == "CF") {
+                    DebugLog.log("PROBE", "group ${g.value} CF-walled 5× — skipped this run")
                     continue
                 }
                 chapter = parseHarvest(raw).entries.firstOrNull()?.key
