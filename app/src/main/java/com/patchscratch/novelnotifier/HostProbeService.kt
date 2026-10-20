@@ -74,7 +74,10 @@ class HostProbeService : Service() {
          * lander behind CF — never come back; terminal DEFUNCT, no re-probe.
          */
         val DEFUNCT_HOSTS = setOf(
-            "forbiddencylinder.com" // expired → registrar redirect (Wayne, 2026-10-20)
+            "forbiddencylinder.com", // expired → registrar redirect (Wayne, 2026-10-20)
+            // Defunct behind a broken CF config — challenge never clears
+            // (Wayne, 2026-10-20: "malconformed cloudflare settings"):
+            "grimdarkztranslations.com"
         )
 
         /**
