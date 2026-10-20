@@ -53,7 +53,8 @@ class HostProbeService : Service() {
          * domain suffix. Grow this list as Wayne rules on more CF hosts.
          */
         val EXPECTED_CF_HOSTS = setOf(
-            "foxaholic.com"
+            "foxaholic.com",       // subdomain-per-genre family
+            "bellerepository.com"  // same operator/setup as foxaholic (Wayne, 2026-10-20)
         )
         var probeAlive = false
             private set
