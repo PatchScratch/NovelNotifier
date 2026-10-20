@@ -151,10 +151,20 @@ data class SeriesDetailState(
     val releasesOnNearEnd: () -> Unit = {}
 )
 
+/** Last-selected tab per series (Wayne, 2026-10-20): the detail screen is
+ *  recreated when the reader replaces it, so back from the reader must land
+ *  on the tab he left (RELEASES), not always INFO. Process-wide, LRU-bounded. */
+private val detailTabMemory = object : LinkedHashMap<String, Int>(64, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?) = size > 64
+}
+
 @Composable
 fun SeriesDetailScreen(state: SeriesDetailState) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) } // 0 = INFO, 1 = RELEASES
+    var tab by remember(state.seriesUrl) {
+        mutableIntStateOf(detailTabMemory[state.seriesUrl] ?: 0) // 0 = INFO, 1 = RELEASES
+    }
+    androidx.compose.runtime.SideEffect { detailTabMemory[state.seriesUrl] = tab }
     var newestFirst by remember { mutableStateOf(true) }
     var hideRead by remember { mutableStateOf(false) }
     var descExpanded by remember { mutableStateOf(false) }
