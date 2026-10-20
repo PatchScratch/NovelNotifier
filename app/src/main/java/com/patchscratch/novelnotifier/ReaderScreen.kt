@@ -1159,6 +1159,46 @@ fun ReaderScreen(
                         onClick = { showMenu = false; saveChapterOffline() }
                     )
                 }
+                // Deletion is always available (Wayne, 2026-10-20): clear a
+                // stale/wrong chapter copy and re-read to re-download the
+                // corrected text; series-wide wipe for bulk cleanup.
+                if (epubCount > 0) {
+                    DropdownMenuItem(
+                        text = { Text(t("Delete THIS chapter's offline copy", "この章の保存済みを削除")) },
+                        onClick = {
+                            showMenu = false
+                            scope.launch {
+                                val n = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    EpubStore.deleteChapter(context, target.seriesUrl, chapter.url)
+                                }
+                                epubCount -= n
+                                android.widget.Toast.makeText(
+                                    context,
+                                    if (n > 0) t("Deleted — re-opening re-downloads it", "削除済み — 開き直すと再取得します")
+                                    else t("Not stored", "保存されていません"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                retryKey += 1
+                            }
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(t("Delete ALL stored chapters", "保存済み全話を削除") + " ($epubCount)") },
+                        onClick = {
+                            showMenu = false
+                            scope.launch {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    EpubStore.deleteSeries(context, target.seriesUrl)
+                                }
+                                epubCount = 0
+                                android.widget.Toast.makeText(
+                                    context, t("All stored chapters deleted", "保存済み全話を削除しました"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    )
+                }
                 if (offlineEnabled && chapters.size > 0) {
                     if (EpubBulkService.running(context)) {
                         DropdownMenuItem(

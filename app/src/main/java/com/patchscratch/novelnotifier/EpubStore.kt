@@ -765,6 +765,44 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
     }
 
     /**
+     * Delete ONE chapter's stored copy (reader ⋮ menu, Wayne 2026-10-20):
+     * rewrite every book holding the URL without it; a bucket that empties
+     * is removed along with its layout twins. Returns copies removed.
+     */
+    fun deleteChapter(context: Context, seriesUrl: String, chapterUrl: String): Int {
+        var removed = 0
+        try {
+            val files = bookFiles(context, seriesUrl) +
+                listOfNotNull(legacyBookFile(context, seriesUrl).takeIf { it.exists() })
+            for (f in files) {
+                val docs = readAllChapterDocs(f)
+                val kept = docs.filter { it.url != chapterUrl }
+                if (kept.size == docs.size) continue
+                removed += docs.size - kept.size
+                val bucket = f.name.removePrefix(prefixOf(seriesUrl)).removeSuffix(".epub")
+                if (kept.isEmpty()) {
+                    f.delete()
+                    for (v in listOf("jp", "en")) {
+                        variantBookFile(context, seriesUrl, bucket, v).delete()
+                    }
+                    continue
+                }
+                val stitle = readBookMeta(f)?.title ?: seriesUrl
+                val displayTitle = bookDisplayTitle(stitle, bucket, bucketsOf(context, seriesUrl))
+                val cover = existingCover(f)
+                val meta = readBookMeta(f)
+                writeBook(f, displayTitle, cover, "image/jpeg", orderDocs(kept), meta,
+                    mediaLookup = { u -> EpubMediaStore.bytes(context, u) })
+                syncLayoutVariants(context, seriesUrl, bucket, displayTitle, cover, orderDocs(kept), meta)
+            }
+            DebugLog.log("EPUB", "deleteChapter $chapterUrl: $removed cop" + (if (removed == 1) "y" else "ies"))
+        } catch (e: Exception) {
+            DebugLog.log("EPUB", "deleteChapter failed", e)
+        }
+        return removed
+    }
+
+    /**
      * Attach (or replace) the AI translation of one stored chapter. Rewrites
      * the bucket book holding that chapter; original paragraphs are untouched.
      * Returns false when the chapter isn't stored yet — translate-then-save
