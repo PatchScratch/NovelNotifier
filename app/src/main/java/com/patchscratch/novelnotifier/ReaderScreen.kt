@@ -1505,10 +1505,14 @@ fun ReaderScreen(
                         }
                         // Saved layout choice: both (JP with EN under it),
                         // jp only, or en only once a translation exists.
+                        // EN-only on untranslated text (NU chapters are
+                        // already English) falls back to the source — the
+                        // paragraph list must never render blank (Wayne,
+                        // 2026-10-20).
                         val en = translation?.getOrNull(i)
                         val showEn = en != null && en.isNotBlank() && showTranslation
                         val isSpeaking = speakingPara == i
-                        if (xlateLayout != "en") {
+                        if (xlateLayout != "en" || !showEn) {
                             JpParagraph(
                                 text = paragraph,
                                 color = if (isSpeaking) palette.text.copy(alpha = 0.5f) else palette.text,

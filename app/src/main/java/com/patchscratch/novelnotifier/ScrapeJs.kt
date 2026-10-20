@@ -638,6 +638,10 @@ fun chapterExtractJs(wanted: String = ""): String = """
       var m = t.match(/v(\d+)\s*c(\d+)/i); if (m) return m[1] + ':' + m[2];
       m = t.match(/(?:ch(?:apter)?[\s.\-]*|(^|\s)c)(\d+)/i); if (m) return ':' + m[2];
       m = t.match(/第(\d+)話/); if (m) return ':' + m[1];
+      // Worded ordinals (Wayne 2026-10-20: cover hosts list "Prologue 1/2/3"
+      // entries that no numeric pattern matches — "chapter detection fails").
+      m = t.match(/(prologue|interlude|epilogue|extra|omake)\s*[#.\-]?\s*(\d+)?/i);
+      if (m) return m[1].substring(0, 2).toUpperCase() + ':' + (m[2] || '0');
       return null;
     }
     function keyMatches(want, k) {
@@ -658,15 +662,23 @@ fun chapterExtractJs(wanted: String = ""): String = """
       seenHref[href] = 1;
       var at = (a.innerText || '').trim();
       var k = parseKey(at);
-      if (k) chapAnchors.push({ k: k, href: href });
+      if (k) chapAnchors.push({ k: k, href: href, t: at });
       if (!tocLink && /^(toc|table of contents|index|目次|chapters?|novel index)$/i.test(at)) tocLink = href;
     }
     if (chapAnchors.length >= 5) {
-      var wantedKey = parseKey('${wanted.replace("\\", "\\\\").replace("'", "\\'")}');
+      var wantedText = '${wanted.replace("\\", "\\\\").replace("'", "\\'")}';
+      var wantedKey = parseKey(wantedText);
+      var wantedRaw = wantedText.toLowerCase().replace(/\s+/g, ' ').trim();
       for (var wi = 0; wi < chapAnchors.length; wi++) {
-        if (wantedKey && keyMatches(wantedKey, chapAnchors[wi].k) &&
-            chapAnchors[wi].href !== location.href) {
-          return 'COVER-DIRECT:' + chapAnchors[wi].href;
+        var ca = chapAnchors[wi];
+        if (ca.href === location.href) continue;
+        var keyHit = wantedKey && keyMatches(wantedKey, ca.k);
+        // Substring fallback: label dialects no pattern covers ("Prologue",
+        // named extras) match by containment on a cover page.
+        var textHit = !keyHit && wantedRaw.length > 2 &&
+          ca.t.toLowerCase().replace(/\s+/g, ' ').indexOf(wantedRaw) >= 0;
+        if (keyHit || textHit) {
+          return 'COVER-DIRECT:' + ca.href;
         }
       }
       // No wanted match here (or it's this page's own ToC self-link):
