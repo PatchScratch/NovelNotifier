@@ -82,6 +82,12 @@ import androidx.compose.foundation.layout.WindowInsets
  *     fallback, not the default (the sync doctrine).
  *  4. readOrdinal drives hide-read and next-chapter math; keep it the
  *     last-read episode number (0 = nothing read).
+ *  5. Offline row state is part of the contract (Wayne, 2026-10-20):
+ *     every row sets `downloaded` against the series' stored URLs and
+ *     `onDownload` (open-in-reader IS the fetch for WebView-saved sites;
+ *     headless-fetch sites may fetch directly). Stored-list fallback rows
+ *     are downloaded by construction. SyosetuScreen is the REFERENCE
+ *     implementation sites follow.
  */
 
 /** One RELEASES row. [onCheck] null hides the checkbox. */

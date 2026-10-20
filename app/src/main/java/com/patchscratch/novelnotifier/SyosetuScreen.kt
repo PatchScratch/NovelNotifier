@@ -569,11 +569,16 @@ fun SyosetuDetailScreen(
     }
 
     // Reader chapters: label cN keeps ordering/bucket logic identical to NU.
+    fun epUrl(ep: SyosetuEpisode): String =
+        if (novel.isShortStory) novel.url else "${novel.url}${ep.number}/"
+
     fun toChapters(): List<Release> = toc!!.episodes.map { ep ->
-        // shorts: the story is the bare URL; serials: ncode/N/
-        val url = if (novel.isShortStory) novel.url else "${novel.url}${ep.number}/"
-        Release(chapter = "c${ep.number}", group = "", date = "", url = url)
+        Release(chapter = "c${ep.number}", group = "", date = "", url = epUrl(ep))
     }
+
+    // Row offline state (Wayne, 2026-10-20 — Syosetu is the TEMPLATE sites
+    // follow): green check on stored rows, arrow opens+saves otherwise.
+    val storedUrls = storedList.map { it.url }.toSet()
 
     // ---- NU-model detail (framework B1): the shared template renders the
     // exact NU anatomy — header + tabs + INFO cards + RELEASES — and this
@@ -626,6 +631,8 @@ fun SyosetuDetailScreen(
                     title = ep.title,
                     date = "",
                     isRead = ep.number == position,
+                    downloaded = epUrl(ep) in storedUrls,
+                    onDownload = { openAt(ep.number - 1) },
                     onOpen = { openAt(ep.number - 1) },
                     onCheck = { onSetShiori(ep.number) }
                 )
@@ -638,6 +645,7 @@ fun SyosetuDetailScreen(
                     title = "",
                     date = "",
                     isRead = false,
+                    downloaded = true, // rows come FROM the stored list
                     onOpen = { openAt(i) }
                 )
             },

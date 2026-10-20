@@ -616,6 +616,10 @@ fun KakuyomuDetailScreen(
     val nextEp = episodes.getOrNull(nextOrdinal - 1)
 
     fun toChaptersOrNull(): List<Release>? = if (episodes.isNotEmpty()) toChapters() else null
+
+    // Row offline state (template rule, 2026-10-20): green check on stored
+    // rows; arrow opens+saves (reading IS the download).
+    val storedUrls = storedList.map { it.url }.toSet()
     fun openAt(index: Int) {
         val chapters = toChaptersOrNull()
         if (chapters != null && index < chapters.size) onOpenReader(chapters, index)
@@ -664,6 +668,8 @@ fun KakuyomuDetailScreen(
                     title = ep.title,
                     date = ep.publishedAt.take(10),
                     isRead = false,
+                    downloaded = ep.url(work.id) in storedUrls,
+                    onDownload = { openAt(i) },
                     onOpen = { openAt(i) },
                     onCheck = { onSetHistory(ep.id, i + 1) }
                 )
@@ -674,6 +680,7 @@ fun KakuyomuDetailScreen(
                     title = "",
                     date = "",
                     isRead = false,
+                    downloaded = true, // rows come FROM the stored list
                     onOpen = { openAt(i) }
                 )
             },
