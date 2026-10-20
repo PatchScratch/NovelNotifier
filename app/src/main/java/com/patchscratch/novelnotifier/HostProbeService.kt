@@ -70,7 +70,12 @@ class HostProbeService : Service() {
             "puffberry.top",
             "ranatranslations.com",
             "reigokaitranslations.com",
-            "rephrasedstories.com"
+            "rephrasedstories.com",
+            // Batch ruling, Wayne 2026-10-20 (cont. 2) — CF walled:
+            "shubaowb.com",
+            "shynovels.com",
+            "skydemonorder.com",
+            "tangerinearchive.com"
         )
 
         /**
