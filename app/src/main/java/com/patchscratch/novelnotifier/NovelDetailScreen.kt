@@ -237,7 +237,12 @@ fun NovelDetailScreen(
     // body below only assembles SeriesDetailState.
     val rows = remember(page.releases, groupOff) {
         val filtered = page.releases.filter { it.group.isBlank() || it.group !in groupOff }
-        filtered.map { release ->
+        // Template contract (2026-10-20): supply rows OLDEST-FIRST — the
+        // cache is date-descending (mergeReleases sorts by date posted to
+        // NU) and the order card's Newest First flips it back. The old code
+        // left it newest-first while the template numbered-sorted, which
+        // scrambled rows and broke the arrange toggles.
+        filtered.asReversed().map { release ->
             val thisNum = chapterNum(release.chapter)
             SeriesEpisodeRow(
                 ordinal = if (thisNum > 0) thisNum else 0,

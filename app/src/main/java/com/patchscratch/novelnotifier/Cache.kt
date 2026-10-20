@@ -261,7 +261,32 @@ fun seriesNeedsRefresh(context: Context, novel: Novel): Boolean {
     return incoming > saved
 }
 
-/** Keep old rows, add new ones. Same chapter+url is not duplicated. */
+/** Comparable key from an NU release-table date cell ("5 Aug 26",
+ *  "08/05/26", "2026-08-05" — tolerant). -1 when unparsable (sorts last,
+ *  keeping batch order among ties). */
+fun nuDateKey(date: String): Int {
+    val name = Regex("""(\d{1,2})\s+([A-Za-z]{3,9})\.?,?\s+(\d{2,4})""").find(date)
+    if (name != null) {
+        val months = listOf("jan", "feb", "mar", "apr", "may", "jun",
+            "jul", "aug", "sep", "oct", "nov", "dec")
+        val mo = months.indexOf(name.groupValues[2].take(3).lowercase()) + 1
+        if (mo > 0) {
+            var y = name.groupValues[3].toInt(); if (y < 100) y += 2000
+            return y * 10000 + mo * 100 + name.groupValues[1].toInt()
+        }
+    }
+    val num = Regex("""(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})""").find(date)
+    if (num != null) {
+        var y = num.groupValues[3].toInt(); if (y < 100) y += 2000
+        return y * 10000 + num.groupValues[1].toInt() * 100 + num.groupValues[2].toInt()
+    }
+    return -1
+}
+
+/** Keep old rows, add new ones. Same chapter+url is not duplicated.
+ *  Output is ordered by DATE POSTED TO NU, newest first (Wayne,
+ *  2026-10-20) — the old incoming+old concatenation batch-ordered the
+ *  list every time a page-2 load or re-scrape merged in. */
 fun mergeReleases(old: List<Release>, incoming: List<Release>): List<Release> {
     val seen = mutableSetOf<String>()
     val merged = mutableListOf<Release>()
@@ -278,7 +303,7 @@ fun mergeReleases(old: List<Release>, incoming: List<Release>): List<Release> {
             )
         }
     }
-    return merged
+    return merged.sortedByDescending { nuDateKey(it.date) }
 }
 
 fun applyListChapter(context: Context, title: String, chapter: String) {

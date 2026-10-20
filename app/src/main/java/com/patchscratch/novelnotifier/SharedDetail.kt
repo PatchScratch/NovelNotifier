@@ -162,8 +162,12 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
     var showPageMenu by remember { mutableStateOf(false) }
 
     val shown = remember(state.episodes, newestFirst, hideRead, state.readOrdinal) {
-        val sorted = if (newestFirst) state.episodes.sortedByDescending { it.ordinal }
-        else state.episodes.sortedBy { it.ordinal }
+        // Sort by the ADAPTER-SUPPLIED row order (the site's own date/reading
+        // order — Wayne 2026-10-20: RELEASES organizes by date posted, never
+        // by chapter number; unnumbered rows used to clump at one end and
+        // the Newest/Oldest toggle just flipped the scramble). Adapters
+        // supply rows oldest-first; the card flips for Newest First.
+        val sorted = if (newestFirst) state.episodes.asReversed() else state.episodes
         // NU semantics: hide-read keeps the marker row itself visible.
         if (hideRead && state.readOrdinal > 0) sorted.filter { it.ordinal >= state.readOrdinal } else sorted
     }
