@@ -101,8 +101,19 @@ class HostProbeService : Service() {
             "sofanovel.com",  // defunct (Wayne, 2026-10-20)
             // HIJACKED — domain taken over by a casino site; the translator
             // is gone and the content is unrelated spam (Wayne, 2026-10-20):
-            "zesty.bet"
+            "zesty.bet",
+            // Batch 2026-10-20 (evidence-backed): CG shut down via C&D from
+            // RIDI Corp (closure notice on homepage); cyptranslations is a
+            // password-protected "Private Site"; lanry.space 404s.
+            "chrysanthemumgarden.com",
+            "cyptranslations.wordpress.com",
+            "lanry.space"
         )
+
+        /** Funding-platform landings are never chapter samples — group
+         *  links pointing here record a terminal SKIP, not a re-probed
+         *  failure (patreon chapter posts are membership-walled anyway). */
+        val NON_CHAPTER_HOSTS = setOf("patreon.com", "ko-fi.com")
 
         /**
          * Major registrar / domain-aftermarket landers (Wayne, 2026-10-20:
@@ -525,6 +536,9 @@ class HostProbeService : Service() {
         // through the extraction ladder (saves ~25s per dead domain).
         if (DEFUNCT_HOSTS.any { host == it || host.endsWith(".$it") }) {
             return entry.put("verdict", "DEFUNCT").put("note", "translator defunct (Wayne-confirmed)")
+        }
+        if (NON_CHAPTER_HOSTS.any { host == it || host.endsWith(".$it") }) {
+            return entry.put("verdict", "SKIP").put("note", "funding-platform landing — not a chapter sample")
         }
         if (PARKING_DOMAINS.any { host == it || host.endsWith(".$it") }) {
             return entry.put("verdict", "DEFUNCT").put("note", "expired domain — parked at $host")
