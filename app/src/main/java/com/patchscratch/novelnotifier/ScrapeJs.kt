@@ -639,7 +639,16 @@ fun readerTocHarvestJs(seriesTitle: String = ""): String = """
       out.push([text, href, vol || volOfUrl(href)]);
       pendingImg = '';
     }
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, null, false);
+    // CONTENT-CONTAINER scoping (Wayne, 2026-10-20: stray chapters from the
+    // same translator's OTHER series rode the unscoped fallback — sidebar
+    // "recent posts" widgets hold chapter-pattern links too). The article
+    // body is the harvest root; widgets live outside it. When the series
+    // title containment ALSO matches it narrows further; a page whose
+    // entries carry no title match keeps everything INSIDE the container.
+    var walkRoot = document.querySelector(
+      '.entry-content, .post-content, .entry-content-wrap, .chapter-content, article, main, #primary, .site-main'
+    ) || document.body;
+    var walker = document.createTreeWalker(walkRoot, NodeFilter.SHOW_ELEMENT, null, false);
     while (walker.nextNode()) {
       var el = walker.currentNode;
       var tag = el.tagName;
