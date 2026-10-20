@@ -236,7 +236,12 @@ fun NovelDetailScreen(
     // group filter state, reading-order computation) is unchanged; the
     // body below only assembles SeriesDetailState.
     val rows = remember(page.releases, groupOff) {
-        val filtered = page.releases.filter { it.group.isBlank() || it.group !in groupOff }
+        // Date-sort at display time too (Wayne 2026-10-20): caches merged
+        // before the mergeReleases fix sit in scrape-batch order until their
+        // next refresh — this restores date order for them immediately.
+        val filtered = page.releases
+            .filter { it.group.isBlank() || it.group !in groupOff }
+            .sortedByDescending { nuDateKey(it.date) }
         // Template contract (2026-10-20): supply rows OLDEST-FIRST — the
         // cache is date-descending (mergeReleases sorts by date posted to
         // NU) and the order card's Newest First flips it back. The old code
