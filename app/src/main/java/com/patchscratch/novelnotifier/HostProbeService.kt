@@ -75,7 +75,11 @@ class HostProbeService : Service() {
             "shubaowb.com",
             "shynovels.com",
             "skydemonorder.com",
-            "tangerinearchive.com"
+            "tangerinearchive.com",
+            // Batch ruling, Wayne 2026-10-20 (cont. 3) — CF walled:
+            "vanishintofiction.com",
+            "watashiwasugoidesu.com",
+            "asianovel.net"
         )
 
         /**
