@@ -65,7 +65,12 @@ class HostProbeService : Service() {
             "wuxiaworld.com",      // incl. forum. and other subdomains
             "helioscans.com",
             "itsyourightmanhua.com",
-            "katreadingcafe.com"
+            "katreadingcafe.com",
+            // Batch ruling, Wayne 2026-10-20 (cont.) — CF walled:
+            "puffberry.top",
+            "ranatranslations.com",
+            "reigokaitranslations.com",
+            "rephrasedstories.com"
         )
 
         /**
