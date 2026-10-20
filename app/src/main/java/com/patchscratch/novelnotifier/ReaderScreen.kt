@@ -161,12 +161,26 @@ fun ReaderScreen(
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
     var index by remember(target) { mutableIntStateOf(target.startIndex.coerceIn(0, target.chapters.lastIndex)) }
-    // Manual ToC override (Wayne, 2026-10-20): "Get chapter links from ToC"
-    // in the ⋮ menu — for hosts the automatic resolver can't match, the
-    // user points the WebView at the site's ToC page and harvests the
-    // chapter list directly. Session-scoped for this reader target.
-    var tocChapters by remember(target) { mutableStateOf<List<Release>?>(null) }
-    val chapters = tocChapters ?: target.chapters
+    // Manual chapter-list control (Wayne, 2026-10-20): a per-series site ToC
+    // harvested from the WebView can replace the NU list, with a submenu to
+    // refresh either side and toggle the active source. Persisted in
+    // ReaderTocStore so the choice survives reader sessions.
+    var tocSource by remember(target) { mutableStateOf(ReaderTocStore.sourceOf(target.seriesUrl, context)) }
+    var tocChapters by remember(target) { mutableStateOf(ReaderTocStore.chaptersOf(target.seriesUrl, context)) }
+    var nuRefreshed by remember(target) { mutableStateOf<List<Release>?>(null) }
+    var showChapterListMenu by remember { mutableStateOf(false) }
+    val chapters = when {
+        tocSource == "toc" && tocChapters != null -> tocChapters!!
+        nuRefreshed != null -> nuRefreshed!!
+        else -> target.chapters
+    }
+    fun adoptChapterList(list: List<Release>, source: String) {
+        val currentUrl = chapters.getOrNull(index)?.url.orEmpty()
+        if (source == "toc") tocChapters = list else nuRefreshed = list
+        tocSource = source
+        ReaderTocStore.setSource(context, target.seriesUrl, source)
+        index = list.indexOfFirst { it.url == currentUrl }.takeIf { it >= 0 } ?: 0
+    }
     var jsOn by remember(target.seriesUrl) {
         mutableStateOf(target.seriesUrl !in loadIdSet(prefs, "reader_js_off"))
     }
@@ -999,41 +1013,23 @@ fun ReaderScreen(
                         prefs.edit { putString("xlate_layout", xlateLayout) }
                     }
                 )
-                // Manual ToC harvest (Wayne, 2026-10-20): run on whatever
-                // page the WebView currently shows — navigate to the site's
-                // ToC in web view first, then tap. Replaces this session's
-                // chapter list (read/download navigation follow it).
+                // Manual chapter-list control (Wayne, 2026-10-20): submenu
+                // for harvesting a site ToC, refreshing either source, and
+                // toggling which list drives this reader.
                 DropdownMenuItem(
-                    text = { Text(t("Get chapter links from ToC", "目次から各話リンクを取得")) },
+                    text = {
+                        Text(
+                            t("Chapter list", "各話リスト") + " ▸ " +
+                                when {
+                                    tocSource == "toc" && tocChapters != null ->
+                                        t("Site ToC", "サイト目次") + " (${tocChapters!!.size})"
+                                    else -> "NU" + " (${chapters.size})"
+                                }
+                        )
+                    },
                     onClick = {
                         showMenu = false
-                        val wv = webViewRef.value
-                        if (wv == null) {
-                            android.widget.Toast.makeText(
-                                context, t("No page loaded", "ページが読み込まれていません"),
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                            return@DropdownMenuItem
-                        }
-                        wv.evaluateJavascript(readerTocHarvestJs()) { res ->
-                            val list = parseReaderToc(unwrapJsResult(res))
-                            if (list.isEmpty()) {
-                                android.widget.Toast.makeText(
-                                    context,
-                                    t("No chapter links on this page — open the ToC in web view first", "このページに各話リンクがありません — 先にウェブ表示で目次を開いてください"),
-                                    android.widget.Toast.LENGTH_LONG
-                                ).show()
-                            } else {
-                                val currentUrl = chapter.url
-                                tocChapters = list
-                                index = list.indexOfFirst { it.url == currentUrl }
-                                    .takeIf { it >= 0 } ?: 0
-                                android.widget.Toast.makeText(
-                                    context, "ToC: ${list.size} " + t("chapters", "話"),
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
+                        showChapterListMenu = true
                     }
                 )
                 // Bulk twin of Download all: every STORED chapter through the
@@ -1231,6 +1227,175 @@ fun ReaderScreen(
                     onClick = { showMenu = false; openExternally() }
                 )
             }
+        }
+
+        // ---- Chapter list submenu (manual control, Wayne 2026-10-20) ----
+        if (showChapterListMenu) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showChapterListMenu = false },
+                title = { Text(t("Chapter list", "各話リスト")) },
+                text = {
+                    Column {
+                        Text(
+                            t("Active: ", "使用中：") + when {
+                                tocSource == "toc" && tocChapters != null ->
+                                    t("Site ToC", "サイト目次") + " (${tocChapters!!.size})"
+                                else -> "NU (${chapters.size})"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        // 1. Harvest from the page the WebView currently shows.
+                        androidx.compose.material3.TextButton(onClick = {
+                            showChapterListMenu = false
+                            val wv = webViewRef.value
+                            if (wv == null) {
+                                android.widget.Toast.makeText(
+                                    context, t("No page loaded", "ページが読み込まれていません"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                return@TextButton
+                            }
+                            wv.evaluateJavascript(readerTocHarvestJs()) { res ->
+                                val list = parseReaderToc(unwrapJsResult(res))
+                                if (list.isEmpty()) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        t("No chapter links on this page — open the ToC in web view first", "このページに各話リンクがありません — 先にウェブ表示で目次を開いてください"),
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                } else {
+                                    scope.launch {
+                                        ReaderTocStore.setToc(context, target.seriesUrl, wv.url.orEmpty(), list)
+                                        adoptChapterList(list, "toc")
+                                    }
+                                    android.widget.Toast.makeText(
+                                        context, "ToC: ${list.size} " + t("chapters", "話"),
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }) { Text(t("Get chapter links from ToC (this page)", "このページから各話リンクを取得")) }
+                        // 2. Refresh the NU releases for this series.
+                        if ((android.net.Uri.parse(target.seriesUrl).host ?: "").endsWith("novelupdates.com")) {
+                            androidx.compose.material3.TextButton(onClick = {
+                                showChapterListMenu = false
+                                android.widget.Toast.makeText(
+                                    context, t("Refreshing NU…", "NUを再取得中…"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                SiteClient.enqueue(
+                                    site = SiteClient.Site.NU,
+                                    request = SiteClient.ScrapeRequest(
+                                        url = target.seriesUrl.trimEnd('/') + "/",
+                                        js = seriesPageJs(),
+                                        onComplete = { result ->
+                                            when (result) {
+                                                is SiteClient.ScrapeRequest.Result.Success -> {
+                                                    val page = parseSeriesPage(unwrapJsResult(result.html))
+                                                    if (page.releases.isEmpty()) {
+                                                        android.widget.Toast.makeText(
+                                                            context, "NU: 0",
+                                                            android.widget.Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    } else {
+                                                        scope.launch { adoptChapterList(page.releases, "nu") }
+                                                        android.widget.Toast.makeText(
+                                                            context, "NU: ${page.releases.size} " + t("releases", "話"),
+                                                            android.widget.Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    }
+                                                }
+                                                is SiteClient.ScrapeRequest.Result.Cloudflare ->
+                                                    android.widget.Toast.makeText(
+                                                        context, "Cloudflare — " + t("try again", "再試行してください"),
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                    ).show()
+                                                is SiteClient.ScrapeRequest.Result.Error ->
+                                                    android.widget.Toast.makeText(
+                                                        context, "NU: ${result.message.take(60)}",
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                    ).show()
+                                            }
+                                        }
+                                    )
+                                )
+                            }) { Text(t("Refresh NU", "NUを再取得")) }
+                        }
+                        // 3. Re-harvest the STORED site ToC.
+                        androidx.compose.material3.TextButton(onClick = {
+                            showChapterListMenu = false
+                            val storedUrl = ReaderTocStore.tocUrlOf(target.seriesUrl, context)
+                            if (storedUrl.isBlank()) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    t("No stored ToC — harvest one first", "保存済み目次がありません — 先に取得してください"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                                return@TextButton
+                            }
+                            SiteClient.enqueue(
+                                site = SiteClient.Site.NU,
+                                request = SiteClient.ScrapeRequest(
+                                    url = storedUrl,
+                                    js = readerTocHarvestJs(),
+                                    onComplete = { result ->
+                                        if (result is SiteClient.ScrapeRequest.Result.Success) {
+                                            val list = parseReaderToc(result.html)
+                                            if (list.isEmpty()) {
+                                                android.widget.Toast.makeText(
+                                                    context, "ToC: 0",
+                                                    android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                            } else {
+                                                scope.launch {
+                                                    ReaderTocStore.setToc(context, target.seriesUrl, storedUrl, list)
+                                                    adoptChapterList(list, "toc")
+                                                }
+                                                android.widget.Toast.makeText(
+                                                    context, "ToC: ${list.size} " + t("chapters", "話"),
+                                                    android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        } else {
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "ToC: " + t("load failed", "取得失敗"),
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    }
+                                )
+                            )
+                        }) { Text(t("Refresh stored site ToC", "保存済みサイト目次を再取得")) }
+                        // 4. Toggle the active source.
+                        androidx.compose.material3.TextButton(onClick = {
+                            showChapterListMenu = false
+                            if (tocSource == "toc") {
+                                adoptChapterList(nuRefreshed ?: target.chapters, "nu")
+                            } else if (tocChapters != null) {
+                                adoptChapterList(tocChapters!!, "toc")
+                            } else {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    t("No stored ToC — harvest one first", "保存済み目次がありません — 先に取得してください"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }) {
+                            Text(
+                                if (tocSource == "toc") t("Switch to NU list", "NUリストに切替")
+                                else t("Switch to site ToC", "サイト目次に切替")
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { showChapterListMenu = false }) {
+                        Text(t("Close", "閉じる"))
+                    }
+                }
+            )
         }
         if (progress in 1..99 && !showText) LinearProgressIndicator(
             progress = { progress / 100f },
