@@ -1256,8 +1256,8 @@ fun ReaderScreen(
                                 ).show()
                                 return@TextButton
                             }
-                            wv.evaluateJavascript(readerTocHarvestJs()) { res ->
-                                val list = parseReaderToc(unwrapJsResult(res))
+                            wv.evaluateJavascript(readerTocHarvestJs(target.seriesTitle)) { res ->
+                                val (list, scoped) = parseReaderToc(unwrapJsResult(res))
                                 if (list.isEmpty()) {
                                     android.widget.Toast.makeText(
                                         context,
@@ -1270,8 +1270,10 @@ fun ReaderScreen(
                                         adoptChapterList(list, "toc")
                                     }
                                     android.widget.Toast.makeText(
-                                        context, "ToC: ${list.size} " + t("chapters", "話"),
-                                        android.widget.Toast.LENGTH_SHORT
+                                        context,
+                                        "ToC: ${list.size} " + t("chapters", "話") +
+                                            if (scoped) "" else t(" — UNSCOPED (page mixes series?)", " — 絞り込みなし（複数シリーズ混在？）"),
+                                        android.widget.Toast.LENGTH_LONG
                                     ).show()
                                 }
                             }
@@ -1338,10 +1340,10 @@ fun ReaderScreen(
                                 site = SiteClient.Site.NU,
                                 request = SiteClient.ScrapeRequest(
                                     url = storedUrl,
-                                    js = readerTocHarvestJs(),
+                                    js = readerTocHarvestJs(target.seriesTitle),
                                     onComplete = { result ->
                                         if (result is SiteClient.ScrapeRequest.Result.Success) {
-                                            val list = parseReaderToc(result.html)
+                                            val (list, scoped) = parseReaderToc(result.html)
                                             if (list.isEmpty()) {
                                                 android.widget.Toast.makeText(
                                                     context, "ToC: 0",
@@ -1353,8 +1355,10 @@ fun ReaderScreen(
                                                     adoptChapterList(list, "toc")
                                                 }
                                                 android.widget.Toast.makeText(
-                                                    context, "ToC: ${list.size} " + t("chapters", "話"),
-                                                    android.widget.Toast.LENGTH_SHORT
+                                                    context,
+                                                    "ToC: ${list.size} " + t("chapters", "話") +
+                                                        if (scoped) "" else t(" — UNSCOPED", " — 絞り込みなし"),
+                                                    android.widget.Toast.LENGTH_LONG
                                                 ).show()
                                             }
                                         } else {

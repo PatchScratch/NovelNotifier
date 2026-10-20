@@ -175,8 +175,17 @@ fun NovelDetailScreen(
     // reading order plus the tapped row's index. Groups the user filtered
     // out are excluded — reading order, the reader, and bulk download all
     // cover only the chosen groups.
-    val readingOrder = remember(page.releases, groupOff) {
-        sortedReleases(page.releases, newestFirst = false).filter { it.group.isBlank() || it.group !in groupOff }
+    // Site-ToC override state (Wayne, 2026-10-20): mirrors the reader's
+    // Chapter-list submenu choice; RELEASES and reader open from it.
+    var tocActive by remember(novel.seriesUrl) {
+        mutableStateOf(ReaderTocStore.sourceOf(novel.seriesUrl, context) == "toc")
+    }
+    var tocList by remember(novel.seriesUrl) {
+        mutableStateOf(ReaderTocStore.chaptersOf(novel.seriesUrl, context))
+    }
+    val readingOrder = remember(page.releases, groupOff, tocActive, tocList) {
+        if (tocActive && tocList != null) tocList!!
+        else sortedReleases(page.releases, newestFirst = false).filter { it.group.isBlank() || it.group !in groupOff }
     }
     // Title-page metadata rides along once the series page has been scraped
     // (blank fields simply drop rows); until then the reader keeps book meta.
@@ -235,7 +244,23 @@ fun NovelDetailScreen(
     // identity by construction. Everything above (VM scrape/pagination,
     // group filter state, reading-order computation) is unchanged; the
     // body below only assembles SeriesDetailState.
-    val rows = remember(page.releases, groupOff) {
+    val rows = remember(page.releases, groupOff, tocActive, tocList) {
+        // Site-ToC override (Wayne, 2026-10-20): when the reader's Chapter
+        // list submenu pinned a harvested site ToC, RELEASES repopulates
+        // from it — the corresponding site pages, not NU's rows.
+        if (tocActive && tocList != null) {
+            tocList!!.mapIndexed { i, rel ->
+                SeriesEpisodeRow(
+                    ordinal = i + 1,
+                    label = rel.chapter,
+                    title = "",
+                    date = "",
+                    isRead = false,
+                    onOpen = { openInReader(rel) },
+                    onCheck = { } // NU's tick stays NU-list driven; ToC rows read locally
+                )
+            }
+        } else {
         // Date-sort at display time too (Wayne 2026-10-20): caches merged
         // before the mergeReleases fix sit in scrape-batch order until their
         // next refresh — this restores date order for them immediately.
@@ -302,6 +327,7 @@ fun NovelDetailScreen(
                     }
                 }
             )
+        }
         }
     }
     val allGroups = remember(page.releases) {
@@ -414,6 +440,55 @@ fun NovelDetailScreen(
             },
             releasesFooter = {
                 Column(modifier = Modifier.padding(16.dp)) {
+                    // Site-ToC banner (Wayne, 2026-10-20): shows which list
+                    // drives RELEASES and switches it — same store the
+                    // reader's Chapter list submenu writes.
+                    if (tocList != null) {
+                        Text(
+                            if (tocActive) "Site ToC active (${tocList!!.size}) — reader ⋮ Chapter list to re-harvest"
+                            else "Stored site ToC available (${tocList!!.size}) — NU list active",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        TextButton(onClick = {
+                            val next = !tocActive
+                            ReaderTocStore.setSource(context, novel.seriesUrl, if (next) "toc" else "nu")
+                            tocActive = next
+                        }) {
+                            Text(
+                                if (tocActive) "Switch to NU list" else "Switch to site ToC"
+                            )
+                        }
+                    }
+                    // Cleanup control: a bad harvest can store wrong-series
+                    // chapters under this series — wipe and re-download.
+                    val storedN = EpubStore.storedCount(context, novel.seriesUrl)
+                    if (storedN > 0) {
+                        var confirmWipe by remember(novel.seriesUrl) { mutableStateOf(false) }
+                        TextButton(onClick = { confirmWipe = true }) {
+                            Text("Delete stored ($storedN)")
+                        }
+                        if (confirmWipe) {
+                            androidx.compose.material3.AlertDialog(
+                                onDismissRequest = { confirmWipe = false },
+                                title = { Text("Delete stored chapters?") },
+                                text = { Text("Removes all $storedN stored chapters and their translations for this series. Bookmarks stay.") },
+                                confirmButton = {
+                                    androidx.compose.material3.TextButton(onClick = {
+                                        confirmWipe = false
+                                        scope.launch {
+                                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                                EpubStore.deleteSeries(context, novel.seriesUrl)
+                                            }
+                                        }
+                                        vm.listStatus = "Stored chapters deleted"
+                                    }) { Text("Delete") }
+                                },
+                                dismissButton = {
+                                    androidx.compose.material3.TextButton(onClick = { confirmWipe = false }) { Text("Cancel") }
+                                }
+                            )
+                        }
+                    }
                     val moreLeft = loadedPage < maxPage
                     when {
                         pageLoadFailed -> {

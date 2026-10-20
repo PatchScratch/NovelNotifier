@@ -579,12 +579,17 @@ function deriveCipher(containerText, probeEl) {
  * Manual ToC harvest for the reader's ⋮ menu (Wayne, 2026-10-20): collect
  * chapter-looking links (numeric dialects + worded ordinals) and <select>
  * chapter dropdowns from WHATEVER page the WebView currently shows.
- * Returns a JSON array of {t: label, u: url}; parseReaderToc decodes.
+ * [seriesTitle] scopes a MULTI-SERIES blog's index to one series' entries
+ * (live-caught: stabbingwithasyringe lists 3 series on one page — an
+ * unscoped harvest made "Prologue 1" open another series' chapter); when
+ * no anchor carries the title (dedicated per-series ToC pages) the full
+ * list is kept and flagged unscoped. Returns {s: scoped, c: [[t,u],…]}.
  */
-fun readerTocHarvestJs(): String = """
+fun readerTocHarvestJs(seriesTitle: String = ""): String = """
 (function() {
   try {
     var out = [], seen = {};
+    function norm(t) { return (t || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
     function add(t, u) {
       t = (t || '').replace(/\s+/g, ' ').trim();
       if (!t || t.length > 90 || !u || seen[u]) return;
@@ -606,26 +611,36 @@ fun readerTocHarvestJs(): String = """
       if (!/^https?:/i.test(v) && !v.startsWith('/')) continue;
       add(o.textContent, new URL(v, location.href).href);
     }
-    return JSON.stringify(out);
-  } catch (e) { return '[]'; }
+    var title = norm('${seriesTitle.replace("\\", "\\\\").replace("'", "\\'")}');
+    if (title.length > 3) {
+      var scoped = out.filter(function(e) { return norm(e.t).indexOf(title) >= 0; });
+      if (scoped.length > 0) {
+        return JSON.stringify({ s: true, c: scoped.map(function(e) { return [e.t, e.u]; }) });
+      }
+    }
+    return JSON.stringify({ s: false, c: out.map(function(e) { return [e.t, e.u]; }) });
+  } catch (e) { return '{}'; }
 })()
 """
 
-/** Decode readerTocHarvestJs's JSON into Release rows (reader chapter list). */
-fun parseReaderToc(raw: String): List<com.patchscratch.novelnotifier.Release> {
+/** Decode readerTocHarvestJs's JSON: chapters + whether the series-title
+ *  scoping applied (unscoped lists may mix a multi-series blog's entries). */
+fun parseReaderToc(raw: String): Pair<List<Release>, Boolean> {
     val body = unwrapJsResult(raw).trim()
-    if (body.isBlank() || !body.startsWith("[")) return emptyList()
+    if (body.isBlank() || !body.startsWith("{")) return emptyList<Release>() to false
     return runCatching {
-        val arr = org.json.JSONArray(body)
-        (0 until arr.length()).mapNotNull { i ->
-            val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val t = o.optString("t").trim()
-            val u = o.optString("u").trim()
+        val o = org.json.JSONObject(body)
+        val arr = o.optJSONArray("c") ?: org.json.JSONArray()
+        val chapters = (0 until arr.length()).mapNotNull { i ->
+            val pair = arr.optJSONArray(i) ?: return@mapNotNull null
+            val t = pair.optString(0).trim()
+            val u = pair.optString(1).trim()
             if (t.isNotEmpty() && u.startsWith("http")) {
                 Release(chapter = t, group = "", date = "", url = u)
             } else null
         }
-    }.getOrDefault(emptyList())
+        chapters to o.optBoolean("s", false)
+    }.getOrDefault(emptyList<Release>() to false)
 }
 
 fun chapterExtractJs(wanted: String = ""): String = """
