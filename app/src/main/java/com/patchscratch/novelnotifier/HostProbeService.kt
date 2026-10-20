@@ -79,8 +79,10 @@ class HostProbeService : Service() {
             // Batch ruling, Wayne 2026-10-20 (cont. 3) — CF walled:
             "vanishintofiction.com",
             "watashiwasugoidesu.com",
-            "asianovel.net",
-            "empirenovel.com" // CF walled (Wayne, 2026-10-20)
+            "asianovel.net"
+            // NOT listed (Wayne re-checked, loads fine — probe CF verdicts were
+            // false/bot-conditional): ranovel.com, empirenovel.com,
+            // fanfiction.net, fictionpress.com. They re-probe as normal hosts.
         )
 
         /**
