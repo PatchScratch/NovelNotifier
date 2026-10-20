@@ -57,7 +57,15 @@ class HostProbeService : Service() {
             "foxaholic.com",       // subdomain-per-genre family
             "bellerepository.com", // live, aggressive CF (Wayne, 2026-10-20)
             "citrusaurora.com",    // live, aggressive CF (Wayne, 2026-10-20)
-            "cyborg-tl.com"        // live, aggressive CF (Wayne, 2026-10-20)
+            "cyborg-tl.com",       // live, aggressive CF (Wayne, 2026-10-20)
+            // Batch ruling, Wayne 2026-10-20 — distinct live sites, CF walled:
+            "dragontea.ink",
+            "easternwordsmith.com",
+            "f-w-o.com",
+            "wuxiaworld.com",      // incl. forum. and other subdomains
+            "helioscans.com",
+            "itsyourightmanhua.com",
+            "katreadingcafe.com"
         )
 
         /**
