@@ -145,10 +145,7 @@ fun listPageJs(): String = """
               chapter = nums[0];
             }
           }
-          if (node.querySelector && (
-            node.querySelector('input[id^="chklist"]') ||
-            node.querySelector('input[type="checkbox"]')
-          )) hasListMark = true;
+          if (node.querySelector && node.querySelector('input[id^="chklist"]')) hasListMark = true;
           var image = node.querySelector ? node.querySelector('img') : null;
           if (image && image.src && image.src.indexOf('data:') !== 0 && image.src.indexOf('icon') === -1) {
             if (!img) img = image.src;
@@ -158,7 +155,7 @@ fun listPageJs(): String = """
         if (!chapter && !hasListMark) return;
         candidates.push({
           title: title, chapter: chapter || 'No chapter info', href: href, img: img,
-          chapterUrl: chapterUrl,
+          chapterUrl: chapterUrl, el: a,
           lastReadCh: lastReadCh, lastReadUrl: lastReadUrl, hasListMark: hasListMark,
           inListTable: inListTable
         });
@@ -178,10 +175,31 @@ fun listPageJs(): String = """
       // the authoritative scope: the "Latest Series" panel and suggestion
       // widgets append AFTER the real list rows, so trimming to this count
       // removes them without structural guessing about the markup.
+      // COLUMN ANCHOR (Wayne, 2026-10-20, live-caught via his screenshot):
+      // the real list is the MIDDLE column; suggestion widgets (SH series
+      // above "Latest Series") live in the right column WITH THEIR OWN
+      // checkboxes — so marks alone can't scope. Anchor the scope to the
+      // smallest ancestor of the "Series (N)" header that holds enough
+      // series links; only rows inside it are list rows.
       var expectedCount = -1;
-      var scopeText = (listTable ? listTable.textContent : document.body.textContent) || '';
-      var cm = scopeText.match(/Series\s*\((\d+)\)/);
-      if (cm) expectedCount = parseInt(cm[1], 10);
+      var cmMatch = document.body.textContent.match(/Series\s*\((\d+)\)/);
+      if (cmMatch) expectedCount = parseInt(cmMatch[1], 10);
+      var scopeEl = null;
+      if (cmMatch) {
+        var tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        var countEl = null;
+        while (tw.nextNode()) {
+          if (/Series\s*\(\d+\)/.test(tw.currentNode.nodeValue || '')) {
+            countEl = tw.currentNode.parentElement; break;
+          }
+        }
+        var up = countEl;
+        for (var u = 0; u < 10 && up; u++) {
+          var cnt = up.querySelectorAll('a[href*="/series/"]').length;
+          if (cnt >= (expectedCount > 0 ? expectedCount : 5)) { scopeEl = up; break; }
+          up = up.parentElement;
+        }
+      }
       candidates.forEach(function(c) {
         if (listTable && !c.inListTable) return;
         if (!listTable && anyMarked && !c.hasListMark) return;
@@ -193,6 +211,7 @@ fun listPageJs(): String = """
         // lists on every refresh. Degrade to empty; stale cache plus a
         // sync error beat a poisoned library.
         if (!listTable && !anyMarked) return;
+        if (scopeEl && c.el && !scopeEl.contains(c.el)) return;
         novels.push(c.title + '===' + c.chapter + '===' + c.href + '===' + c.img + '===' + c.lastReadCh + '===' + c.lastReadUrl + '===' + c.chapterUrl);
       });
       // NU shows the personal RSS feed links on this page — the releases feed
