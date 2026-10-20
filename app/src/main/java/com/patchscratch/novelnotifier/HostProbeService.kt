@@ -82,7 +82,9 @@ class HostProbeService : Service() {
             "forbiddencylinder.com", // expired → registrar redirect (Wayne, 2026-10-20)
             // Defunct behind a broken CF config — challenge never clears
             // (Wayne, 2026-10-20: "malconformed cloudflare settings"):
-            "grimdarkztranslations.com"
+            "grimdarkztranslations.com",
+            // NXDOMAIN — domain dropped entirely (Wayne + DNS check, 2026-10-20):
+            "shyheaux.com"
         )
 
         /**
