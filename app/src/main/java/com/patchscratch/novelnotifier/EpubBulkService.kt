@@ -123,7 +123,7 @@ class EpubBulkService : Service() {
      *  [wanted] = the chapter label; cover-page hosts (post-index NU links)
      *  resolve through COVER-DIRECT / COVER-TOC directives (max 2 hops). */
     private var lastLoadedUrl = ""
-    private suspend fun loadAndExtract(url: String, wanted: String = ""): ChapterExtract? {
+    private suspend fun loadAndExtract(url: String, wanted: String = "", seriesTitle: String = ""): ChapterExtract? {
         lastLoadedUrl = url
         val sess = sessionOrCreate()
         extractResult = null
@@ -132,7 +132,7 @@ class EpubBulkService : Service() {
         // The extraction has a retry (some JS-rendering hosts need time).
         var raw = withTimeoutOrNull(60_000) {
             suspendCancellableCoroutine<String> { cont ->
-                sess.loadUrl(url, chapterExtractJs(wanted)) { res ->
+                sess.loadUrl(url, chapterExtractJs(wanted, seriesTitle)) { res ->
                     cont.resume(res)
                 }
             }
@@ -148,7 +148,7 @@ class EpubBulkService : Service() {
             DebugLog.log("EPUB", "cover hop $hops: $lastLoadedUrl")
             raw = withTimeoutOrNull(60_000) {
                 suspendCancellableCoroutine<String> { cont ->
-                    sess.loadUrl(lastLoadedUrl, chapterExtractJs(wanted)) { res ->
+                    sess.loadUrl(lastLoadedUrl, chapterExtractJs(wanted, seriesTitle)) { res ->
                         cont.resume(res)
                     }
                 }
@@ -160,7 +160,7 @@ class EpubBulkService : Service() {
             // Retry extraction at ~5s for JS-rendering hosts
             delay(3800)
             val retry = suspendCancellableCoroutine<String> { cont ->
-                sess.evaluateJavascript(chapterExtractJs(wanted)) { res -> cont.resume(res) }
+                sess.evaluateJavascript(chapterExtractJs(wanted, seriesTitle)) { res -> cont.resume(res) }
             }
             extractResult = parseChapterExtract(retry)
         }
@@ -294,7 +294,7 @@ class EpubBulkService : Service() {
                     continue
                 }
                 status("direct · ${chapter.label}")
-                val extract = loadAndExtract(chapter.url, chapter.label)
+                val extract = loadAndExtract(chapter.url, chapter.label, job.seriesTitle)
                 if (extract != null) {
                     val count = withContext(Dispatchers.IO) {
                         EpubStore.appendChapter(
@@ -327,7 +327,7 @@ class EpubBulkService : Service() {
                     SitePolicy.prohibitedHostOf(directUrl) == null
                 ) {
                     status("ToC-resolved · ${chapter.label}")
-                    val extract = loadAndExtract(directUrl, chapter.label)
+                    val extract = loadAndExtract(directUrl, chapter.label, job.seriesTitle)
                     if (extract != null) {
                         withContext(Dispatchers.IO) {
                             EpubStore.appendChapter(
@@ -345,7 +345,7 @@ class EpubBulkService : Service() {
                     // First touch: the NU link's redirect reveals the chapter's
                     // real host; harvest its ToC so later siblings resolve.
                     status("NU first-touch · ${chapter.label}")
-                    val extract = loadAndExtract(chapter.url, chapter.label)
+                    val extract = loadAndExtract(chapter.url, chapter.label, job.seriesTitle)
                     if (extract == null) {
                         DebugLog.log("EPUB", "first-touch failed: ${chapter.label} at ${chapter.url}")
                     }

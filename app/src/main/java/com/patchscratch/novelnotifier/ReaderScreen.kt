@@ -499,7 +499,7 @@ fun ReaderScreen(
     fun tryExtract(onDone: (() -> Unit)? = null) {
         val wv = webViewRef.value ?: return
         extracting = true
-        wv.evaluateJavascript(chapterExtractJs(chapter.chapter)) { res ->
+        wv.evaluateJavascript(chapterExtractJs(chapter.chapter, target.seriesTitle)) { res ->
             val directive = unwrapJsResult(res).takeIf { it.startsWith("COVER") }
             val coverFollow = directive?.takeIf {
                 (it.startsWith("COVER-DIRECT:") || it.startsWith("COVER-TOC:")) &&

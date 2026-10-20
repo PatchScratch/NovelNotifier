@@ -492,7 +492,7 @@ class HostProbeService : Service() {
         }
         var raw = withTimeoutOrNull(75_000) {
             suspendCancellableCoroutine<String> { cont ->
-                sess.loadUrl(loadTarget, chapterExtractJs(t.label)) { res ->
+                sess.loadUrl(loadTarget, chapterExtractJs(t.label, t.series)) { res ->
                     if (cont.isActive) cont.resumeWith(kotlin.Result.success(res))
                 }
             }
@@ -509,7 +509,7 @@ class HostProbeService : Service() {
             DebugLog.log("PROBE", "cover hop $coverHops for ${t.series}: $loadTarget")
             raw = withTimeoutOrNull(75_000) {
                 suspendCancellableCoroutine<String> { cont ->
-                    sess.loadUrl(loadTarget, chapterExtractJs(t.label)) { res ->
+                    sess.loadUrl(loadTarget, chapterExtractJs(t.label, t.series)) { res ->
                         if (cont.isActive) cont.resumeWith(kotlin.Result.success(res))
                     }
                 }

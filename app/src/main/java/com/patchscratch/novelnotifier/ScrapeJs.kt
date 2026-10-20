@@ -643,7 +643,7 @@ fun parseReaderToc(raw: String): Pair<List<Release>, Boolean> {
     }.getOrDefault(emptyList<Release>() to false)
 }
 
-fun chapterExtractJs(wanted: String = ""): String = """
+fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = """
 (function() {
   try {
     function nodeVisible(el) {
@@ -734,6 +734,20 @@ fun chapterExtractJs(wanted: String = ""): String = """
       if (!tocLink && /^(toc|table of contents|index|目次|chapters?|novel index)$/i.test(at)) tocLink = href;
     }
     if (chapAnchors.length >= 5) {
+      // Multi-series norm (Wayne, 2026-10-20): MOST translator sites host
+      // several series — when any anchor carries this series' title, ONLY
+      // those anchors are eligible for following, so a bare key match can
+      // never jump to another series' chapter.
+      function normTitle(t) {
+        return (t || '').toLowerCase().replace(/[^a-z0-9\u3040-\u30ff\u4e00-\u9fff]/g, '');
+      }
+      var seriesNorm = normTitle('${seriesTitle.replace("\\", "\\\\").replace("'", "\\'")}');
+      if (seriesNorm.length > 3) {
+        var scopedAnchors = chapAnchors.filter(function(e) {
+          return normTitle(e.t).indexOf(seriesNorm) >= 0;
+        });
+        if (scopedAnchors.length > 0) chapAnchors = scopedAnchors;
+      }
       var wantedText = '${wanted.replace("\\", "\\\\").replace("'", "\\'")}';
       var wantedKey = parseKey(wantedText);
       var wantedRaw = wantedText.toLowerCase().replace(/\s+/g, ' ').trim();
