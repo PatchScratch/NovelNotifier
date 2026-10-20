@@ -784,8 +784,18 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
             // A re-label can MOVE this chapter's bucket (flat cN → volume
             // vNcM); sweep sibling books so the URL lives in exactly one.
             for (sibling in bookFiles(context, seriesUrl).filter { it != book }) {
-                val sib = readAllChapterDocs(sibling).filter { it.url != chapterUrl }
-                if (sib.size != readAllChapterDocs(sibling).size) {
+                val sibAll = readAllChapterDocs(sibling)
+                val sib = sibAll.filter { it.url != chapterUrl }
+                if (sib.size != sibAll.size && sib.isEmpty()) {
+                    // Re-bucketing emptied the old book — remove it + twins.
+                    val oldBucket = sibling.name.removePrefix(prefixOf(seriesUrl)).removeSuffix(".epub")
+                    sibling.delete()
+                    for (v in listOf("jp", "en")) {
+                        variantBookFile(context, seriesUrl, oldBucket, v).delete()
+                    }
+                    continue
+                }
+                if (sib.size != sibAll.size) {
                     val sbucket = sibling.name.removePrefix(prefixOf(seriesUrl)).removeSuffix(".epub")
                     val stitle = readBookMeta(sibling)?.title ?: seriesTitle
                     writeBook(sibling, bookDisplayTitle(stitle, sbucket, bucketsOf(context, seriesUrl) + sbucket),

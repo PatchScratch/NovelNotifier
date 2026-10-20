@@ -651,7 +651,11 @@ fun readerTocHarvestJs(seriesTitle: String = ""): String = """
       if (/^H[1-5]$/.test(tag) || tag === 'STRONG' || tag === 'B') {
         if (el.querySelector('a')) continue;
         var ht = (el.innerText || '').trim();
-        var vm = ht.length > 0 && ht.length <= 80 ? ht.match(volRe) : null;
+        // Heading-ANCHORED volume match: "Book 1 (Volume 1 part 1)" yes,
+        // "Beginning Novels Edition Book 1 LN Exclusive Short Story" no
+        // (a same-page edition section, live-caught on the rig ToC page).
+        var vm = ht.length > 0 && ht.length <= 80
+          ? ht.match(/^\s*(?:volume|vol\.?|book)\s*[-_ ]?\s*(\d{1,3})\b/i) : null;
         if (vm && (/^H/.test(tag) || ht.length <= 40)) {
           curVol = +vm[1];
           if (!vols[curVol]) vols[curVol] = [ht, pendingImg];
