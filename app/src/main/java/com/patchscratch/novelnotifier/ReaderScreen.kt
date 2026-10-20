@@ -521,9 +521,18 @@ fun ReaderScreen(
                 alpWebHop = false
                 viewMode = READER_VIEW_TEXT
             }
-            if (extractResult != null) extractFailed = false
             if (extractResult != null) {
+                extractFailed = false
                 DebugLog.log("READER", "extracted ${extractResult!!.paragraphs.size} paragraphs")
+                // Cover-host learning (Wayne, 2026-10-20): the hop resolved
+                // an NU /extnu/ link to the site permalink — remember the
+                // pair so NU-row download detection matches ToC saves.
+                val landed = loadedUrl
+                if (landed.isNotBlank() && landed != chapter.url &&
+                    (android.net.Uri.parse(landed).host ?: "").endsWith("novelupdates.com").not()
+                ) {
+                    ReaderTocStore.mapUrl(context, target.seriesUrl, chapter.url, landed)
+                }
             } else {
                 DebugLog.log("READER", "extract miss — js said: " + (res ?: "").take(120))
                 // Which extractor stage fails? Mirror nodeVisible's checks.

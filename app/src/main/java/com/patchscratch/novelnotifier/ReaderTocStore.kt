@@ -72,6 +72,26 @@ object ReaderTocStore {
         write(context, root)
     }
 
+    /**
+     * extnu→permalink map (Wayne, 2026-10-20): NU rows carry NU's /extnu/
+     * links while ToC-downloaded chapters store site permalinks — the
+     * reader's cover hop learns the pair whenever a chapter resolves, and
+     * row detection consults it. Bounded per series.
+     */
+    fun mapUrl(context: Context, seriesUrl: String, fromExtNu: String, toPermalink: String) {
+        if (!fromExtNu.contains("novelupdates.com") || toPermalink.contains("novelupdates.com")) return
+        val root = read(context)
+        val o = root.optJSONObject(seriesUrl) ?: JSONObject().also { root.put(seriesUrl, it) }
+        val map = o.optJSONObject("map") ?: JSONObject().also { o.put("map", it) }
+        if (!map.has(fromExtNu) && map.length() >= 500) return
+        map.put(fromExtNu, toPermalink)
+        write(context, root)
+    }
+
+    fun mappedUrl(seriesUrl: String, fromExtNu: String, context: Context): String? =
+        read(context).optJSONObject(seriesUrl)?.optJSONObject("map")?.optString(fromExtNu)
+            ?.takeIf { it.startsWith("http") }
+
     fun clear(context: Context, seriesUrl: String) {
         val root = read(context)
         root.remove(seriesUrl)

@@ -195,6 +195,7 @@ fun NovelDetailScreen(
         storedUrls = docs.map { it.url }.toSet()
         translatedUrls = docs.filter { !it.translation.isNullOrEmpty() }.map { it.url }.toSet()
         storedLabels = docs.map { it.label }
+        DebugLog.log("EPUB", "stored-state ${novel.seriesUrl}: ${docs.size} docs")
     }
     // Permalink-vs-extnu (Wayne, 2026-10-20: "NU does not detect
     // downloaded"): chapters saved through a site ToC store the site's
@@ -203,6 +204,10 @@ fun NovelDetailScreen(
     // volume router uses.
     fun storedHit(url: String, label: String): Boolean {
         if (url in storedUrls) return true
+        // extnu→permalink bridge: the reader's cover hop learns the pair.
+        ReaderTocStore.mappedUrl(novel.seriesUrl, url, context)?.let {
+            if (it in storedUrls) return true
+        }
         val norm = label.trim().lowercase()
         if (norm.length > 2 && storedLabels.any { it.lowercase().contains(norm) }) return true
         val k = chapterKey(label) ?: return false

@@ -115,11 +115,13 @@ object EpubStore {
      * slash). Lookups match every variant; saves keep using the exact
      * string they were given.
      */
-    private fun prefixesOf(seriesUrl: String): List<String> =
-        listOf(seriesUrl, seriesUrl.trimEnd('/'), seriesUrl.trimEnd('/') + "/")
-            .distinct()
-            .map { it.hashCode().toUInt().toString() + "-" }
-            .distinct()
+    private fun prefixesOf(seriesUrl: String): List<String> {
+        val base = listOf(seriesUrl, seriesUrl.trimEnd('/'), seriesUrl.trimEnd('/') + "/")
+        val schemes = base.flatMap {
+            listOf(it, it.replaceFirst("https://", "http://"), it.replaceFirst("http://", "https://"))
+        }
+        return schemes.distinct().map { it.hashCode().toUInt().toString() + "-" }.distinct()
+    }
 
     /**
      * Every stored chapter across the series' bucket books, chapter order —
