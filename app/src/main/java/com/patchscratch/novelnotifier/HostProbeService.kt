@@ -97,7 +97,8 @@ class HostProbeService : Service() {
             "grimdarkztranslations.com",
             // NXDOMAIN — domain dropped entirely (Wayne + DNS check, 2026-10-20):
             "shyheaux.com",
-            "canonstory.com" // defunct (Wayne, 2026-10-20)
+            "canonstory.com", // defunct (Wayne, 2026-10-20)
+            "sofanovel.com"   // defunct (Wayne, 2026-10-20)
         )
 
         /**
