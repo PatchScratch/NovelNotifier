@@ -233,6 +233,13 @@ class EpubBulkService : Service() {
             for (chapter in job.chapters) {
                 if (!scope.isActive) return
                 if (chapter.url in known && !job.refresh) { skipped++; continue }
+                // Qidian/Webnovel: never scraped, never loaded (Wayne's rule,
+                // 2026-10-20 — they actively ban apps accessing their sites).
+                if (SitePolicy.prohibitedHostOf(chapter.url) != null) {
+                    skipped++
+                    status("${chapter.label} — not scraped (Qidian/Webnovel policy)")
+                    continue
+                }
                 if (nuHosted(chapter.url)) { pendingNu.add(chapter); continue }
                 // AlphaPolis fetches fully headless via the anonymous
                 // loader POST (no WebView needed — see
@@ -297,7 +304,9 @@ class EpubBulkService : Service() {
                 if (chapter.url in known && !job.refresh) { skipped++; continue }
                 val key = chapterKey(chapter.label)
                 val directUrl = key?.let { resolveToc(it) }
-                if (directUrl != null && !nuHosted(directUrl)) {
+                if (directUrl != null && !nuHosted(directUrl) &&
+                    SitePolicy.prohibitedHostOf(directUrl) == null
+                ) {
                     status("ToC-resolved · ${chapter.label}")
                     val extract = loadAndExtract(directUrl)
                     if (extract != null) {

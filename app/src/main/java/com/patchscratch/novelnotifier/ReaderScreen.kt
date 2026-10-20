@@ -197,6 +197,12 @@ fun ReaderScreen(
     // deliberately (Wayne, 2026-10-18): the user can unlock the chapter or
     // buy credits inside the app, then tap Retry to extract + auto-save.
     var paywallNotice by remember(target) { mutableStateOf(false) }
+    // Qidian/Webnovel (Wayne's rule, 2026-10-20): never scraped, never even
+    // loaded — they actively seek to ban apps that access their sites.
+    val prohibited = remember(target, index) {
+        SitePolicy.prohibitedHostOf(target.chapters.getOrNull(index)?.url.orEmpty()) != null
+    }
+    var prohibitedNotice by remember(target) { mutableStateOf(false) }
     var extractFailed by remember(target) { mutableStateOf(false) }
     var extracting by remember(target) { mutableStateOf(false) }
     /** True while the chapter host is showing a Cloudflare challenge. */
@@ -605,6 +611,13 @@ fun ReaderScreen(
         offlineCopy = false
         cfChecking = false
         paywallNotice = false
+        prohibitedNotice = false
+        // Qidian/Webnovel: no extraction attempt, no WebView traffic (the
+        // factory/update blocks above already skip the load). Warn + stop.
+        if (prohibited) {
+            prohibitedNotice = true
+            return@LaunchedEffect
+        }
         // AlphaPolis reads fully headless (B4): page → CSRF+episode tokens →
         // POST /novel/episode_body — no WebView in the reading path, so the
         // site's premium chapters (session-authorized) work without any
@@ -1339,7 +1352,7 @@ fun ReaderScreen(
                                 super.onReceivedError(view, request, error)
                             }
                         }
-                        loadUrl(chapter.url)
+                        if (!prohibited) loadUrl(chapter.url)
                     }
                 },
                 update = { webView ->
@@ -1348,10 +1361,51 @@ fun ReaderScreen(
                         loadedStamp = stamp
                         webView.settings.javaScriptEnabled = jsOn
                         webView.settings.domStorageEnabled = jsOn
-                        webView.loadUrl(chapter.url)
+                        if (!prohibited) webView.loadUrl(chapter.url)
                     }
                 }
             )
+
+            // Qidian/Webnovel warning (Wayne's rule, 2026-10-20): these
+            // sites are never scraped or loaded by the app — they actively
+            // seek to ban apps that access them. Reading stays possible
+            // only outside the app.
+            if (prohibitedNotice) {
+                androidx.compose.material3.Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shadowElevation = 8.dp,
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Text(
+                            t(
+                                "Not scraped by design: Qidian and Webnovel actively seek to ban apps that access their sites, so NovelNotifier never loads them. Open the chapter in your browser to read.",
+                                "Qidian・Webnovelはアプリによるアクセスを積極的にブロック・通報するため、本アプリでは読み込み自体を行いません。お使いのブラウザで開いてください。"
+                            ),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        androidx.compose.foundation.layout.Row {
+                            androidx.compose.material3.TextButton(onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(chapter.url)
+                                        )
+                                    )
+                                }
+                            }) { Text(t("Open in browser ↗", "ブラウザで開く ↗")) }
+                            androidx.compose.material3.TextButton(onClick = { prohibitedNotice = false }) {
+                                Text(t("DISMISS", "閉じる"))
+                            }
+                        }
+                    }
+                }
+            }
 
             // Paywall interstitial (AlphaPolis): the web view stays up so the
             // user can unlock the chapter / buy credits in place; Retry

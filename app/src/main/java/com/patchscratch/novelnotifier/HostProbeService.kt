@@ -324,16 +324,18 @@ class HostProbeService : Service() {
                 if (f.isFile) JSONArray(f.readText()) else null
             }.getOrNull()
         }
-        // Fix-on-the-fly (Wayne, 2026-10-20): OK/OK-SLOW/SKIP/DEFUNCT entries
-        // count as done — FAIL/TIMEOUT/CLOUDFLARE hosts re-probe on every
-        // run, so a batch's failures retry automatically once an extractor
-        // fix ships in a minor-version install.
+        // Fix-on-the-fly (Wayne, 2026-10-20): OK/OK-SLOW/SKIP/DEFUNCT/PROHIBITED
+        // entries count as done — FAIL/TIMEOUT/CLOUDFLARE hosts re-probe on
+        // every run, so a batch's failures retry automatically once an
+        // extractor fix ships in a minor-version install.
         val doneUrls = mutableSetOf<String>()
         if (prior != null) for (i in 0 until prior.length()) {
             val o = prior.optJSONObject(i) ?: continue
             val v = o.optString("verdict")
             val u = o.optString("url")
-            if (u.isNotBlank() && (v.startsWith("OK") || v == "SKIP" || v == "DEFUNCT")) doneUrls.add(u)
+            if (u.isNotBlank() && (v.startsWith("OK") || v == "SKIP" || v == "DEFUNCT" || v == "PROHIBITED")) {
+                doneUrls.add(u)
+            }
         }
         val report = prior ?: JSONArray()
         val seenHosts = mutableSetOf<String>()
@@ -414,6 +416,12 @@ class HostProbeService : Service() {
         entry.put("host", host)
         if (host.endsWith("novelupdates.com")) {
             return entry.put("verdict", "SKIP").put("note", "landed on NU itself")
+        }
+        // Qidian/Webnovel (Wayne's rule, 2026-10-20): NEVER accessed — they
+        // actively seek to ban apps that touch their sites. Terminal.
+        if (SitePolicy.isProhibited(host)) {
+            return entry.put("verdict", "PROHIBITED")
+                .put("note", "not scraped — Qidian/Webnovel actively ban apps accessing their sites")
         }
         // Defunct classification BEFORE extraction — an expired domain
         // redirecting to a registrar lander never yields text, so don't sit
