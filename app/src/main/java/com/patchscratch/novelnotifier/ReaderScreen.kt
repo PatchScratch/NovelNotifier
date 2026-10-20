@@ -1292,32 +1292,36 @@ fun ReaderScreen(
                                         url = target.seriesUrl.trimEnd('/') + "/",
                                         js = seriesPageJs(),
                                         onComplete = { result ->
-                                            when (result) {
-                                                is SiteClient.ScrapeRequest.Result.Success -> {
-                                                    val page = parseSeriesPage(unwrapJsResult(result.html))
-                                                    if (page.releases.isEmpty()) {
-                                                        android.widget.Toast.makeText(
-                                                            context, "NU: 0",
-                                                            android.widget.Toast.LENGTH_SHORT
-                                                        ).show()
-                                                    } else {
-                                                        scope.launch { adoptChapterList(page.releases, "nu") }
-                                                        android.widget.Toast.makeText(
-                                                            context, "NU: ${page.releases.size} " + t("releases", "話"),
-                                                            android.widget.Toast.LENGTH_SHORT
-                                                        ).show()
+                                            // SiteClient completes OFF the main thread —
+                                            // Toast needs a Looper (live crash on refresh).
+                                            scope.launch {
+                                                when (result) {
+                                                    is SiteClient.ScrapeRequest.Result.Success -> {
+                                                        val page = parseSeriesPage(unwrapJsResult(result.html))
+                                                        if (page.releases.isEmpty()) {
+                                                            android.widget.Toast.makeText(
+                                                                context, "NU: 0",
+                                                                android.widget.Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        } else {
+                                                            adoptChapterList(page.releases, "nu")
+                                                            android.widget.Toast.makeText(
+                                                                context, "NU: ${page.releases.size} " + t("releases", "話"),
+                                                                android.widget.Toast.LENGTH_SHORT
+                                                            ).show()
+                                                        }
                                                     }
+                                                    is SiteClient.ScrapeRequest.Result.Cloudflare ->
+                                                        android.widget.Toast.makeText(
+                                                            context, "Cloudflare — " + t("try again", "再試行してください"),
+                                                            android.widget.Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    is SiteClient.ScrapeRequest.Result.Error ->
+                                                        android.widget.Toast.makeText(
+                                                            context, "NU: ${result.message.take(60)}",
+                                                            android.widget.Toast.LENGTH_SHORT
+                                                        ).show()
                                                 }
-                                                is SiteClient.ScrapeRequest.Result.Cloudflare ->
-                                                    android.widget.Toast.makeText(
-                                                        context, "Cloudflare — " + t("try again", "再試行してください"),
-                                                        android.widget.Toast.LENGTH_SHORT
-                                                    ).show()
-                                                is SiteClient.ScrapeRequest.Result.Error ->
-                                                    android.widget.Toast.makeText(
-                                                        context, "NU: ${result.message.take(60)}",
-                                                        android.widget.Toast.LENGTH_SHORT
-                                                    ).show()
                                             }
                                         }
                                     )
@@ -1342,31 +1346,31 @@ fun ReaderScreen(
                                     url = storedUrl,
                                     js = readerTocHarvestJs(target.seriesTitle),
                                     onComplete = { result ->
-                                        if (result is SiteClient.ScrapeRequest.Result.Success) {
-                                            val (list, scoped) = parseReaderToc(result.html)
-                                            if (list.isEmpty()) {
-                                                android.widget.Toast.makeText(
-                                                    context, "ToC: 0",
-                                                    android.widget.Toast.LENGTH_SHORT
-                                                ).show()
-                                            } else {
-                                                scope.launch {
+                                        scope.launch {
+                                            if (result is SiteClient.ScrapeRequest.Result.Success) {
+                                                val (list, scoped) = parseReaderToc(result.html)
+                                                if (list.isEmpty()) {
+                                                    android.widget.Toast.makeText(
+                                                        context, "ToC: 0",
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                    ).show()
+                                                } else {
                                                     ReaderTocStore.setToc(context, target.seriesUrl, storedUrl, list)
                                                     adoptChapterList(list, "toc")
+                                                    android.widget.Toast.makeText(
+                                                        context,
+                                                        "ToC: ${list.size} " + t("chapters", "話") +
+                                                            if (scoped) "" else t(" — UNSCOPED", " — 絞り込みなし"),
+                                                        android.widget.Toast.LENGTH_LONG
+                                                    ).show()
                                                 }
+                                            } else {
                                                 android.widget.Toast.makeText(
                                                     context,
-                                                    "ToC: ${list.size} " + t("chapters", "話") +
-                                                        if (scoped) "" else t(" — UNSCOPED", " — 絞り込みなし"),
-                                                    android.widget.Toast.LENGTH_LONG
+                                                    "ToC: " + t("load failed", "取得失敗"),
+                                                    android.widget.Toast.LENGTH_SHORT
                                                 ).show()
                                             }
-                                        } else {
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                "ToC: " + t("load failed", "取得失敗"),
-                                                android.widget.Toast.LENGTH_SHORT
-                                            ).show()
                                         }
                                     }
                                 )
