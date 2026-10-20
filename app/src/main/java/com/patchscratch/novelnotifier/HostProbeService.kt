@@ -93,7 +93,8 @@ class HostProbeService : Service() {
             // (Wayne, 2026-10-20: "malconformed cloudflare settings"):
             "grimdarkztranslations.com",
             // NXDOMAIN — domain dropped entirely (Wayne + DNS check, 2026-10-20):
-            "shyheaux.com"
+            "shyheaux.com",
+            "canonstory.com" // defunct (Wayne, 2026-10-20)
         )
 
         /**
