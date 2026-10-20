@@ -778,6 +778,45 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       // else: real prose on the page (chapter with embedded ToC) — extract.
     }
 
+    // --- announcement/landing hop (ported from Wayne's lnpipe 2026-10-20) --
+    // Many NU release URLs are a dated ANNOUNCEMENT post ("Chapter 12 is up
+    // — click here") whose article body links the real permalink. Only runs
+    // when extraction is about to fail, so a real chapter never re-routes;
+    // plenty-of-narrative pages stay put (sidebar ToCs can't trigger it).
+    function isDatedPost(u) {
+      try { return /\/20\d{2}\/\d{1,2}\/\d{1,2}\//.test(new URL(u).pathname); }
+      catch (e) { return false; }
+    }
+    function landingHop() {
+      if (!best) return 'FAIL';
+      var ps = best.querySelectorAll('p'), chars = 0, longs = 0;
+      for (var lh = 0; lh < ps.length; lh++) {
+        if (!nodeVisible(ps[lh])) continue;
+        var lt = (ps[lh].innerText || '').trim();
+        if (lt.length > 1) { chars += lt.length; if (lt.length > 80) longs++; }
+      }
+      // Real chapter that failed for another reason — don't rewrite it.
+      if (longs >= 18 && chars >= 5000) return 'FAIL';
+      var announcePath = /\/(announcements?|releases?|updates?|status|news)(\/|$)/i.test(location.pathname);
+      var head = (best.innerText || '').slice(0, 1200);
+      var announceText = /(here you go|here it is|click here|read (it )?here|is (now )?up|now available|new chapter|thanks for waiting|posted)/i.test(head);
+      var hereDated = isDatedPost(location.href);
+      var cands = best.querySelectorAll('a[href]');
+      for (var lc = 0; lc < cands.length; lc++) {
+        var la = cands[lc];
+        if (!nodeVisible(la)) continue;
+        if (la.origin !== location.origin) continue;
+        var lText = (la.innerText || '').trim();
+        // Strong candidate: a chapter-pattern label, or a dated-post page
+        // pointing at an undated permalink.
+        var strong = parseKey(lText) || (hereDated && !isDatedPost(la.href));
+        if (strong && (chars < 1500 || announcePath || announceText)) {
+          return 'COVER-DIRECT:' + la.href;
+        }
+      }
+      return 'FAIL';
+    }
+
     // --- known content containers (field-verified platform selectors) -------
     // Comment sections can hold more paragraph text than the chapter itself
     // (Wuxiaworld et al), and ancestor scoring alone would then crown the
@@ -825,7 +864,7 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       });
       var bestScore = 0;
       score.forEach(function(v, el) { if (v > bestScore) { best = el; bestScore = v; } });
-      if (!best || bestScore < 400) return 'FAIL';
+      if (!best || bestScore < 400) return landingHop();
     }
 
     // Title first: letters that appear ONLY in the heading (uppercase C, O…)
@@ -977,7 +1016,7 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
 
     // Image-led chapters pass with fewer text lines when illustrations
     // were harvested (pure-text chapters keep the 3-paragraph floor).
-    if (out.length < 3 && imgs.length === 0) return 'FAIL';
+    if (out.length < 3 && imgs.length === 0) return landingHop();
 
     // Title was extracted before the paragraphs (it feeds the derivation
     // sample); decode it with the derived map when one exists.
