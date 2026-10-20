@@ -183,6 +183,14 @@ fun NovelDetailScreen(
     var tocList by remember(novel.seriesUrl) {
         mutableStateOf(ReaderTocStore.chaptersOf(novel.seriesUrl, context))
     }
+    // Offline state per row (Wayne, 2026-10-20): RELEASES shows what is
+    // stored; refreshed as the list size or store changes.
+    var storedUrls by remember(novel.seriesUrl) { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(novel.seriesUrl, page.releases.size, tocList?.size) {
+        storedUrls = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            EpubStore.readAllStoredDocs(context, novel.seriesUrl).map { it.url }.toSet()
+        }
+    }
     val readingOrder = remember(page.releases, groupOff, tocActive, tocList) {
         if (tocActive && tocList != null) tocList!!
         else sortedReleases(page.releases, newestFirst = false).filter { it.group.isBlank() || it.group !in groupOff }
@@ -256,6 +264,8 @@ fun NovelDetailScreen(
                     title = "",
                     date = "",
                     isRead = false,
+                    downloaded = rel.url in storedUrls,
+                    onDownload = { openInReader(rel) },
                     onOpen = { openInReader(rel) },
                     onCheck = { } // NU's tick stays NU-list driven; ToC rows read locally
                 )
@@ -280,6 +290,9 @@ fun NovelDetailScreen(
                 title = release.group,
                 date = release.date,
                 isRead = lastReadNum > 0 && thisNum > 0 && thisNum == lastReadNum,
+                downloaded = release.url in storedUrls,
+                // reading IS the download for NU chapters (opening saves)
+                onDownload = { openInReader(release) },
                 onOpen = { openInReader(release) },
                 onCheck = { checked ->
                     if (checked) {
@@ -458,6 +471,70 @@ fun NovelDetailScreen(
                                 if (tocActive) "Switch to NU list" else "Switch to site ToC"
                             )
                         }
+                    }
+                    // Downloads (Wayne, 2026-10-20): missing-only bulk + force
+                    // re-download behind one section; rows above show stored
+                    // state per chapter.
+                    var showDownloads by remember(novel.seriesUrl) { mutableStateOf(false) }
+                    TextButton(onClick = { showDownloads = true }) {
+                        Text(t("Downloads ▸", "ダウンロード ▸"))
+                    }
+                    if (showDownloads) {
+                        val active = readingOrder
+                        val missing = active.count { it.url !in storedUrls }
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { showDownloads = false },
+                            title = { Text(t("Downloads", "ダウンロード")) },
+                            text = {
+                                Column {
+                                    Text(
+                                        t("Stored: ", "保存済み：") + "${active.size - missing} / ${active.size}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(bottom = 8.dp)
+                                    )
+                                    androidx.compose.material3.TextButton(
+                                        onClick = {
+                                            showDownloads = false
+                                            if (missing == 0) {
+                                                vm.listStatus = "Nothing missing — all stored"
+                                            } else {
+                                                EpubBulkService.start(
+                                                    context,
+                                                    EpubBulkService.BulkJob(
+                                                        seriesTitle = novel.title,
+                                                        seriesUrl = novel.seriesUrl,
+                                                        chapters = active.filter { it.url !in storedUrls }
+                                                            .map { EpubBulkService.BulkChapter(it.url, it.chapter) },
+                                                        meta = bookMeta
+                                                    )
+                                                )
+                                                vm.listStatus = "Downloading $missing missing chapters"
+                                            }
+                                        },
+                                        enabled = missing > 0
+                                    ) { Text(t("Download missing only", "不足分のみ取得") + " ($missing)") }
+                                    androidx.compose.material3.TextButton(onClick = {
+                                        showDownloads = false
+                                        EpubBulkService.start(
+                                            context,
+                                            EpubBulkService.BulkJob(
+                                                seriesTitle = novel.title,
+                                                seriesUrl = novel.seriesUrl,
+                                                chapters = active.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
+                                                meta = bookMeta,
+                                                refresh = true
+                                            )
+                                        )
+                                        vm.listStatus = "Force re-downloading ${active.size} chapters"
+                                    }) { Text(t("Force re-download all (update)", "全話強制再取得（更新）") + " (${active.size})") }
+                                }
+                            },
+                            confirmButton = {
+                                androidx.compose.material3.TextButton(onClick = { showDownloads = false }) {
+                                    Text(t("Close", "閉じる"))
+                                }
+                            }
+                        )
                     }
                     // Cleanup control: a bad harvest can store wrong-series
                     // chapters under this series — wipe and re-download.

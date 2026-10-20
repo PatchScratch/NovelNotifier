@@ -169,6 +169,7 @@ fun ReaderScreen(
     var tocChapters by remember(target) { mutableStateOf(ReaderTocStore.chaptersOf(target.seriesUrl, context)) }
     var nuRefreshed by remember(target) { mutableStateOf<List<Release>?>(null) }
     var showChapterListMenu by remember { mutableStateOf(false) }
+    var showDownloadsMenu by remember { mutableStateOf(false) }
     val chapters = when {
         tocSource == "toc" && tocChapters != null -> tocChapters!!
         nuRefreshed != null -> nuRefreshed!!
@@ -451,14 +452,16 @@ fun ReaderScreen(
     // USB, Downloads…), or hand it to another e-reader via the share sheet.
     var exportMessage by remember { mutableStateOf("") }
 
-    fun startBackgroundBulk() {
+    fun startBackgroundBulk(subset: List<Release>? = null, refresh: Boolean = false) {
+        val list = subset ?: chapters
         EpubBulkService.start(
             context,
             EpubBulkService.BulkJob(
                 seriesTitle = target.seriesTitle,
                 seriesUrl = target.seriesUrl,
-                chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
-                meta = target.meta
+                chapters = list.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
+                meta = target.meta,
+                refresh = refresh
             )
         )
     }
@@ -1136,17 +1139,18 @@ fun ReaderScreen(
 
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
 
-                // ---- Offline library ----------------------------------------------
-                // Chapters you read are stored automatically; this toggle
-                // decides whether BULK downloads include the series.
+                // ---- Downloads submenu (Wayne, 2026-10-20) ------------------------
+                // All download controls in one place: missing-only, force-all,
+                // the bulk-library toggle, and stop. Row-level save/delete
+                // stay directly in the menu.
                 DropdownMenuItem(
                     text = {
                         Text(
-                            if (offlineEnabled) t("Include in bulk download: ON", "一括ダウンロードに含める: ON")
-                            else t("Include in bulk download: OFF", "一括ダウンロードに含める: OFF")
+                            t("Downloads", "ダウンロード") + " ▸ " +
+                                (if (offlineEnabled) t("bulk ON", "一括ON") else t("bulk OFF", "一括OFF"))
                         )
                     },
-                    onClick = { showMenu = false; toggleOfflineForSeries() }
+                    onClick = { showMenu = false; showDownloadsMenu = true }
                 )
                 if (savedOffline) {
                     DropdownMenuItem(
@@ -1199,33 +1203,6 @@ fun ReaderScreen(
                         }
                     )
                 }
-                if (offlineEnabled && chapters.size > 0) {
-                    if (EpubBulkService.running(context)) {
-                        DropdownMenuItem(
-                            text = { Text(t("Stop background download", "バックグラウンド取得を停止")) },
-                            onClick = { showMenu = false; EpubBulkService.stop(context) }
-                        )
-                    } else {
-                        DropdownMenuItem(
-                            text = { Text(t("Download all", "全話ダウンロード") + " (${chapters.size})") },
-                            onClick = {
-                                showMenu = false
-                                if (android.os.Build.VERSION.SDK_INT >= 33 &&
-                                    androidx.core.content.ContextCompat.checkSelfPermission(
-                                        context, android.Manifest.permission.POST_NOTIFICATIONS
-                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    // Fresh installs lose the grant (uninstall wipes it);
-                                    // the progress notification needs it. Download starts
-                                    // on grant.
-                                    bulkPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                                } else {
-                                    startBackgroundBulk()
-                                }
-                            }
-                        )
-                    }
-                }
                 if (epubCount > 0) {
                     DropdownMenuItem(
                         text = {
@@ -1267,6 +1244,72 @@ fun ReaderScreen(
                     onClick = { showMenu = false; openExternally() }
                 )
             }
+        }
+
+        // ---- Downloads submenu (Wayne, 2026-10-20) ------------------------
+        if (showDownloadsMenu) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showDownloadsMenu = false },
+                title = { Text(t("Downloads", "ダウンロード")) },
+                text = {
+                    Column {
+                        Text(
+                            t("Stored: ", "保存済み：") + "$epubCount / ${chapters.size}",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        androidx.compose.material3.TextButton(onClick = {
+                            showDownloadsMenu = false
+                            toggleOfflineForSeries()
+                        }) {
+                            Text(
+                                if (offlineEnabled) t("Include in bulk library: ON", "一括ライブラリに含める: ON")
+                                else t("Include in bulk library: OFF", "一括ライブラリに含める: OFF")
+                            )
+                        }
+                        androidx.compose.material3.TextButton(onClick = {
+                            showDownloadsMenu = false
+                            scope.launch {
+                                val stored = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    EpubStore.readAllStoredDocs(context, target.seriesUrl).map { it.url }.toSet()
+                                }
+                                val missing = chapters.filter { it.url !in stored }
+                                if (missing.isEmpty()) {
+                                    android.widget.Toast.makeText(
+                                        context, t("Nothing missing — all stored", "不足なし — 全話保存済み"),
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                } else {
+                                    startBackgroundBulk(missing)
+                                    android.widget.Toast.makeText(
+                                        context, t("Downloading ", "取得中 ") + "${missing.size}" + t(" missing", "話（不足分）"),
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }) { Text(t("Download missing only", "不足分のみ取得")) }
+                        androidx.compose.material3.TextButton(onClick = {
+                            showDownloadsMenu = false
+                            startBackgroundBulk()
+                        }) { Text(t("Download all", "全話ダウンロード") + " (${chapters.size})") }
+                        androidx.compose.material3.TextButton(onClick = {
+                            showDownloadsMenu = false
+                            startBackgroundBulk(refresh = true)
+                        }) { Text(t("Force re-download all (update)", "全話強制再取得（更新）")) }
+                        if (EpubBulkService.running(context)) {
+                            androidx.compose.material3.TextButton(onClick = {
+                                showDownloadsMenu = false
+                                EpubBulkService.stop(context)
+                            }) { Text(t("Stop background download", "バックグラウンド取得を停止")) }
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { showDownloadsMenu = false }) {
+                        Text(t("Close", "閉じる"))
+                    }
+                }
+            )
         }
 
         // ---- Chapter list submenu (manual control, Wayne 2026-10-20) ----
