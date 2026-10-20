@@ -659,6 +659,62 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       return r.height > 0;
     }
 
+    // --- hidden-text watermark strip (Wayne, 2026-10-20) -------------------
+    // Amateur translators watermark chapters with garbage text colored the
+    // same as the background — invisible to site readers, but scrapers take
+    // DOM text, so the junk lands in epubs and wrecks TTS. Blank every text
+    // node that is transparent, matches its effective background color,
+    // renders microscopic, or sits offscreen in DOCUMENT coordinates
+    // (below-fold paragraphs stay — viewport coords would misjudge them).
+    function parseRgb(s) {
+      var m = (s || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+      return m ? [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]] : null;
+    }
+    function sameColor(a, b) {
+      var x = parseRgb(a), y = parseRgb(b);
+      return !!(x && y && x[3] > 0.9 && y[3] > 0.9 &&
+        Math.abs(x[0] - y[0]) <= 8 && Math.abs(x[1] - y[1]) <= 8 && Math.abs(x[2] - y[2]) <= 8);
+    }
+    function textHidden(el) {
+      var s = window.getComputedStyle(el);
+      if (parseFloat(s.fontSize) < 3) return true;
+      var col = parseRgb(s.color);
+      if (!col) return false;
+      if (col[3] < 0.05) return true;
+      var bg = 'rgba(0, 0, 0, 0)';
+      var bgImage = false;
+      var node = el;
+      while (node && node !== document.body) {
+        var bs = window.getComputedStyle(node);
+        if (!bgImage && bs.backgroundImage && bs.backgroundImage !== 'none') bgImage = true;
+        if (bg === 'rgba(0, 0, 0, 0)') {
+          var b = bs.backgroundColor;
+          if (b && b !== 'rgba(0, 0, 0, 0)' && b !== 'transparent') bg = b;
+        }
+        node = node.parentElement;
+      }
+      if (!bgImage && sameColor(s.color, bg)) return true;
+      var r = el.getBoundingClientRect();
+      if (r.top + window.scrollY > document.documentElement.scrollHeight + 200) return true;
+      if (r.left > document.documentElement.scrollWidth + 200) return true;
+      return false;
+    }
+    var hiddenTextStripped = 0;
+    try {
+      var hw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+      var toBlank = [];
+      while (hw.nextNode()) {
+        var ht = hw.currentNode;
+        if (!ht.nodeValue || !ht.nodeValue.trim()) continue;
+        if (textHidden(ht.parentElement)) toBlank.push(ht);
+      }
+      for (var hb = 0; hb < toBlank.length; hb++) toBlank[hb].nodeValue = '';
+      hiddenTextStripped = toBlank.length;
+      if (hiddenTextStripped > 0) {
+        console.log('[NN] stripped ' + hiddenTextStripped + ' hidden text nodes');
+      }
+    } catch (he) { /* never block extraction on the strip */ }
+
     // --- anti-scrape decode (font glyph substitution) ----------------------
     // Some hosts (verified: storyseedling.com) ship a custom font whose Latin
     // letters are drawn from Kangxi-radical codepoints — the page RENDERS
