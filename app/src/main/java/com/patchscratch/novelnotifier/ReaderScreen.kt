@@ -161,6 +161,12 @@ fun ReaderScreen(
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
     var index by remember(target) { mutableIntStateOf(target.startIndex.coerceIn(0, target.chapters.lastIndex)) }
+    // Manual ToC override (Wayne, 2026-10-20): "Get chapter links from ToC"
+    // in the ⋮ menu — for hosts the automatic resolver can't match, the
+    // user points the WebView at the site's ToC page and harvests the
+    // chapter list directly. Session-scoped for this reader target.
+    var tocChapters by remember(target) { mutableStateOf<List<Release>?>(null) }
+    val chapters = tocChapters ?: target.chapters
     var jsOn by remember(target.seriesUrl) {
         mutableStateOf(target.seriesUrl !in loadIdSet(prefs, "reader_js_off"))
     }
@@ -200,7 +206,7 @@ fun ReaderScreen(
     // Qidian/Webnovel (Wayne's rule, 2026-10-20): never scraped, never even
     // loaded — they actively seek to ban apps that access their sites.
     val prohibited = remember(target, index) {
-        SitePolicy.prohibitedHostOf(target.chapters.getOrNull(index)?.url.orEmpty()) != null
+        SitePolicy.prohibitedHostOf(chapters.getOrNull(index)?.url.orEmpty()) != null
     }
     var prohibitedNotice by remember(target) { mutableStateOf(false) }
     var extractFailed by remember(target) { mutableStateOf(false) }
@@ -280,7 +286,7 @@ fun ReaderScreen(
         if (spoken.isNotEmpty()) {
             // Chapter label read directly — `chapter` is declared below
             // (local functions must respect declaration order here).
-            val label = target.chapters.getOrNull(index)?.chapter.orEmpty()
+            val label = chapters.getOrNull(index)?.chapter.orEmpty()
             TtsController.setContext(context)
             TtsController.start(
                 context, spoken, 0,
@@ -289,7 +295,7 @@ fun ReaderScreen(
         }
     }
     var wordHit by remember(target) { mutableStateOf<JaDict.WordHit?>(null) }
-    val chapter = target.chapters.getOrNull(index) ?: return
+    val chapter = chapters.getOrNull(index) ?: return
 
     /**
      * Foxteller /rss/<id> resolution stage per chapter: 0 = not needed,
@@ -437,7 +443,7 @@ fun ReaderScreen(
             EpubBulkService.BulkJob(
                 seriesTitle = target.seriesTitle,
                 seriesUrl = target.seriesUrl,
-                chapters = target.chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
+                chapters = chapters.map { EpubBulkService.BulkChapter(it.url, it.chapter) },
                 meta = target.meta
             )
         )
@@ -993,6 +999,43 @@ fun ReaderScreen(
                         prefs.edit { putString("xlate_layout", xlateLayout) }
                     }
                 )
+                // Manual ToC harvest (Wayne, 2026-10-20): run on whatever
+                // page the WebView currently shows — navigate to the site's
+                // ToC in web view first, then tap. Replaces this session's
+                // chapter list (read/download navigation follow it).
+                DropdownMenuItem(
+                    text = { Text(t("Get chapter links from ToC", "目次から各話リンクを取得")) },
+                    onClick = {
+                        showMenu = false
+                        val wv = webViewRef.value
+                        if (wv == null) {
+                            android.widget.Toast.makeText(
+                                context, t("No page loaded", "ページが読み込まれていません"),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                            return@DropdownMenuItem
+                        }
+                        wv.evaluateJavascript(readerTocHarvestJs()) { res ->
+                            val list = parseReaderToc(unwrapJsResult(res))
+                            if (list.isEmpty()) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    t("No chapter links on this page — open the ToC in web view first", "このページに各話リンクがありません — 先にウェブ表示で目次を開いてください"),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                val currentUrl = chapter.url
+                                tocChapters = list
+                                index = list.indexOfFirst { it.url == currentUrl }
+                                    .takeIf { it >= 0 } ?: 0
+                                android.widget.Toast.makeText(
+                                    context, "ToC: ${list.size} " + t("chapters", "話"),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                )
                 // Bulk twin of Download all: every STORED chapter through the
                 // translator, one at a time, auto-refining lock files as it
                 // goes. Unstored chapters need Download all first. The label
@@ -1120,7 +1163,7 @@ fun ReaderScreen(
                         onClick = { showMenu = false; saveChapterOffline() }
                     )
                 }
-                if (offlineEnabled && target.chapters.size > 0) {
+                if (offlineEnabled && chapters.size > 0) {
                     if (EpubBulkService.running(context)) {
                         DropdownMenuItem(
                             text = { Text(t("Stop background download", "バックグラウンド取得を停止")) },
@@ -1128,7 +1171,7 @@ fun ReaderScreen(
                         )
                     } else {
                         DropdownMenuItem(
-                            text = { Text(t("Download all", "全話ダウンロード") + " (${target.chapters.size})") },
+                            text = { Text(t("Download all", "全話ダウンロード") + " (${chapters.size})") },
                             onClick = {
                                 showMenu = false
                                 if (android.os.Build.VERSION.SDK_INT >= 33 &&
@@ -1543,7 +1586,7 @@ fun ReaderScreen(
                         }
                     }
                     Text(
-                        text = "· ${index + 1} of ${target.chapters.size} ·",
+                        text = "· ${index + 1} of ${chapters.size} ·",
                         color = palette.text.copy(alpha = 0.55f),
                         fontSize = (fontSize - 3).sp,
                         fontFamily = if (serif) FontFamily.Serif else FontFamily.Default,
@@ -1718,14 +1761,14 @@ fun ReaderScreen(
                 enabled = index > 0
             ) { Text("‹ " + t("Prev", "前へ")) }
             Text(
-                text = "${index + 1} / ${target.chapters.size}",
+                text = "${index + 1} / ${chapters.size}",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.weight(1f),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
             TextButton(
-                onClick = { if (index < target.chapters.lastIndex) index += 1 },
-                enabled = index < target.chapters.lastIndex
+                onClick = { if (index < chapters.lastIndex) index += 1 },
+                enabled = index < chapters.lastIndex
             ) { Text(t("Next", "次へ") + " ›") }
         }
     }

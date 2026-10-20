@@ -575,6 +575,59 @@ function deriveCipher(containerText, probeEl) {
  * chapter page with an embedded ToC falls through to normal extraction
  * (self-link guard + body-volume guard).
  */
+/**
+ * Manual ToC harvest for the reader's ⋮ menu (Wayne, 2026-10-20): collect
+ * chapter-looking links (numeric dialects + worded ordinals) and <select>
+ * chapter dropdowns from WHATEVER page the WebView currently shows.
+ * Returns a JSON array of {t: label, u: url}; parseReaderToc decodes.
+ */
+fun readerTocHarvestJs(): String = """
+(function() {
+  try {
+    var out = [], seen = {};
+    function add(t, u) {
+      t = (t || '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 90 || !u || seen[u]) return;
+      seen[u] = 1;
+      out.push({ t: t, u: u });
+    }
+    var pat = /v\d+\s*c\d+|ch(apter)?[\s.\-]*\d+|第\d+話|(prologue|interlude|epilogue|extra|omake)/i;
+    var links = document.querySelectorAll('a[href]');
+    for (var i = 0; i < links.length && out.length < 2000; i++) {
+      var a = links[i];
+      var at = (a.innerText || '').trim();
+      if (!at || !pat.test(at)) continue;
+      if (a.origin !== location.origin) continue;
+      add(at, a.href);
+    }
+    var opts = document.querySelectorAll('select option[value]');
+    for (var s = 0; s < opts.length && out.length < 2000; s++) {
+      var o = opts[s], v = o.getAttribute('value') || '';
+      if (!/^https?:/i.test(v) && !v.startsWith('/')) continue;
+      add(o.textContent, new URL(v, location.href).href);
+    }
+    return JSON.stringify(out);
+  } catch (e) { return '[]'; }
+})()
+"""
+
+/** Decode readerTocHarvestJs's JSON into Release rows (reader chapter list). */
+fun parseReaderToc(raw: String): List<com.patchscratch.novelnotifier.Release> {
+    val body = unwrapJsResult(raw).trim()
+    if (body.isBlank() || !body.startsWith("[")) return emptyList()
+    return runCatching {
+        val arr = org.json.JSONArray(body)
+        (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val t = o.optString("t").trim()
+            val u = o.optString("u").trim()
+            if (t.isNotEmpty() && u.startsWith("http")) {
+                Release(chapter = t, group = "", date = "", url = u)
+            } else null
+        }
+    }.getOrDefault(emptyList())
+}
+
 fun chapterExtractJs(wanted: String = ""): String = """
 (function() {
   try {
