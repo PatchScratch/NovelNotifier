@@ -185,6 +185,14 @@ fun listPageJs(): String = """
       candidates.forEach(function(c) {
         if (listTable && !c.inListTable) return;
         if (!listTable && anyMarked && !c.hasListMark) return;
+        // NO capture-all fallback (Wayne, 2026-10-20): when neither the
+        // checkbox table nor any row marks are found, the page shape is
+        // UNKNOWN — previously every /series/ anchor with bracket chapter
+        // text was captured, letting suggestion-panel rows (SH originals
+        // like "The Incubus System" / "A Mage's Crusade") poison reading
+        // lists on every refresh. Degrade to empty; stale cache plus a
+        // sync error beat a poisoned library.
+        if (!listTable && !anyMarked) return;
         novels.push(c.title + '===' + c.chapter + '===' + c.href + '===' + c.img + '===' + c.lastReadCh + '===' + c.lastReadUrl + '===' + c.chapterUrl);
       });
       // NU shows the personal RSS feed links on this page — the releases feed
