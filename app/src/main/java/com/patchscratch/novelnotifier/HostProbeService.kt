@@ -55,7 +55,8 @@ class HostProbeService : Service() {
         val EXPECTED_CF_HOSTS = setOf(
             "foxaholic.com",       // subdomain-per-genre family
             "bellerepository.com", // same operator/setup as foxaholic (Wayne, 2026-10-20)
-            "citrusaurora.com"     // same (Wayne, 2026-10-20)
+            "citrusaurora.com",    // same (Wayne, 2026-10-20)
+            "cyborg-tl.com"        // same (Wayne, 2026-10-20)
         )
         var probeAlive = false
             private set
