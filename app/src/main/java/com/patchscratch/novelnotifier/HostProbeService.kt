@@ -46,17 +46,18 @@ class HostProbeService : Service() {
         const val HARVEST = "host_probe_targets.json"
 
         /**
-         * Wayne-confirmed always-challenging hosts (2026-10-20): alive, but
-         * headless loads never pass — user intervention (the reader's CF
+         * Wayne-confirmed always-challenging hosts (2026-10-20): DISTINCT
+         * live sites sharing the same aggressive-CF protection class —
+         * headless loads never pass; user intervention (the reader's CF
          * pane) or dedicated mitigants are the only way in. The foxaholic
          * family ships subdomain-per-genre, so match on the registered
          * domain suffix. Grow this list as Wayne rules on more CF hosts.
          */
         val EXPECTED_CF_HOSTS = setOf(
             "foxaholic.com",       // subdomain-per-genre family
-            "bellerepository.com", // same operator/setup as foxaholic (Wayne, 2026-10-20)
-            "citrusaurora.com",    // same (Wayne, 2026-10-20)
-            "cyborg-tl.com"        // same (Wayne, 2026-10-20)
+            "bellerepository.com", // live, aggressive CF (Wayne, 2026-10-20)
+            "citrusaurora.com",    // live, aggressive CF (Wayne, 2026-10-20)
+            "cyborg-tl.com"        // live, aggressive CF (Wayne, 2026-10-20)
         )
         var probeAlive = false
             private set
