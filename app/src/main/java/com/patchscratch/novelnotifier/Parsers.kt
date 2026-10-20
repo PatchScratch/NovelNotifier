@@ -246,7 +246,7 @@ fun parseListPageResult(
     // count and they cannot survive (Wayne's rule: ignore the Latest
     // Series panel). No count on the page (redesign) → keep everything
     // and let the guard above carry the day.
-    val expectedCount = raw.substringAfter(":::COUNT:::", "")
+    val expectedCount = raw.substringAfter(":::COUNT:::", "").substringBefore(":::DBG:::")
         .substringBefore(":::").toIntOrNull() ?: -1
     val trimmed = if (expectedCount > 0 && novels.size > expectedCount) novels.take(expectedCount) else novels
     if (trimmed.size < novels.size) {

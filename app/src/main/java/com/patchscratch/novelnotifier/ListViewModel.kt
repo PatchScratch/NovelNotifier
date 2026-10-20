@@ -174,6 +174,8 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     .toMap()
                 val coverCache = loadCoverCache(prefs)
+                listStatus = "dbg " + raw.substringAfter(":::DBG:::", "none").take(120)
+                DebugLog.log("SYNC", "scrape dbg: " + raw.substringAfter(":::DBG:::", "none").take(140))
                 val result = parseListPageResult(raw, coverCache, oldCoverByUrl)
 
                 // List names ride every page; the first paint discovers them.

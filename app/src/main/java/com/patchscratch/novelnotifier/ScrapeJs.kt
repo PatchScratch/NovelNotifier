@@ -193,25 +193,28 @@ fun listPageJs(): String = """
             countEl = tw.currentNode.parentElement; break;
           }
         }
+        // Uncapped walk (live-caught on the rig 2026-10-20: the mobile
+        // render nests the header deep enough that 10 levels miss the list
+        // container — scope resolved to nothing and every row dropped).
+        // Worst case scope = body; the Series (N) count-trim then removes
+        // trailing widget rows, which render after the real list in DOM.
         var up = countEl;
-        for (var u = 0; u < 10 && up; u++) {
+        while (up) {
           var cnt = up.querySelectorAll('a[href*="/series/"]').length;
           if (cnt >= (expectedCount > 0 ? expectedCount : 5)) { scopeEl = up; break; }
           up = up.parentElement;
         }
       }
       candidates.forEach(function(c) {
-        if (listTable && !c.inListTable) return;
-        if (!listTable && anyMarked && !c.hasListMark) return;
-        // NO capture-all fallback (Wayne, 2026-10-20): when neither the
-        // checkbox table nor any row marks are found, the page shape is
-        // UNKNOWN — previously every /series/ anchor with bracket chapter
-        // text was captured, letting suggestion-panel rows (SH originals
-        // like "The Incubus System" / "A Mage's Crusade") poison reading
-        // lists on every refresh. Degrade to empty; stale cache plus a
-        // sync error beat a poisoned library.
-        if (!listTable && !anyMarked) return;
-        if (scopeEl && c.el && !scopeEl.contains(c.el)) return;
+        // Positive-evidence membership (Wayne, 2026-10-20): a row counts
+        // when it is inside NU's checkbox table OR inside the column the
+        // "Series (N)" header anchors. Marks are only a tiebreak when
+        // neither structure resolved. Never capture-all: panel rows (SH
+        // suggestion widgets) poisoned lists for weeks.
+        if (listTable) { if (!c.inListTable) return; }
+        else if (scopeEl) { if (c.el && !scopeEl.contains(c.el)) return; }
+        else if (anyMarked) { if (!c.hasListMark) return; }
+        else return;
         novels.push(c.title + '===' + c.chapter + '===' + c.href + '===' + c.img + '===' + c.lastReadCh + '===' + c.lastReadUrl + '===' + c.chapterUrl);
       });
       // NU shows the personal RSS feed links on this page — the releases feed
@@ -222,7 +225,10 @@ fun listPageJs(): String = """
         if (a.href && /^https?:/i.test(a.href) && feeds.indexOf(a.href) === -1) feeds.push(a.href);
       });
       return lists.join('|||') + ':::NOVELS:::' + novels.join('|||') + ':::RSS:::' + feeds.join('|||') +
-        ':::COUNT:::' + expectedCount;
+        ':::COUNT:::' + expectedCount +
+        ':::DBG:::' + 'table=' + !!listTable + ',marked=' + anyMarked + ',count=' + expectedCount +
+        ',scope=' + (scopeEl ? scopeEl.querySelectorAll('a[href*="/series/"]').length : -1) +
+        ',cands=' + candidates.length;
     })();
 """.trimIndent()
 
