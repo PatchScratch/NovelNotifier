@@ -44,6 +44,17 @@ class HostProbeService : Service() {
     companion object {
         const val REPORT = "host_probe_report.json"
         const val HARVEST = "host_probe_targets.json"
+
+        /**
+         * Wayne-confirmed always-challenging hosts (2026-10-20): alive, but
+         * headless loads never pass — user intervention (the reader's CF
+         * pane) or dedicated mitigants are the only way in. The foxaholic
+         * family ships subdomain-per-genre, so match on the registered
+         * domain suffix. Grow this list as Wayne rules on more CF hosts.
+         */
+        val EXPECTED_CF_HOSTS = setOf(
+            "foxaholic.com"
+        )
         var probeAlive = false
             private set
 
@@ -379,6 +390,14 @@ class HostProbeService : Service() {
             return entry.put("verdict", "SKIP").put("note", "landed on NU itself")
         }
         if (host.isNotBlank()) seenHosts.add(host)
+        // Wayne-confirmed aggressive-CF hosts (2026-10-20): alive sites that
+        // always challenge headless loads — the READER handles them via the
+        // challenge pane (one manual tap), so the probe records a terminal
+        // SKIP instead of a re-probed CLOUDFLARE failure.
+        if (EXPECTED_CF_HOSTS.any { host == it || host.endsWith(".$it") }) {
+            return entry.put("verdict", "SKIP")
+                .put("note", "aggressive CF — needs user tap-in via the reader's challenge pane")
+        }
         when {
             raw == null -> return entry.put("verdict", "TIMEOUT").put("note", "page never finished")
             raw == "CF" -> return entry.put("verdict", "CLOUDFLARE")
