@@ -79,7 +79,8 @@ class HostProbeService : Service() {
             // Batch ruling, Wayne 2026-10-20 (cont. 3) — CF walled:
             "vanishintofiction.com",
             "watashiwasugoidesu.com",
-            "asianovel.net"
+            "asianovel.net",
+            "empirenovel.com" // CF walled (Wayne, 2026-10-20)
         )
 
         /**
