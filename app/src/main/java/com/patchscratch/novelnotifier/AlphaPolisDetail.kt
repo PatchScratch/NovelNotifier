@@ -57,6 +57,7 @@ fun AlphaPolisDetailScreen(
     // Per-chapter offline (user decision 2026-10-18: premium chapters are
     // bought/rented one at a time, so each episode row downloads itself).
     var storedUrls by remember(work.id) { mutableStateOf<Set<String>>(emptySet()) }
+    var translatedUrls by remember(work.id) { mutableStateOf<Set<String>>(emptySet()) }
     var downloadingUrl by remember(work.id) { mutableStateOf<String?>(null) }
     var downloadMsg by remember(work.id) { mutableStateOf("") }
     var showCategoryPicker by remember(work.id) { mutableStateOf(false) }
@@ -102,6 +103,10 @@ fun AlphaPolisDetailScreen(
         }
         storedUrls = withContext(Dispatchers.IO) {
             EpubStore.storedChapters(context, work.url).map { it.url }.toSet()
+        }
+        translatedUrls = withContext(Dispatchers.IO) {
+            EpubStore.readAllStoredDocs(context, work.url)
+                .filter { !it.translation.isNullOrEmpty() }.map { it.url }.toSet()
         }
         loading = false
     }
@@ -182,6 +187,7 @@ fun AlphaPolisDetailScreen(
                     onOpen = { openAt(i) },
                     onCheck = { onSetReadPos(i + 1) },
                     downloaded = ep.url in storedUrls,
+                    translated = ep.url in translatedUrls,
                     onDownload = { openAt(i) },   // opening IS the download (reader auto-save)
                     premium = !(viewerToc[ep.id.toLongOrNull()]?.second ?: ep.isPublic)
                 )

@@ -560,11 +560,6 @@ fun SyosetuDetailScreen(
                 error = "ToC を読み込めませんでした: ${e.message}"
             }
         }
-        if (toc == null) {
-            storedList = withContext(Dispatchers.IO) {
-                EpubStore.storedChapters(context, novel.url).map { it.toRelease() }
-            }
-        }
         loading = false
     }
 
@@ -577,8 +572,19 @@ fun SyosetuDetailScreen(
     }
 
     // Row offline state (Wayne, 2026-10-20 — Syosetu is the TEMPLATE sites
-    // follow): green check on stored rows, arrow opens+saves otherwise.
-    val storedUrls = storedList.map { it.url }.toSet()
+    // follow): green check on stored rows, translate glyph when the AI
+    // translation is stored, arrow opens+saves otherwise. Loaded ALWAYS —
+    // the old code only read the store when the ToC fetch failed, so an
+    // online series never showed its downloads (live-caught by Wayne).
+    var storedDocs by remember(novel.url) { mutableStateOf<List<EpubStore.ChapterDoc>>(emptyList()) }
+    LaunchedEffect(novel.url) {
+        storedDocs = withContext(Dispatchers.IO) {
+            EpubStore.readAllStoredDocs(context, novel.url)
+        }
+        storedList = storedDocs.map { Release(chapter = it.label, group = "", date = "", url = it.url) }
+    }
+    val storedUrls = storedDocs.map { it.url }.toSet()
+    val translatedUrls = storedDocs.filter { !it.translation.isNullOrEmpty() }.map { it.url }.toSet()
 
     // ---- NU-model detail (framework B1): the shared template renders the
     // exact NU anatomy — header + tabs + INFO cards + RELEASES — and this
@@ -632,6 +638,7 @@ fun SyosetuDetailScreen(
                     date = "",
                     isRead = ep.number == position,
                     downloaded = epUrl(ep) in storedUrls,
+                    translated = epUrl(ep) in translatedUrls,
                     onDownload = { openAt(ep.number - 1) },
                     onOpen = { openAt(ep.number - 1) },
                     onCheck = { onSetShiori(ep.number) }

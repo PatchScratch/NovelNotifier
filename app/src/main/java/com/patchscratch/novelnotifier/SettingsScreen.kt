@@ -965,6 +965,42 @@ fun SettingsScreen(
             Text(t("Re-scrape offline library", "オフライン書庫を再取得"))
         }
 
+        // Offline library audit (Wayne, 2026-10-20): verify what is saved is
+        // what the UI will indicate — every series' books opened, chapters
+        // and translations counted, unreadable books reported. The check to
+        // run after a backup/restore or an app update.
+        var auditMsg by remember { mutableStateOf("") }
+        Button(
+            onClick = {
+                scope.launch {
+                    auditMsg = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            val dir = java.io.File(context.filesDir, "epubs")
+                            val files = dir.listFiles().orEmpty().filter { it.name.endsWith(".epub") }
+                            var series = mutableSetOf<String>()
+                            var chapters = 0
+                            var translated = 0
+                            var broken = 0
+                            for (f in files) {
+                                val docs = EpubStore.readAllChapterDocs(f)
+                                if (docs == null) { broken++; continue }
+                                chapters += docs.size
+                                translated += docs.count { !it.translation.isNullOrEmpty() }
+                            }
+                            "Audit: ${files.size} books · $chapters stored chapters · $translated translated" +
+                                (if (broken > 0) " · ⚠ $broken unreadable books" else " · all books readable")
+                        }.getOrElse { "Audit failed: ${it.message}" }
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(t("Audit offline library", "オフライン書庫を検査"))
+        }
+        if (auditMsg.isNotBlank()) {
+            Text(auditMsg, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+        }
+
         }
 
         SettingsSection(t("Backup & restore", "バックアップ")) {

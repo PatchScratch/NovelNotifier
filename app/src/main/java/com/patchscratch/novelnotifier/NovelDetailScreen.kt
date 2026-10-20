@@ -186,10 +186,13 @@ fun NovelDetailScreen(
     // Offline state per row (Wayne, 2026-10-20): RELEASES shows what is
     // stored; refreshed as the list size or store changes.
     var storedUrls by remember(novel.seriesUrl) { mutableStateOf<Set<String>>(emptySet()) }
+    var translatedUrls by remember(novel.seriesUrl) { mutableStateOf<Set<String>>(emptySet()) }
     LaunchedEffect(novel.seriesUrl, page.releases.size, tocList?.size) {
-        storedUrls = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            EpubStore.readAllStoredDocs(context, novel.seriesUrl).map { it.url }.toSet()
+        val docs = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            EpubStore.readAllStoredDocs(context, novel.seriesUrl)
         }
+        storedUrls = docs.map { it.url }.toSet()
+        translatedUrls = docs.filter { !it.translation.isNullOrEmpty() }.map { it.url }.toSet()
     }
     val readingOrder = remember(page.releases, groupOff, tocActive, tocList) {
         if (tocActive && tocList != null) tocList!!
@@ -265,6 +268,7 @@ fun NovelDetailScreen(
                     date = "",
                     isRead = false,
                     downloaded = rel.url in storedUrls,
+                    translated = rel.url in translatedUrls,
                     onDownload = { openInReader(rel) },
                     onOpen = { openInReader(rel) },
                     onCheck = { } // NU's tick stays NU-list driven; ToC rows read locally
@@ -291,6 +295,7 @@ fun NovelDetailScreen(
                 date = release.date,
                 isRead = lastReadNum > 0 && thisNum > 0 && thisNum == lastReadNum,
                 downloaded = release.url in storedUrls,
+                translated = release.url in translatedUrls,
                 // reading IS the download for NU chapters (opening saves)
                 onDownload = { openInReader(release) },
                 onOpen = { openInReader(release) },

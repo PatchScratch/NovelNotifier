@@ -103,6 +103,9 @@ data class SeriesEpisodeRow(
     // are bought/rented one at a time, so "offline" is a per-chapter
     // decision, not a series bulk). Null hides the download icon entirely.
     val downloaded: Boolean = false,
+    // The stored copy carries an AI translation (Wayne, 2026-10-20: saved
+    // chapters AND translations must both be visible per row).
+    val translated: Boolean = false,
     val downloading: Boolean = false,
     val onDownload: (() -> Unit)? = null,
     // Paywalled row (ToC's own flag): renders a lock instead of the plain
@@ -525,7 +528,8 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                                                 )
                                                 ep.downloaded -> Icon(
                                                     Icons.Rounded.CheckCircle,
-                                                    contentDescription = "Saved offline",
+                                                    contentDescription = if (ep.translated) "Saved offline + translated"
+                                                    else "Saved offline",
                                                     tint = MaterialTheme.colorScheme.primary
                                                 )
                                                 ep.premium -> Icon(
@@ -544,6 +548,20 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                                                     )
                                                 )
                                             }
+                                        }
+                                        // Translation marker (Wayne, 2026-10-20):
+                                        // a small 文A beside the check marks rows
+                                        // whose stored copy carries the AI
+                                        // translation — visible at a glance
+                                        // whether the translation survived a
+                                        // backup/restore or update.
+                                        if (ep.translated) {
+                                            Text(
+                                                "文A",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.padding(start = 2.dp)
+                                            )
                                         }
                                     }
                                     if (ep.onCheck != null) {

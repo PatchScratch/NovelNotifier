@@ -618,8 +618,17 @@ fun KakuyomuDetailScreen(
     fun toChaptersOrNull(): List<Release>? = if (episodes.isNotEmpty()) toChapters() else null
 
     // Row offline state (template rule, 2026-10-20): green check on stored
-    // rows; arrow opens+saves (reading IS the download).
-    val storedUrls = storedList.map { it.url }.toSet()
+    // rows, 文A when translated; arrow opens+saves (reading IS the
+    // download). ALWAYS loaded — not only when the ToC fetch fails.
+    var storedDocs by remember(work.id) { mutableStateOf<List<EpubStore.ChapterDoc>>(emptyList()) }
+    LaunchedEffect(work.id) {
+        storedDocs = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            EpubStore.readAllStoredDocs(context, work.url)
+        }
+        storedList = storedDocs.map { Release(chapter = it.label, group = "", date = "", url = it.url) }
+    }
+    val storedUrls = storedDocs.map { it.url }.toSet()
+    val translatedUrls = storedDocs.filter { !it.translation.isNullOrEmpty() }.map { it.url }.toSet()
     fun openAt(index: Int) {
         val chapters = toChaptersOrNull()
         if (chapters != null && index < chapters.size) onOpenReader(chapters, index)
@@ -669,6 +678,7 @@ fun KakuyomuDetailScreen(
                     date = ep.publishedAt.take(10),
                     isRead = false,
                     downloaded = ep.url(work.id) in storedUrls,
+                    translated = ep.url(work.id) in translatedUrls,
                     onDownload = { openAt(i) },
                     onOpen = { openAt(i) },
                     onCheck = { onSetHistory(ep.id, i + 1) }
