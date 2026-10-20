@@ -578,69 +578,121 @@ function deriveCipher(containerText, probeEl) {
 /**
  * Manual ToC harvest for the reader's ⋮ menu (Wayne, 2026-10-20): collect
  * chapter-looking links (numeric dialects + worded ordinals) and <select>
- * chapter dropdowns from WHATEVER page the WebView currently shows.
- * [seriesTitle] scopes a MULTI-SERIES blog's index to one series' entries
- * (live-caught: stabbingwithasyringe lists 3 series on one page — an
- * unscoped harvest made "Prologue 1" open another series' chapter); when
- * no anchor carries the title (dedicated per-series ToC pages) the full
- * list is kept and flagged unscoped. Returns {s: scoped, c: [[t,u],…]}.
+ * chapter dropdowns from WHATEVER page the WebView currently shows, WITH
+ * the volume structure many translators already maintain — headings like
+ * "Book 1 / Volume 2" split the links, and an image before a volume
+ * heading becomes that volume's cover (heuristics ported from Wayne's
+ * lnpipe analyse_toc). [seriesTitle] scopes a MULTI-SERIES blog's index to
+ * one series' entries; returns {s: scoped, c: [[label,url,vol],…],
+ * v: {vol: [title, coverUrl]}} with vol 0 = unassigned.
  */
 fun readerTocHarvestJs(seriesTitle: String = ""): String = """
 (function() {
   try {
-    var out = [], seen = {};
-    function norm(t) { return (t || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
-    function add(t, u) {
-      t = (t || '').replace(/\s+/g, ' ').trim();
-      if (!t || t.length > 90 || !u || seen[u]) return;
-      seen[u] = 1;
-      out.push({ t: t, u: u });
+    var out = [], seen = {}, vols = {};
+    var pendingImg = '';
+    var curVol = 0;
+    var volRe = /\b(?:volume|vol\.?|book)\s*[-_ ]?\s*(\d{1,3})\b/i;
+    var urlVolRe = /(?:volume|vol)[-_]?(\d{1,3})(?:\b|[-_/])/i;
+    function volOfUrl(u) {
+      try { var m = (new URL(u).pathname + '/').match(urlVolRe); return m ? +m[1] : 0; }
+      catch (e) { return 0; }
     }
-    var pat = /v\d+\s*c\d+|ch(apter)?[\s.\-]*\d+|第\d+話|(prologue|interlude|epilogue|extra|omake)/i;
-    var links = document.querySelectorAll('a[href]');
-    for (var i = 0; i < links.length && out.length < 2000; i++) {
-      var a = links[i];
-      var at = (a.innerText || '').trim();
-      if (!at || !pat.test(at)) continue;
-      if (a.origin !== location.origin) continue;
-      add(at, a.href);
+    var pat = /v\d+\s*c\d+|ch(apter)?[\s.\-]*\d+|第\d+話|(prologue|interlude|epilogue|extra|omake|afterword|side[-_ ]?story|illustrations?)/i;
+    function add(text, href, vol) {
+      text = (text || '').replace(/\s+/g, ' ').trim();
+      if (!text || text.length > 90 || !href || seen[href]) return;
+      seen[href] = 1;
+      out.push([text, href, vol || volOfUrl(href)]);
+      pendingImg = '';
+    }
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, null, false);
+    while (walker.nextNode()) {
+      var el = walker.currentNode;
+      var tag = el.tagName;
+      if (tag === 'IMG') {
+        var src = el.getAttribute('src') || el.getAttribute('data-src') || '';
+        if (src && !pendingImg) pendingImg = new URL(src, location.href).href;
+        continue;
+      }
+      if (/^H[1-5]$/.test(tag) || tag === 'STRONG' || tag === 'B') {
+        if (el.querySelector('a')) continue;
+        var ht = (el.innerText || '').trim();
+        var vm = ht.length > 0 && ht.length <= 80 ? ht.match(volRe) : null;
+        if (vm && (/^H/.test(tag) || ht.length <= 40)) {
+          curVol = +vm[1];
+          if (!vols[curVol]) vols[curVol] = [ht, pendingImg];
+          else if (pendingImg && !vols[curVol][1]) vols[curVol][1] = pendingImg;
+          pendingImg = '';
+        }
+        continue;
+      }
+      if (tag === 'A' && el.getAttribute('href')) {
+        var href = new URL(el.getAttribute('href'), location.href).href;
+        if (el.origin !== location.origin && new URL(href).host !== location.host) continue;
+        var at = (el.innerText || '').trim();
+        if (!at) continue;
+        if (!(pat.test(at) || pat.test(href) || /\d/.test(at))) continue;
+        add(at, href, curVol);
+      }
     }
     var opts = document.querySelectorAll('select option[value]');
     for (var s = 0; s < opts.length && out.length < 2000; s++) {
       var o = opts[s], v = o.getAttribute('value') || '';
       if (!/^https?:/i.test(v) && !v.startsWith('/')) continue;
-      add(o.textContent, new URL(v, location.href).href);
+      add(o.textContent, new URL(v, location.href).href, curVol);
     }
-    var title = norm('${seriesTitle.replace("\\", "\\\\").replace("'", "\\'")}');
+    var title = '${seriesTitle.replace("\\", "\\\\").replace("'", "\\'")}'.toLowerCase().replace(/[^a-z0-9\u3040-\u30ff\u4e00-\u9fff]/g, '');
     if (title.length > 3) {
-      var scoped = out.filter(function(e) { return norm(e.t).indexOf(title) >= 0; });
+      var scoped = out.filter(function(e) {
+        return e[0].toLowerCase().replace(/[^a-z0-9\u3040-\u30ff\u4e00-\u9fff]/g, '').indexOf(title) >= 0;
+      });
       if (scoped.length > 0) {
-        return JSON.stringify({ s: true, c: scoped.map(function(e) { return [e.t, e.u]; }) });
+        return JSON.stringify({ s: true, c: scoped, v: vols });
       }
     }
-    return JSON.stringify({ s: false, c: out.map(function(e) { return [e.t, e.u]; }) });
+    return JSON.stringify({ s: false, c: out, v: vols });
   } catch (e) { return '{}'; }
 })()
 """
 
-/** Decode readerTocHarvestJs's JSON: chapters + whether the series-title
- *  scoping applied (unscoped lists may mix a multi-series blog's entries). */
-fun parseReaderToc(raw: String): Pair<List<Release>, Boolean> {
+/** One harvested ToC entry: label + permalink + volume (0 = unassigned). */
+data class TocEntry(val label: String, val url: String, val vol: Int)
+
+/** readerTocHarvestJs decode: entries (in page order), volume titles+covers,
+ *  and whether the series-title scoping applied. */
+data class ReaderTocHarvest(
+    val entries: List<TocEntry>,
+    val volTitles: Map<Int, String>,
+    val volCovers: Map<Int, String>,
+    val scoped: Boolean
+) {
+    val releases: List<Release> get() = entries.map { Release(chapter = it.label, group = "", date = "", url = it.url) }
+}
+
+fun parseReaderToc(raw: String): ReaderTocHarvest {
     val body = unwrapJsResult(raw).trim()
-    if (body.isBlank() || !body.startsWith("{")) return emptyList<Release>() to false
+    if (body.isBlank() || !body.startsWith("{")) return ReaderTocHarvest(emptyList(), emptyMap(), emptyMap(), false)
     return runCatching {
         val o = org.json.JSONObject(body)
         val arr = o.optJSONArray("c") ?: org.json.JSONArray()
-        val chapters = (0 until arr.length()).mapNotNull { i ->
-            val pair = arr.optJSONArray(i) ?: return@mapNotNull null
-            val t = pair.optString(0).trim()
-            val u = pair.optString(1).trim()
-            if (t.isNotEmpty() && u.startsWith("http")) {
-                Release(chapter = t, group = "", date = "", url = u)
-            } else null
+        val entries = (0 until arr.length()).mapNotNull { i ->
+            val row = arr.optJSONArray(i) ?: return@mapNotNull null
+            val t = row.optString(0).trim()
+            val u = row.optString(1).trim()
+            if (t.isNotEmpty() && u.startsWith("http")) TocEntry(t, u, row.optInt(2, 0)) else null
         }
-        chapters to o.optBoolean("s", false)
-    }.getOrDefault(emptyList<Release>() to false)
+        val vols = o.optJSONObject("v")
+        val titles = mutableMapOf<Int, String>()
+        val covers = mutableMapOf<Int, String>()
+        if (vols != null) vols.keys().forEach { k ->
+            val pair = vols.optJSONArray(k) ?: return@forEach
+            val n = k.toIntOrNull() ?: return@forEach
+            pair.optString(0).takeIf { it.isNotBlank() }?.let { titles[n] = it }
+            pair.optString(1).takeIf { it.startsWith("http") }?.let { covers[n] = it }
+        }
+        ReaderTocHarvest(entries, titles, covers, o.optBoolean("s", false))
+    }.getOrDefault(ReaderTocHarvest(emptyList(), emptyMap(), emptyMap(), false))
 }
 
 fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = """

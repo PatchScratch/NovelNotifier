@@ -1297,7 +1297,9 @@ fun ReaderScreen(
                                 return@TextButton
                             }
                             wv.evaluateJavascript(readerTocHarvestJs(target.seriesTitle)) { res ->
-                                val (list, scoped) = parseReaderToc(unwrapJsResult(res))
+                                val harvest = parseReaderToc(unwrapJsResult(res))
+                                val list = harvest.releases
+                                val scoped = harvest.scoped
                                 if (list.isEmpty()) {
                                     android.widget.Toast.makeText(
                                         context,
@@ -1306,7 +1308,7 @@ fun ReaderScreen(
                                     ).show()
                                 } else {
                                     scope.launch {
-                                        ReaderTocStore.setToc(context, target.seriesUrl, wv.url.orEmpty(), list)
+                                        ReaderTocStore.setToc(context, target.seriesUrl, wv.url.orEmpty(), harvest)
                                         adoptChapterList(list, "toc")
                                     }
                                     android.widget.Toast.makeText(
@@ -1388,14 +1390,16 @@ fun ReaderScreen(
                                     onComplete = { result ->
                                         scope.launch {
                                             if (result is SiteClient.ScrapeRequest.Result.Success) {
-                                                val (list, scoped) = parseReaderToc(result.html)
+                                                val harvest = parseReaderToc(result.html)
+                                                val list = harvest.releases
+                                                val scoped = harvest.scoped
                                                 if (list.isEmpty()) {
                                                     android.widget.Toast.makeText(
                                                         context, "ToC: 0",
                                                         android.widget.Toast.LENGTH_SHORT
                                                     ).show()
                                                 } else {
-                                                    ReaderTocStore.setToc(context, target.seriesUrl, storedUrl, list)
+                                                    ReaderTocStore.setToc(context, target.seriesUrl, storedUrl, harvest)
                                                     adoptChapterList(list, "toc")
                                                     android.widget.Toast.makeText(
                                                         context,

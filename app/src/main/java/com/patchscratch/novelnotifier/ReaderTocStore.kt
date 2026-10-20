@@ -8,8 +8,11 @@ import java.io.File
 /**
  * Per-series manual chapter-list state (Wayne, 2026-10-20): the reader's
  * "Chapter list ▸" submenu can pin a site ToC harvested from the WebView
- * and toggle between it and the NU releases. Stored in
- * filesDir/reader_toc.json as {seriesUrl: {url, src, ch: [[label, url],…]}}
+ * and toggle between it and the NU releases. v2 carries the VOLUME
+ * structure (heading-split ToCs, per-volume covers — heuristics from
+ * Wayne's lnpipe analyse_toc) so EpubStore can split books per volume and
+ * mark incomplete ones. Stored in filesDir/reader_toc.json as
+ * {seriesUrl: {url, src, ch: [[label, url, vol]], vols: {"N": [title, cover]}}}
  * so the choice survives reader sessions.
  */
 object ReaderTocStore {
@@ -26,7 +29,12 @@ object ReaderTocStore {
         runCatching { file(context).writeText(root.toString()) }
     }
 
-    fun setToc(context: Context, seriesUrl: String, tocUrl: String, chapters: List<Release>) {
+    fun setToc(
+        context: Context,
+        seriesUrl: String,
+        tocUrl: String,
+        harvest: ReaderTocHarvest
+    ) {
         val root = read(context)
         root.put(
             seriesUrl,
@@ -36,7 +44,21 @@ object ReaderTocStore {
                 .put(
                     "ch",
                     JSONArray().apply {
-                        chapters.forEach { r -> put(JSONArray().put(r.chapter).put(r.url)) }
+                        harvest.entries.forEach { e ->
+                            put(JSONArray().put(e.label).put(e.url).put(e.vol))
+                        }
+                    }
+                )
+                .put(
+                    "vols",
+                    JSONObject().apply {
+                        harvest.volTitles.keys.forEach { n ->
+                            put(
+                                n.toString(),
+                                JSONArray().put(harvest.volTitles[n].orEmpty())
+                                    .put(harvest.volCovers[n].orEmpty())
+                            )
+                        }
                     }
                 )
         )
@@ -65,12 +87,59 @@ object ReaderTocStore {
     fun tocUrlOf(seriesUrl: String, context: Context): String =
         read(context).optJSONObject(seriesUrl)?.optString("url").orEmpty()
 
-    fun chaptersOf(seriesUrl: String, context: Context): List<Release>? = runCatching {
-        val arr = read(context).optJSONObject(seriesUrl)?.optJSONArray("ch") ?: return null
-        (0 until arr.length()).mapNotNull { i ->
-            val pair = arr.optJSONArray(i) ?: return@mapNotNull null
-            val t = pair.optString(0); val u = pair.optString(1)
-            if (t.isNotBlank() && u.startsWith("http")) Release(chapter = t, group = "", date = "", url = u) else null
-        }.takeIf { it.isNotEmpty() }
-    }.getOrNull()
+    private fun entries(context: Context, seriesUrl: String): List<TocEntry> {
+        val arr = read(context).optJSONObject(seriesUrl)?.optJSONArray("ch") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val row = arr.optJSONArray(i) ?: return@mapNotNull null
+            val t = row.optString(0)
+            val u = row.optString(1)
+            if (t.isNotBlank() && u.startsWith("http")) TocEntry(t, u, row.optInt(2, 0)) else null
+        }
+    }
+
+    fun chaptersOf(seriesUrl: String, context: Context): List<Release>? =
+        entries(context, seriesUrl).map { Release(chapter = it.label, group = "", date = "", url = it.url) }
+            .takeIf { it.isNotEmpty() }
+
+    /**
+     * Volume of a chapter being SAVED (Wayne, 2026-10-20: epubs split by the
+     * site's own volume structure). Exact URL first (ToC-driven opens); then
+     * label key-matching for NU-routed urls — "c29" matches a ToC "v2c29"
+     * entry, a full label matches by containment. 0 = no volume known.
+     */
+    fun volumeFor(context: Context, seriesUrl: String, chapterUrl: String, label: String): Int {
+        val es = entries(context, seriesUrl)
+        if (es.isEmpty()) return 0
+        es.firstOrNull { it.url == chapterUrl && it.vol > 0 }?.let { return it.vol }
+        val key = chapterKey(label)
+        val norm = label.trim().lowercase()
+        es.firstOrNull { it.vol > 0 && it.label.trim().lowercase().contains(norm) && norm.length > 2 }?.let { return it.vol }
+        if (key != null) {
+            val (wv, wc) = key
+            es.firstOrNull { entry ->
+                if (entry.vol <= 0) return@firstOrNull false
+                val ek = chapterKey(entry.label) ?: return@firstOrNull false
+                (wv == 0 || wv == ek.first) && wc == ek.second
+            }?.let { return it.vol }
+        }
+        return 0
+    }
+
+    /** How many chapters the ToC assigns to a volume (incomplete marker). */
+    fun volCount(context: Context, seriesUrl: String, vol: Int): Int =
+        entries(context, seriesUrl).count { it.vol == vol }
+
+    /** Cover URL for a volume, when the ToC page carried one. */
+    fun volCover(context: Context, seriesUrl: String, vol: Int): String? {
+        val pair = read(context).optJSONObject(seriesUrl)
+            ?.optJSONObject("vols")?.optJSONArray(vol.toString()) ?: return null
+        return pair.optString(1).takeIf { it.startsWith("http") }
+    }
+
+    /** Volume heading text (for book titles), when known. */
+    fun volTitle(context: Context, seriesUrl: String, vol: Int): String? {
+        val pair = read(context).optJSONObject(seriesUrl)
+            ?.optJSONObject("vols")?.optJSONArray(vol.toString()) ?: return null
+        return pair.optString(0).takeIf { it.isNotBlank() }
+    }
 }

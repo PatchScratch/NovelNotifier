@@ -202,7 +202,11 @@ object EpubStore {
         // a fake in tests). Null/sparse → those images are skipped, never a
         // failed write. Books are rewritten whole on every append, so bytes
         // resolve per write and stay out of ChapterDoc.
-        mediaLookup: ((String) -> ByteArray?)? = null
+        mediaLookup: ((String) -> ByteArray?)? = null,
+        // Incomplete-volume marker (Wayne, 2026-10-20): (stored, total) per
+        // the site ToC — a closing page states the volume isn't complete
+        // yet, so a reader knows more is coming and later appends belong.
+        incomplete: Pair<Int, Int>? = null
     ): Int {
         val metaTitle = meta?.title?.ifBlank { title } ?: title
         val uuid = UUID.nameUUIDFromBytes(metaTitle.toByteArray()).toString()
@@ -261,6 +265,22 @@ object EpubStore {
             val tocLabel = if (doc.title.isNotBlank()) "${doc.label} — ${doc.title}" else doc.label
             navItems.append("      <li><a href=\"$file\">${xmlEscape(tocLabel)}</a></li>\n")
             ncxNavPoints.append(ncxPoint(index + 1, id, tocLabel, file))
+        }
+
+        // Incomplete-volume closing page (Wayne, 2026-10-20): the site ToC
+        // knows more chapters for this volume than are stored — say so.
+        if (incomplete != null && incomplete.second > incomplete.first) {
+            val (stored, total) = incomplete
+            entries["OEBPS/incomplete.xhtml"] = (
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                    "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Volume incomplete</title>" +
+                    "<link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/></head><body>" +
+                    "<p class=\"note\">— Volume incomplete: $stored of $total chapters stored " +
+                    "(the translator's ToC lists more). New downloads append here automatically. —</p>" +
+                    "</body></html>"
+                ).toByteArray()
+            manifest.append("    <item id=\"incomplete\" href=\"incomplete.xhtml\" media-type=\"application/xhtml+xml\"/>\n")
+            spine.append("    <itemref idref=\"incomplete\"/>\n")
         }
 
         entries["OEBPS/nav.xhtml"] = navXhtml(metaTitle, navItems.toString()).toByteArray()
@@ -697,7 +717,18 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         meta: BookMeta? = null
     ): Int {
         return try {
-            val bucket = chapterBucket(label)
+            // Volume routing (Wayne, 2026-10-20): a stored site ToC's volume
+            // structure overrides label-derived buckets — the site's own
+            // Book/Volume split (with its per-volume cover) becomes the
+            // book split; NU label volumes that agree keep landing in the
+            // same "vN" file either way.
+            val tocsVol = ReaderTocStore.volumeFor(context, seriesUrl, chapterUrl, label)
+            val bucket = if (tocsVol > 0) "v$tocsVol" else chapterBucket(label)
+            val volCoverUrl = if (tocsVol > 0) ReaderTocStore.volCover(context, seriesUrl, tocsVol) else null
+            val volTotal = if (tocsVol > 0) ReaderTocStore.volCount(context, seriesUrl, tocsVol) else 0
+            val volCoverBytes = volCoverUrl?.let {
+                runCatching { EpubMediaStore.bytes(context, it) }.getOrNull()
+            }
             val book = bookFile(context, seriesUrl, bucket)
             val legacy = legacyBookFile(context, seriesUrl)
             // Merge this bucket's chapters with the legacy book's (if this is
@@ -713,7 +744,8 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
             val doc = ChapterDoc(chapterUrl, label, extract.title, extract.paragraphs, priorTranslation, extract.images)
             val docs = kept + doc
             val ordered = orderDocs(docs)
-            val cover = CoverStore.localFile(context, seriesUrl)?.readBytes()
+            val cover = volCoverBytes
+                ?: CoverStore.localFile(context, seriesUrl)?.readBytes()
                 ?: existingCover(book) ?: if (legacy.exists()) existingCover(legacy) else null
             // Title-page metadata: use the freshest provided; a later append
             // without meta keeps the stored one instead of dropping the page.
@@ -747,9 +779,11 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
             }
             val buckets = (bucketsOf(context, seriesUrl) + bucket).distinct()
             val displayTitle = bookDisplayTitle(seriesTitle, bucket, buckets)
+            val incomplete = volTotal.takeIf { it > ordered.size }?.let { ordered.size to it }
             val n = writeBook(book, displayTitle, cover, "image/jpeg", ordered, bookMeta,
-                mediaLookup = { u -> EpubMediaStore.bytes(context, u) })
-            syncLayoutVariants(context, seriesUrl, bucket, displayTitle, cover, ordered, bookMeta)
+                mediaLookup = { u -> EpubMediaStore.bytes(context, u) }, incomplete = incomplete)
+            syncLayoutVariants(context, seriesUrl, bucket, displayTitle, cover, ordered, bookMeta,
+                incomplete = incomplete)
             n
         } catch (e: Exception) {
             DebugLog.log("EPUB", "appendChapter failed", e)
@@ -866,7 +900,8 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         displayTitle: String,
         cover: ByteArray?,
         docs: List<ChapterDoc>,
-        meta: BookMeta?
+        meta: BookMeta?,
+        incomplete: Pair<Int, Int>? = null
     ) {
         try {
             val layout = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
@@ -878,7 +913,8 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
                     writeBook(
                         file, displayTitle + " (" + variant.uppercase() + ")",
                         cover, "image/jpeg", docs, meta, variant,
-                        mediaLookup = { u -> EpubMediaStore.bytes(context, u) }
+                        mediaLookup = { u -> EpubMediaStore.bytes(context, u) },
+                    incomplete = incomplete
                     )
                 } else if (file.exists()) {
                     file.delete()
