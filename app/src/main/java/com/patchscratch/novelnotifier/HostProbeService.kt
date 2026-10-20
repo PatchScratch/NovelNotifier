@@ -112,8 +112,11 @@ class HostProbeService : Service() {
 
         /** Funding-platform landings are never chapter samples — group
          *  links pointing here record a terminal SKIP, not a re-probed
-         *  failure (patreon chapter posts are membership-walled anyway). */
-        val NON_CHAPTER_HOSTS = setOf("patreon.com", "ko-fi.com")
+         *  failure (patreon chapter posts are membership-walled anyway).
+         *  wattpad: Wayne 2026-10-20 — out of scope permanently ("English
+         *  amateur fanfic / original stories, the English Syosetu", not
+         *  translations); revisit only if ever highly requested. */
+        val NON_CHAPTER_HOSTS = setOf("patreon.com", "ko-fi.com", "wattpad.com")
 
         /**
          * Major registrar / domain-aftermarket landers (Wayne, 2026-10-20:
