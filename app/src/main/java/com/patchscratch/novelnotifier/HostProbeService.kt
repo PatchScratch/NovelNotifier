@@ -287,10 +287,16 @@ class HostProbeService : Service() {
                 if (f.isFile) JSONArray(f.readText()) else null
             }.getOrNull()
         }
+        // Fix-on-the-fly (Wayne, 2026-10-20): ONLY OK/OK-SLOW/SKIP entries
+        // count as done — FAIL/TIMEOUT/CLOUDFLARE hosts re-probe on every
+        // run, so a batch's failures retry automatically once an extractor
+        // fix ships in a minor-version install.
         val doneUrls = mutableSetOf<String>()
         if (prior != null) for (i in 0 until prior.length()) {
-            val u = prior.optJSONObject(i)?.optString("url").orEmpty()
-            if (u.isNotBlank()) doneUrls.add(u)
+            val o = prior.optJSONObject(i) ?: continue
+            val v = o.optString("verdict")
+            val u = o.optString("url")
+            if (u.isNotBlank() && (v.startsWith("OK") || v == "SKIP")) doneUrls.add(u)
         }
         val report = prior ?: JSONArray()
         val seenHosts = mutableSetOf<String>()
