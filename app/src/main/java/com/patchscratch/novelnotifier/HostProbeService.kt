@@ -59,6 +59,28 @@ class HostProbeService : Service() {
             "citrusaurora.com",    // live, aggressive CF (Wayne, 2026-10-20)
             "cyborg-tl.com"        // live, aggressive CF (Wayne, 2026-10-20)
         )
+
+        /**
+         * Wayne-confirmed defunct translators (2026-10-20). Expired domains
+         * that now redirect to registrar/parking pages — or serve a parking
+         * lander behind CF — never come back; terminal DEFUNCT, no re-probe.
+         */
+        val DEFUNCT_HOSTS = setOf(
+            "forbiddencylinder.com" // expired → registrar redirect (Wayne, 2026-10-20)
+        )
+
+        /**
+         * Major registrar / domain-aftermarket landers (Wayne, 2026-10-20:
+         * "add domain redirect from major domain providers to the defunct
+         * list"). A redirect chain ending HERE means the translator's
+         * domain expired — classify DEFUNCT immediately, before any
+         * extraction waiting.
+         */
+        val PARKING_DOMAINS = setOf(
+            "namecheap.com", "godaddy.com", "domaincontrol.com", "porkbun.com",
+            "sedoparking.com", "sedo.com", "afternic.com", "hugedomains.com",
+            "dan.com", "bodis.com", "parkingcrew.net", "above.com"
+        )
         var probeAlive = false
             private set
 
@@ -302,7 +324,7 @@ class HostProbeService : Service() {
                 if (f.isFile) JSONArray(f.readText()) else null
             }.getOrNull()
         }
-        // Fix-on-the-fly (Wayne, 2026-10-20): ONLY OK/OK-SLOW/SKIP entries
+        // Fix-on-the-fly (Wayne, 2026-10-20): OK/OK-SLOW/SKIP/DEFUNCT entries
         // count as done — FAIL/TIMEOUT/CLOUDFLARE hosts re-probe on every
         // run, so a batch's failures retry automatically once an extractor
         // fix ships in a minor-version install.
@@ -311,7 +333,7 @@ class HostProbeService : Service() {
             val o = prior.optJSONObject(i) ?: continue
             val v = o.optString("verdict")
             val u = o.optString("url")
-            if (u.isNotBlank() && (v.startsWith("OK") || v == "SKIP")) doneUrls.add(u)
+            if (u.isNotBlank() && (v.startsWith("OK") || v == "SKIP" || v == "DEFUNCT")) doneUrls.add(u)
         }
         val report = prior ?: JSONArray()
         val seenHosts = mutableSetOf<String>()
@@ -392,6 +414,15 @@ class HostProbeService : Service() {
         entry.put("host", host)
         if (host.endsWith("novelupdates.com")) {
             return entry.put("verdict", "SKIP").put("note", "landed on NU itself")
+        }
+        // Defunct classification BEFORE extraction — an expired domain
+        // redirecting to a registrar lander never yields text, so don't sit
+        // through the extraction ladder (saves ~25s per dead domain).
+        if (DEFUNCT_HOSTS.any { host == it || host.endsWith(".$it") }) {
+            return entry.put("verdict", "DEFUNCT").put("note", "translator defunct (Wayne-confirmed)")
+        }
+        if (PARKING_DOMAINS.any { host == it || host.endsWith(".$it") }) {
+            return entry.put("verdict", "DEFUNCT").put("note", "expired domain — parked at $host")
         }
         if (host.isNotBlank()) seenHosts.add(host)
         // Wayne-confirmed aggressive-CF hosts (2026-10-20): alive sites that
