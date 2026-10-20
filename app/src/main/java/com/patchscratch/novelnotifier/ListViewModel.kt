@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.delay
 import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -144,7 +145,27 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
         session = s
         lastFinishedUrl = ""
         s.onPageLoaded = { url -> lastFinishedUrl = url }
+        // Hard timeout (live-caught 2026-10-20): a Cloudflare interstitial
+        // that never completes fires no page-finish, the callback never
+        // runs, and syncing stays true — every later pull silently no-ops
+        // ("pull to refresh did nothing"). Bail out visibly instead.
+        var delivered = false
+        viewModelScope.launch {
+            delay(45_000)
+            if (!delivered && syncing) {
+                DebugLog.log("SYNC", "list scrape timed out (challenge loop?)")
+                markSiteCheckNeeded(prefs)
+                listStatus = "Site check needed — try again shortly"
+                runCatching {
+                    s.onPageLoaded = null
+                    s.close()
+                }
+                session = null
+                syncing = false
+            }
+        }
         s.loadUrl(target, listPageJs()) { raw ->
+            delivered = true
             s.onPageLoaded = null
             s.close()
             session = null
