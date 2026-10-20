@@ -84,6 +84,10 @@ object EpubStore {
         dir(context).resolve(seriesUrl.hashCode().toUInt().toString() + "-" + bucket + "-" + variant + ".epub")
 
     /** Legacy pre-split book, if any (read for absorption / migration reads). */
+    fun legacyBookFiles(context: Context, seriesUrl: String): List<File> =
+        prefixesOf(seriesUrl).map { dir(context).resolve(it.removeSuffix("-") + ".epub") }
+            .filter { it.exists() }
+
     fun legacyBookFile(context: Context, seriesUrl: String): File =
         dir(context).resolve(seriesUrl.hashCode().toUInt().toString() + ".epub")
 
@@ -93,9 +97,9 @@ object EpubStore {
 
     /** All bucket files that exist for the series (legacy + variants excluded). */
     fun bookFiles(context: Context, seriesUrl: String): List<File> {
-        val prefix = seriesUrl.hashCode().toUInt().toString() + "-"
+        val prefixes = prefixesOf(seriesUrl)
         return dir(context).listFiles().orEmpty()
-            .filter { it.name.startsWith(prefix) && BOOK_NAME.matches(it.name) }
+            .filter { f -> prefixes.any { f.name.startsWith(it) } && BOOK_NAME.matches(f.name) }
             .sorted()
     }
 
@@ -103,6 +107,19 @@ object EpubStore {
         bookFiles(context, seriesUrl).map { it.name.removePrefix(prefixOf(seriesUrl)).removeSuffix(".epub") }
 
     private fun prefixOf(seriesUrl: String) = seriesUrl.hashCode().toUInt().toString() + "-"
+
+    /**
+     * All hash prefixes a series' books may live under (Wayne, 2026-10-20:
+     * NU saved chapters were invisible — older saves hashed a different
+     * seriesUrl FORM than the detail screen uses today, e.g. trailing
+     * slash). Lookups match every variant; saves keep using the exact
+     * string they were given.
+     */
+    private fun prefixesOf(seriesUrl: String): List<String> =
+        listOf(seriesUrl, seriesUrl.trimEnd('/'), seriesUrl.trimEnd('/') + "/")
+            .distinct()
+            .map { it.hashCode().toUInt().toString() + "-" }
+            .distinct()
 
     /**
      * Every stored chapter across the series' bucket books, chapter order —
@@ -794,7 +811,7 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
     /** Stored chapters across ALL of the series' books + legacy (bulk skip set). */
     fun readAllStoredDocs(context: Context, seriesUrl: String): List<ChapterDoc> {
         val files = bookFiles(context, seriesUrl) +
-            listOfNotNull(legacyBookFile(context, seriesUrl).takeIf { it.exists() })
+            legacyBookFiles(context, seriesUrl)
         return files.flatMap { f -> readAllChapterDocs(f) }
     }
 
@@ -807,7 +824,7 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
         var removed = 0
         try {
             val files = bookFiles(context, seriesUrl) +
-                listOfNotNull(legacyBookFile(context, seriesUrl).takeIf { it.exists() })
+                legacyBookFiles(context, seriesUrl)
             for (f in files) {
                 val docs = readAllChapterDocs(f)
                 val kept = docs.filter { it.url != chapterUrl }
@@ -875,9 +892,9 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
      * books; the media cache itself is URL-keyed and shared, so it stays.
      */
     fun deleteSeries(context: Context, seriesUrl: String) {
-        val prefix = prefixOf(seriesUrl)
+        val prefixes = prefixesOf(seriesUrl)
         dir(context).listFiles().orEmpty()
-            .filter { it.name.startsWith(prefix) && it.name.endsWith(".epub") }
+            .filter { f -> prefixes.any { f.name.startsWith(it) } && f.name.endsWith(".epub") }
             .forEach { it.delete() }
         legacyBookFile(context, seriesUrl).takeIf { it.exists() }?.delete()
         DebugLog.log("EPUB", "deleted all stored books for $seriesUrl")
@@ -936,7 +953,7 @@ ${if (doc.translation != null) """<script type="application/json" id="nn-transla
     /** The stored copy of a chapter, for offline reading (any bucket). */
     fun readChapter(context: Context, seriesUrl: String, chapterUrl: String): ChapterExtract? {
         val files = bookFiles(context, seriesUrl) +
-            listOfNotNull(legacyBookFile(context, seriesUrl).takeIf { it.exists() })
+            legacyBookFiles(context, seriesUrl)
         for (f in files) {
             readChapterDoc(f, chapterUrl)?.let {
                 return ChapterExtract(title = it.title, paragraphs = it.paragraphs, images = it.images)

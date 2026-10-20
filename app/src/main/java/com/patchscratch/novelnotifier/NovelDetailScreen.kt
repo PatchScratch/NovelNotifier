@@ -187,12 +187,28 @@ fun NovelDetailScreen(
     // stored; refreshed as the list size or store changes.
     var storedUrls by remember(novel.seriesUrl) { mutableStateOf<Set<String>>(emptySet()) }
     var translatedUrls by remember(novel.seriesUrl) { mutableStateOf<Set<String>>(emptySet()) }
+    var storedLabels by remember(novel.seriesUrl) { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(novel.seriesUrl, page.releases.size, tocList?.size) {
         val docs = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             EpubStore.readAllStoredDocs(context, novel.seriesUrl)
         }
         storedUrls = docs.map { it.url }.toSet()
         translatedUrls = docs.filter { !it.translation.isNullOrEmpty() }.map { it.url }.toSet()
+        storedLabels = docs.map { it.label }
+    }
+    // Permalink-vs-extnu (Wayne, 2026-10-20: "NU does not detect
+    // downloaded"): chapters saved through a site ToC store the site's
+    // permalink while NU rows carry the /extnu/ link — a row also matches
+    // by label key (c29 ≡ v2c29) or containment, the same matching the
+    // volume router uses.
+    fun storedHit(url: String, label: String): Boolean {
+        if (url in storedUrls) return true
+        val norm = label.trim().lowercase()
+        if (norm.length > 2 && storedLabels.any { it.lowercase().contains(norm) }) return true
+        val k = chapterKey(label) ?: return false
+        return storedLabels.any { sl ->
+            chapterKey(sl)?.let { (wv, wc) -> (k.first == 0 || k.first == wv) && k.second == wc } == true
+        }
     }
     val readingOrder = remember(page.releases, groupOff, tocActive, tocList) {
         if (tocActive && tocList != null) tocList!!
@@ -294,7 +310,7 @@ fun NovelDetailScreen(
                 title = release.group,
                 date = release.date,
                 isRead = lastReadNum > 0 && thisNum > 0 && thisNum == lastReadNum,
-                downloaded = release.url in storedUrls,
+                downloaded = storedHit(release.url, release.chapter),
                 translated = release.url in translatedUrls,
                 // reading IS the download for NU chapters (opening saves)
                 onDownload = { openInReader(release) },
