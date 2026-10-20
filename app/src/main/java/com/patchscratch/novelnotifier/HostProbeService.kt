@@ -337,12 +337,23 @@ class HostProbeService : Service() {
         // every run, so a batch's failures retry automatically once an
         // extractor fix ships in a minor-version install.
         val doneUrls = mutableSetOf<String>()
+        // Prior entries whose final host wants the desktop-Chrome spoof
+        // (browser-check sites): their extnu chain must be pre-resolved so
+        // the WebView can load the chapter DIRECT with the right UA — the
+        // 302 from NU would otherwise commit with the mobile UA (Wayne,
+        // 2026-10-20: literaturecity's browser check).
+        val spoofUrls = mutableSetOf<String>()
         if (prior != null) for (i in 0 until prior.length()) {
             val o = prior.optJSONObject(i) ?: continue
             val v = o.optString("verdict")
             val u = o.optString("url")
             if (u.isNotBlank() && (v.startsWith("OK") || v == "SKIP" || v == "DEFUNCT" || v == "PROHIBITED")) {
                 doneUrls.add(u)
+            }
+            if (u.isNotBlank() && SitePolicy.isProhibited(o.optString("host")).not() &&
+                SitePolicy.DESKTOP_CHROME_HOSTS.any { o.optString("host").endsWith(it) }
+            ) {
+                spoofUrls.add(u)
             }
         }
         val report = prior ?: JSONArray()
@@ -355,7 +366,7 @@ class HostProbeService : Service() {
                     skipped++
                     continue   // no fetch, no pacing delay
                 }
-                val entry = probeOne(sess, t, seenHosts)
+                val entry = probeOne(sess, t, seenHosts, spoofKnown = t.url in spoofUrls)
                 withContext(Dispatchers.IO) {
                     report.put(entry)
                     File(filesDir, REPORT).writeText(report.toString())
@@ -406,11 +417,34 @@ class HostProbeService : Service() {
 
     /** Load the chapter through the shared WebView and run the real extractor.
      *  [seenHosts] dedupes after the extnu redirect reveals the real host. */
-    private suspend fun probeOne(sess: SiteClient.Session, t: Target, seenHosts: MutableSet<String>): JSONObject {
+    private suspend fun probeOne(
+        sess: SiteClient.Session,
+        t: Target,
+        seenHosts: MutableSet<String>,
+        spoofKnown: Boolean = false
+    ): JSONObject {
         val entry = JSONObject().put("series", t.series).put("url", t.url)
+        // Browser-check hosts on a retry: pre-resolve the extnu redirect
+        // chain with the desktop UA (a HEAD, no page traffic) and load the
+        // chapter DIRECT so the spoofed UA rides the main request.
+        var loadTarget = t.url
+        if (spoofKnown && !SitePolicy.wantsDesktopChrome(t.url)) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val c = java.net.URL(t.url).openConnection() as java.net.HttpURLConnection
+                    c.instanceFollowRedirects = true
+                    c.connectTimeout = 10_000
+                    c.readTimeout = 10_000
+                    c.requestMethod = "HEAD"
+                    c.setRequestProperty("User-Agent", SitePolicy.CHROME_DESKTOP_UA)
+                    c.connect()
+                    c.url.toString()
+                }.getOrNull()?.takeIf { it != t.url }?.let { loadTarget = it }
+            }
+        }
         val raw = withTimeoutOrNull(75_000) {
             suspendCancellableCoroutine<String> { cont ->
-                sess.loadUrl(t.url, chapterExtractJs()) { res ->
+                sess.loadUrl(loadTarget, chapterExtractJs()) { res ->
                     if (cont.isActive) cont.resumeWith(kotlin.Result.success(res))
                 }
             }

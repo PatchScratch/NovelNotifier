@@ -21,6 +21,24 @@ object SitePolicy {
         return h.takeIf { isProhibited(it) }
     }
 
+    /**
+     * Wayne, 2026-10-20: literaturecity.com runs a non-CF BROWSER CHECK that
+     * rejects WebView/mobile user agents — present desktop Chrome there.
+     * Every other host keeps the cleaned mobile UA (JP sites rely on the
+     * mobile layout).
+     */
+    val DESKTOP_CHROME_HOSTS = setOf("literaturecity.com")
+    const val CHROME_DESKTOP_UA =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
+    fun wantsDesktopChrome(url: String): Boolean {
+        val h = runCatching { java.net.URI(url).host }.getOrNull() ?: return false
+        return DESKTOP_CHROME_HOSTS.any { h == it || h.endsWith(".$it") }
+    }
+
+    fun uaFor(url: String, current: String): String =
+        if (wantsDesktopChrome(url)) CHROME_DESKTOP_UA else chromeMobileUserAgent(current)
+
     fun isProhibited(host: String): Boolean =
         host.isNotBlank() && PROHIBITED_HOSTS.any { host == it || host.endsWith(".$it") }
 }

@@ -1337,6 +1337,12 @@ fun ReaderScreen(
                                 if (url != null && url == view?.url) {
                                     DebugLog.log("READER", "loaded " + url.take(90) + " title=" + (view?.title ?: "").take(40))
                                     loadedUrl = url
+                                    // Redirect committed on a spoof host (e.g.
+                                    // extnu → literaturecity): adopt the right UA
+                                    // so the ladder's bounce-retry passes the
+                                    // site's browser check.
+                                    view?.settings?.userAgentString =
+                                        SitePolicy.uaFor(url, view.settings.userAgentString)
                                     extractTick += 1
                                 }
                                 super.onPageFinished(view, url)
@@ -1352,6 +1358,10 @@ fun ReaderScreen(
                                 super.onReceivedError(view, request, error)
                             }
                         }
+                        // Per-host UA (SitePolicy): desktop-Chrome spoof for
+                        // browser-checking hosts; cleaned mobile elsewhere.
+                        settings.userAgentString =
+                            SitePolicy.uaFor(chapter.url, settings.userAgentString)
                         if (!prohibited) loadUrl(chapter.url)
                     }
                 },

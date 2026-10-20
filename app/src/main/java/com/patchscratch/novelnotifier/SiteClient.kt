@@ -332,7 +332,25 @@ object SiteClient {
             mainHandler.post {
                 if (closed) return@post
                 val webView = client.getOrCreateWebView(site, ctx)
+                // Per-host UA (SitePolicy): desktop-Chrome spoof for browser-
+                // checking hosts (literaturecity), cleaned mobile elsewhere.
+                webView.settings.userAgentString =
+                    SitePolicy.uaFor(url, webView.settings.userAgentString)
                 webView.webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(
+                        view: WebView?,
+                        url: String?,
+                        favicon: android.graphics.Bitmap?
+                    ) {
+                        // A redirect may have committed on a spoof host —
+                        // refresh the UA so retries/subresources match it.
+                        if (view != null && url != null) {
+                            view.settings.userAgentString =
+                                SitePolicy.uaFor(url, view.settings.userAgentString)
+                        }
+                        super.onPageStarted(view, url, favicon)
+                    }
+
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (view == null || url == null) return
                         DebugLog.log("SITE", "session page finished: $url")
