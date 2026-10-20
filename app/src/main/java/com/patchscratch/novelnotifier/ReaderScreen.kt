@@ -472,10 +472,26 @@ fun ReaderScreen(
     }
 
     /** Run the extractor once; [onDone] fires in the JS callback (async). */
+    // Cover-page hops per chapter URL (Wayne 2026-10-20): COVER-DIRECT /
+    // COVER-TOC directives are followed at most twice — cover → ToC →
+    // chapter — then the ladder gives up honestly instead of looping.
+    val coverHops = remember(target) { mutableMapOf<String, Int>() }
     fun tryExtract(onDone: (() -> Unit)? = null) {
         val wv = webViewRef.value ?: return
         extracting = true
-        wv.evaluateJavascript(chapterExtractJs()) { res ->
+        wv.evaluateJavascript(chapterExtractJs(chapter.chapter)) { res ->
+            val directive = unwrapJsResult(res).takeIf { it.startsWith("COVER") }
+            val coverFollow = directive?.takeIf {
+                (it.startsWith("COVER-DIRECT:") || it.startsWith("COVER-TOC:")) &&
+                    (coverHops[chapter.url] ?: 0) < 2
+            }?.substringAfter(':')
+            if (coverFollow != null) {
+                coverHops[chapter.url] = (coverHops[chapter.url] ?: 0) + 1
+                DebugLog.log("READER", "cover hop ${coverHops[chapter.url]}: $coverFollow")
+                extracting = false
+                wv.loadUrl(coverFollow)
+                return@evaluateJavascript
+            }
             extractResult = parseChapterExtract(res)
             if (extractResult != null && alpWebHop && viewMode == READER_VIEW_WEB) {
                 alpDomExtracts[chapter.url] = extractResult!!

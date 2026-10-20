@@ -119,29 +119,48 @@ class EpubBulkService : Service() {
     }
 
     /** Load [url], wait for the main frame to finish, then run the extractor
-     *  (with one retry for JS-rendering hosts). Null = load or extract failed. */
+     *  (with one retry for JS-rendering hosts). Null = load or extract failed.
+     *  [wanted] = the chapter label; cover-page hosts (post-index NU links)
+     *  resolve through COVER-DIRECT / COVER-TOC directives (max 2 hops). */
     private var lastLoadedUrl = ""
-    private suspend fun loadAndExtract(url: String): ChapterExtract? {
+    private suspend fun loadAndExtract(url: String, wanted: String = ""): ChapterExtract? {
         lastLoadedUrl = url
         val sess = sessionOrCreate()
         extractResult = null
         extractFailed = false
         // Session.loadUrl handles page load + CF detection + JS evaluation.
         // The extraction has a retry (some JS-rendering hosts need time).
-        val raw = withTimeoutOrNull(60_000) {
+        var raw = withTimeoutOrNull(60_000) {
             suspendCancellableCoroutine<String> { cont ->
-                sess.loadUrl(url, chapterExtractJs()) { res ->
+                sess.loadUrl(url, chapterExtractJs(wanted)) { res ->
                     cont.resume(res)
                 }
             }
         } ?: return null // page never finished (locked/paused/dead host)
         if (raw == "CF") return null
+        // Cover-page resolution: follow the directive once per hop, 2 max.
+        var hops = 0
+        while (hops < 2) {
+            val v = unwrapJsResult(raw)
+            if (!v.startsWith("COVER-DIRECT:") && !v.startsWith("COVER-TOC:")) break
+            hops++
+            lastLoadedUrl = v.substringAfter(':')
+            DebugLog.log("EPUB", "cover hop $hops: $lastLoadedUrl")
+            raw = withTimeoutOrNull(60_000) {
+                suspendCancellableCoroutine<String> { cont ->
+                    sess.loadUrl(lastLoadedUrl, chapterExtractJs(wanted)) { res ->
+                        cont.resume(res)
+                    }
+                }
+            } ?: return null
+            if (raw == "CF") return null
+        }
         extractResult = parseChapterExtract(unwrapJsResult(raw))
         if (extractResult == null) {
             // Retry extraction at ~5s for JS-rendering hosts
             delay(3800)
             val retry = suspendCancellableCoroutine<String> { cont ->
-                sess.evaluateJavascript(chapterExtractJs()) { res -> cont.resume(res) }
+                sess.evaluateJavascript(chapterExtractJs(wanted)) { res -> cont.resume(res) }
             }
             extractResult = parseChapterExtract(retry)
         }
@@ -275,7 +294,7 @@ class EpubBulkService : Service() {
                     continue
                 }
                 status("direct · ${chapter.label}")
-                val extract = loadAndExtract(chapter.url)
+                val extract = loadAndExtract(chapter.url, chapter.label)
                 if (extract != null) {
                     val count = withContext(Dispatchers.IO) {
                         EpubStore.appendChapter(
@@ -308,7 +327,7 @@ class EpubBulkService : Service() {
                     SitePolicy.prohibitedHostOf(directUrl) == null
                 ) {
                     status("ToC-resolved · ${chapter.label}")
-                    val extract = loadAndExtract(directUrl)
+                    val extract = loadAndExtract(directUrl, chapter.label)
                     if (extract != null) {
                         withContext(Dispatchers.IO) {
                             EpubStore.appendChapter(
@@ -326,7 +345,7 @@ class EpubBulkService : Service() {
                     // First touch: the NU link's redirect reveals the chapter's
                     // real host; harvest its ToC so later siblings resolve.
                     status("NU first-touch · ${chapter.label}")
-                    val extract = loadAndExtract(chapter.url)
+                    val extract = loadAndExtract(chapter.url, chapter.label)
                     if (extract == null) {
                         DebugLog.log("EPUB", "first-touch failed: ${chapter.label} at ${chapter.url}")
                     }

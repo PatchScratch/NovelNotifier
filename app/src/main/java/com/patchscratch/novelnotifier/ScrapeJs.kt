@@ -564,7 +564,18 @@ function deriveCipher(containerText, probeEl) {
  * piece most likely to break when a host changes markup: keep the Kotlin
  * parser (parseChapterExtract) tolerant and the FAIL path graceful.
  */
-fun chapterExtractJs(): String = """
+/**
+ * [wanted] = the chapter label the caller expects ("v2c29", "c29", "第29話")
+ * from the NU release row / bulk job / probe harvest. On cover-page hosts
+ * (verified: stabbingwithasyringe.home.blog — the NU link lands on the
+ * BLOG INDEX whose entries are chapter links) the script returns a
+ * directive instead of an extract: COVER-DIRECT:<url> (the wanted chapter
+ * is linked here), COVER-TOC:<url> (site ToC link — match there), or COVER
+ * (cover detected, unresolvable). Callers follow at most two hops; a real
+ * chapter page with an embedded ToC falls through to normal extraction
+ * (self-link guard + body-volume guard).
+ */
+fun chapterExtractJs(wanted: String = ""): String = """
 (function() {
   try {
     function nodeVisible(el) {
@@ -614,6 +625,63 @@ fun chapterExtractJs(): String = """
       cleaned = cleaned.replace(/Please contact us at [\w.@-]+ if you see this on (another|any other) site\.?\s*\d+(\.\d+)?/gi, ' ');
       cleaned = cleaned.replace(/\s+/g, ' ').trim();
       return decodeSubstituted(cleaned);
+    }
+
+    // --- cover-page detection (Wayne, 2026-10-20) -------------------------
+    // Some hosts point the NU chapter link at the site INDEX, not the
+    // chapter (verified: stabbingwithasyringe.home.blog — post list whose
+    // entry titles carry the chapter key, e.g. "Series v2c29"). Detection:
+    // >=5 same-host chapter-pattern anchors. A real chapter page with an
+    // embedded ToC also has many chapter anchors — the self-link guard and
+    // the body-volume fallthrough keep it extracting normally.
+    function parseKey(t) {
+      var m = t.match(/v(\d+)\s*c(\d+)/i); if (m) return m[1] + ':' + m[2];
+      m = t.match(/(?:ch(?:apter)?[\s.\-]*|(^|\s)c)(\d+)/i); if (m) return ':' + m[2];
+      m = t.match(/第(\d+)話/); if (m) return ':' + m[1];
+      return null;
+    }
+    function keyMatches(want, k) {
+      if (want === k) return true;
+      // bare "c29" wanted matches the site's vol'd "v2c29" key
+      return want.charAt(0) === ':' && k.charAt(0) !== ':' && k.endsWith(want);
+    }
+    var links = document.querySelectorAll('a[href]');
+    var chapAnchors = [];
+    var seenHref = {};
+    var tocLink = '';
+    for (var li = 0; li < links.length; li++) {
+      var a = links[li];
+      if (!nodeVisible(a)) continue;
+      if (a.origin !== location.origin) continue;
+      var href = a.href;
+      if (seenHref[href]) continue;
+      seenHref[href] = 1;
+      var at = (a.innerText || '').trim();
+      var k = parseKey(at);
+      if (k) chapAnchors.push({ k: k, href: href });
+      if (!tocLink && /^(toc|table of contents|index|目次|chapters?|novel index)$/i.test(at)) tocLink = href;
+    }
+    if (chapAnchors.length >= 5) {
+      var wantedKey = parseKey('${wanted.replace("\\", "\\\\").replace("'", "\\'")}');
+      for (var wi = 0; wi < chapAnchors.length; wi++) {
+        if (wantedKey && keyMatches(wantedKey, chapAnchors[wi].k) &&
+            chapAnchors[wi].href !== location.href) {
+          return 'COVER-DIRECT:' + chapAnchors[wi].href;
+        }
+      }
+      // No wanted match here (or it's this page's own ToC self-link):
+      // without real body volume this is a pure index — resolve via ToC.
+      var idxP = document.querySelectorAll('p'), idxChars = 0;
+      for (var ip = 0; ip < idxP.length; ip++) {
+        if (!nodeVisible(idxP[ip])) continue;
+        var ipt = (idxP[ip].innerText || '').trim();
+        if (ipt.length > 1) idxChars += ipt.length;
+      }
+      if (idxChars < 1200) {
+        if (tocLink && tocLink !== location.href) return 'COVER-TOC:' + tocLink;
+        return 'COVER';
+      }
+      // else: real prose on the page (chapter with embedded ToC) — extract.
     }
 
     // --- known content containers (field-verified platform selectors) -------

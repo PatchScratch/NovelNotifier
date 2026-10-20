@@ -36,7 +36,7 @@ import java.io.File
  */
 class HostProbeService : Service() {
 
-    data class Target(val series: String, val url: String)
+    data class Target(val series: String, val url: String, val label: String = "")
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var session: SiteClient.Session? = null
@@ -143,9 +143,12 @@ class HostProbeService : Service() {
                     val rel = page.optJSONArray("releases") ?: return@forEach
                     // Most recent release is the best sample (live group).
                     for (i in rel.length() - 1 downTo 0) {
-                        val url = rel.optJSONObject(i)?.optString("url").orEmpty()
+                        val rel_i = rel.optJSONObject(i) ?: continue
+                        val url = rel_i.optString("url")
                         if (url.startsWith("http")) {
-                            out.add(Target(title, url))
+                            // label feeds the cover-page resolver (cover hosts
+                            // need the WANTED chapter key to pick the link)
+                            out.add(Target(title, url, rel_i.optString("chapter")))
                             break
                         }
                     }
@@ -276,8 +279,8 @@ class HostProbeService : Service() {
             }.getOrDefault(JSONObject())
         }
         var harvested = 0
-        fun saveCkpt(groupUrl: String, title: String, chapter: String?) {
-            ckpt.put(groupUrl, JSONArray().put(title).put(chapter ?: ""))
+        fun saveCkpt(groupUrl: String, title: String, chapter: String?, label: String = "") {
+            ckpt.put(groupUrl, JSONArray().put(title).put(chapter ?: "").put(label))
             harvested++
             if (harvested % 10 == 0) {
                 runCatching { ckptFile.writeText(ckpt.toString()) }
@@ -290,9 +293,12 @@ class HostProbeService : Service() {
         for ((i, g) in groups.entries.withIndex()) {
             val done = ckpt.optJSONArray(g.key)
             val chapter: String?
+            var label = ""
             if (done != null) {
                 // already harvested on a previous run — reuse, no fetch
                 chapter = done.optString(1).takeIf { it.startsWith("http") }
+                // ckpt v2 carries the release label (cover-host resolution)
+                if (done.length() > 2) label = done.optString(2)
             } else {
                 // CF retries are CAPPED and logged: the pre-fix loop sat
                 // silent for 2+ days on one challenge (rig 2026-10-20 —
@@ -316,11 +322,15 @@ class HostProbeService : Service() {
                     DebugLog.log("PROBE", "group ${g.value} CF-walled 5× — skipped this run")
                     continue
                 }
-                chapter = parseHarvest(raw).entries.firstOrNull()?.key
-                saveCkpt(g.key, g.value, chapter)
+                // cover-page hosts resolve via the release label (Wayne
+                // 2026-10-20) — keep it with the checkpoint.
+                val first = parseHarvest(raw).entries.firstOrNull()
+                chapter = first?.key
+                label = first?.value.orEmpty()
+                saveCkpt(g.key, g.value, chapter, label)
                 delay(6_000)
             }
-            if (chapter != null) batch.add(Target(g.value, chapter))
+            if (chapter != null) batch.add(Target(g.value, chapter, label))
             batchLinks = if (chapter != null) batchLinks + 1 else batchLinks
             walkedInBatch++
             if (i % 10 == 0) note("groups ${i + 1}/${groups.size}: $batchLinks chapter links")
@@ -469,10 +479,28 @@ class HostProbeService : Service() {
                 }.getOrNull()?.takeIf { it != t.url }?.let { loadTarget = it }
             }
         }
-        val raw = withTimeoutOrNull(75_000) {
+        var raw = withTimeoutOrNull(75_000) {
             suspendCancellableCoroutine<String> { cont ->
-                sess.loadUrl(loadTarget, chapterExtractJs()) { res ->
+                sess.loadUrl(loadTarget, chapterExtractJs(t.label)) { res ->
                     if (cont.isActive) cont.resumeWith(kotlin.Result.success(res))
+                }
+            }
+        }
+        // Cover-page hosts: follow COVER-DIRECT/COVER-TOC once each (max 2
+        // hops — cover → ToC → chapter), then proceed with whatever the
+        // final page yields.
+        var coverHops = 0
+        while (raw != null && raw != "CF" && coverHops < 2) {
+            val v = unwrapJsResult(raw)
+            if (!v.startsWith("COVER-DIRECT:") && !v.startsWith("COVER-TOC:")) break
+            coverHops++
+            loadTarget = v.substringAfter(':')
+            DebugLog.log("PROBE", "cover hop $coverHops for ${t.series}: $loadTarget")
+            raw = withTimeoutOrNull(75_000) {
+                suspendCancellableCoroutine<String> { cont ->
+                    sess.loadUrl(loadTarget, chapterExtractJs(t.label)) { res ->
+                        if (cont.isActive) cont.resumeWith(kotlin.Result.success(res))
+                    }
                 }
             }
         }
@@ -526,7 +554,7 @@ class HostProbeService : Service() {
         delay(6000)
         val retry = withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine<String> { cont ->
-                sess.evaluateJavascript(chapterExtractJs()) { res ->
+                sess.evaluateJavascript(chapterExtractJs(t.label)) { res ->
                     if (cont.isActive) cont.resumeWith(kotlin.Result.success(res))
                 }
             }
