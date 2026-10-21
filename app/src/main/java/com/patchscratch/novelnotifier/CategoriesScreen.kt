@@ -50,6 +50,14 @@ fun CategoriesScreen(
     var newCatName by remember { mutableStateOf("") }
     var renameCat by remember { mutableStateOf<LocalCategory?>(null) }
     var confirmDelete by remember { mutableStateOf<LocalCategory?>(null) }
+    // Local-library shelves (v3.0): same CategoryStore key the home drawer
+    // and book detail use. Hoisted so the rename/delete dialogs below can
+    // mutate it too — they previously fell through to the Kakuyomu VM.
+    var localShelves by remember(site) { mutableStateOf(CategoryStore.load(context, site)) }
+    fun mutateLocal(next: CategoryState) {
+        localShelves = next
+        CategoryStore.save(context, site, next)
+    }
 
     Column(
         modifier = Modifier
@@ -72,6 +80,42 @@ fun CategoriesScreen(
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
+
+        if (site.startsWith("local:")) {
+            // --- local library: shelves = categories, full CRUD ------------
+            SectionHeader(t("Shelves", "棚"))
+            if (localShelves.cats.isEmpty()) {
+                EmptyNote(t("No shelves yet — add one below.", "棚はまだありません — 下で追加できます。"))
+            }
+            localShelves.cats.forEach { cat ->
+                CategoryRow(
+                    name = cat.name,
+                    hidden = cat.hidden,
+                    onHidden = { mutateLocal(CategoryStore.setHidden(localShelves, cat.id, it)) },
+                    onRename = { renameCat = cat },
+                    onDelete = { confirmDelete = cat }
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                OutlinedTextField(
+                    value = newCatName,
+                    onValueChange = { newCatName = it },
+                    label = { Text(t("New shelf", "新しい棚")) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    enabled = newCatName.isNotBlank(),
+                    onClick = {
+                        mutateLocal(CategoryStore.add(localShelves, newCatName))
+                        newCatName = ""
+                    }
+                ) { Text(t("Add", "追加")) }
+            }
+        }
 
         if (site == "kakuyomu" || site == "alphapolis") {
             // --- flat-follow site: client-side categories ------------------
@@ -169,8 +213,12 @@ fun CategoriesScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (site == "alphapolis") alp.renameCategory(cat.id, name)
-                    else kaku.renameCategory(cat.id, name)
+                    when {
+                        site.startsWith("local:") ->
+                            mutateLocal(CategoryStore.rename(localShelves, cat.id, name))
+                        site == "alphapolis" -> alp.renameCategory(cat.id, name)
+                        else -> kaku.renameCategory(cat.id, name)
+                    }
                     renameCat = null
                 }) { Text(t("Save", "保存")) }
             },
@@ -194,8 +242,12 @@ fun CategoriesScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (site == "alphapolis") alp.deleteCategory(cat.id)
-                    else kaku.deleteCategory(cat.id)
+                    when {
+                        site.startsWith("local:") ->
+                            mutateLocal(CategoryStore.delete(localShelves, cat.id))
+                        site == "alphapolis" -> alp.deleteCategory(cat.id)
+                        else -> kaku.deleteCategory(cat.id)
+                    }
                     confirmDelete = null
                 }) { Text(t("Delete", "削除"), color = MaterialTheme.colorScheme.error) }
             },

@@ -49,6 +49,10 @@ fun LocalLibraryHome(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    // NSFW gate: hidden shelves (and their books) stay out of sight until
+    // the biometric unlock — same rule as every site's hidden categories.
+    val app = androidx.lifecycle.viewmodel.compose.viewModel<AppViewModel>()
+    val nsfwUnlocked = app.nsfwUnlocked
 
     var library by remember(libraryId) {
         mutableStateOf(LocalLibraryStore.library(context, libraryId))
@@ -107,10 +111,15 @@ fun LocalLibraryHome(
     // Build BookmarkRow items — the exact same shape the sites produce.
     // B3: shelf filter applies before grouping (a series shows when ANY of
     // its volumes sits on the shelf); multi-volume epubs collapse into one
-    // series row whose cover/name come from volume 1.
+    // series row whose cover/name come from volume 1. Books on a hidden
+    // (locked) shelf stay out of the grid entirely.
+    val hiddenShelfIds = shelves.cats.filter { it.hidden && !nsfwUnlocked }.map { it.id }.toSet()
+    val visibleBooks = books.filter { b ->
+        shelves.assign[b.id]?.let { it !in hiddenShelfIds } ?: true
+    }
     val shelfBooks = if (shelfFilter != null) {
-        books.filter { shelves.assign[it.id] == shelfFilter }
-    } else books
+        visibleBooks.filter { shelves.assign[it.id] == shelfFilter }
+    } else visibleBooks
     val items = LocalLibraryStore.groupedBooks(
         shelfBooks.filter { it.title.contains(searchQuery, ignoreCase = true) }
             .sortedWith(
@@ -206,7 +215,8 @@ fun LocalLibraryHome(
                         val assignments = shelves.assign
                         // B3: tapping a shelf filters the grid (the NU
                         // reading-list rows' behavior); tapping it again
-                        // clears back to all books.
+                        // clears back to all books. Hidden shelves list
+                        // only while the NSFW unlock is live.
                         if (shelfFilter != null) {
                             NavigationDrawerItem(
                                 label = { Text(t("All books", "すべての本")) },
@@ -214,8 +224,8 @@ fun LocalLibraryHome(
                                 onClick = { shelfFilter = null }
                             )
                         }
-                        shelves.cats.forEach { cat ->
-                            val count = books.count { assignments[it.id] == cat.id }
+                        shelves.cats.filter { !it.hidden || nsfwUnlocked }.forEach { cat ->
+                            val count = visibleBooks.count { assignments[it.id] == cat.id }
                             NavigationDrawerItem(
                                 label = { Text("${cat.name}  ($count)" ) },
                                 selected = shelfFilter == cat.id,
