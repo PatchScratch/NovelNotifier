@@ -6,12 +6,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
-import org.readium.r2.shared.util.Try
-import org.readium.r2.shared.util.toAbsoluteUrl
-import org.readium.r2.streamer.Streamer
-import org.readium.r2.streamer.publication.content.Content
 import org.readium.r2.shared.publication.Publication
-import org.readium.r2.shared.publication.link.Link
+import org.readium.r2.shared.util.asset.AssetRetriever
+import org.readium.r2.shared.util.http.DefaultHttpClient
+import org.readium.r2.streamer.PublicationOpener
+import org.readium.r2.streamer.parser.DefaultPublicationParser
 
 /**
  * LOCAL LIBRARY provider (Wayne, 2026-10-21): an offline epub reader and
@@ -50,43 +49,54 @@ object LocalLibraryStore {
 
     // Readium publication cache — one open Publication per book.
     private val publications = HashMap<String, Publication>()
-    private var streamer: Streamer? = null
+    private var opener: PublicationOpener? = null
 
-    private fun getStreamer(context: Context): Streamer {
-        if (streamer == null) {
-            streamer = Streamer(context)
+    private fun getOpener(context: Context): PublicationOpener {
+        if (opener == null) {
+            val httpClient = DefaultHttpClient()
+            val assetRetriever = AssetRetriever(context.contentResolver, httpClient)
+            val parser = DefaultPublicationParser(context, httpClient, assetRetriever, null)
+            opener = PublicationOpener(parser)
         }
-        return streamer!!
+        return opener!!
     }
 
     /** Opens (or returns cached) the Readium Publication for a book. */
     fun openPublication(context: Context, book: LocalBook): Publication? {
         publications[book.id]?.let { return it }
         val entry = bookEntry(context, book.id) ?: return null
-        val source = resolveSource(context, entry) ?: return null
-        return runCatching {
-            val url = when (source) {
-                is File -> source.toAbsoluteUrl()
-                is Uri -> source.toAbsoluteUrl()
-                else -> return null
-            }
-            getStreamer(context).open(url)
-                .getOrElse { e ->
-                    DebugLog.log("LOCALLIB", "Readium open failed: ${e.message}")
-                    null
-                }
-        }.getOrNull()?.also { pub ->
-            publications[book.id] = pub
-        }
-    }
-
-    private fun resolveSource(context: Context, entry: JSONObject): Any? {
         val uri = entry.optString("storedUri")
         val path = entry.optString("storedPath")
-        return when {
-            uri.startsWith("content://") -> Uri.parse(uri)
+        val file = when {
             path.isNotBlank() -> File(path)
+            uri.startsWith("content://") -> runCatching {
+                // SAF: copy to cache for Readium (needs a real file).
+                val tmp = File(context.cacheDir, "ll_${book.id}.epub")
+                if (!tmp.isFile || tmp.length() == 0L) {
+                    context.contentResolver.openInputStream(Uri.parse(uri))
+                        ?.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                }
+                tmp
+            }.getOrNull()
             else -> null
+        } ?: run {
+            DebugLog.log("LOCALLIB", "openPublication: no source file for ${book.id}")
+            return null
+        }
+        return runCatching {
+            val httpClient = DefaultHttpClient()
+            val assetRetriever = AssetRetriever(context.contentResolver, httpClient)
+            val url = org.readium.r2.shared.util.Url.parse(file.toURI().toString())
+            val asset = assetRetriever.retrieve(url).getOrNull()
+                ?: run {
+                    DebugLog.log("LOCALLIB", "asset retrieve failed for ${file.name}")
+                    return null
+                }
+            kotlinx.coroutines.runBlocking {
+                getOpener(context).open(asset, allowUserInteraction = false)
+            }.getOrNull()
+        }.getOrNull()?.also { pub ->
+            publications[book.id] = pub
         }
     }
 
@@ -219,7 +229,13 @@ object LocalLibraryStore {
 
         // Open with Readium — the engine handles all epub variants.
         val pub = runCatching {
-            getStreamer(context).open(tmp.toAbsoluteUrl()).getOrNull()
+            val httpClient = DefaultHttpClient()
+            val assetRetriever = AssetRetriever(context.contentResolver, httpClient)
+            val url = org.readium.r2.shared.util.Url.parse(tmp.toURI().toString())
+            val asset = assetRetriever.retrieve(url).getOrNull() ?: return null
+            kotlinx.coroutines.runBlocking {
+                getOpener(context).open(asset, allowUserInteraction = false)
+            }.getOrNull()
         }.getOrNull() ?: run {
             tmp.delete()
             DebugLog.log("LOCALLIB", "Readium could not open import")
@@ -227,8 +243,8 @@ object LocalLibraryStore {
         }
 
         val title = pub.metadata.title
-        val author = pub.metadata.authors.firstOrNull()?.name ?: ""
-        val description = pub.metadata.description ?: ""
+        val author = pub.metadata.authors.firstOrNull()?.name.orEmpty()
+        val description = pub.metadata.description.orEmpty()
         val chapterCount = pub.readingOrder.size
 
         val safeTitle = title.trim().replace(Regex("[^\\w\\-. \\u3040-\\u30ff\\u4e00-\\u9fff]"), "_").take(60)
@@ -238,13 +254,19 @@ object LocalLibraryStore {
         // Copy into the library's chosen storage (SAF tree) or app-private.
         val stored = storeBytes(context, lib, fileName, bytes, bookId)
 
-        // Cover → internal cache for Coil.
+        // Cover → internal cache for Coil (from the epub zip — same
+        // extraction as the pre-Readium path, which works reliably).
         runCatching {
-            pub.cover(context).getOrNull()?.let { bitmap ->
-                val dir = File(context.filesDir, "local_covers").apply { mkdirs() }
-                val f = File(dir, "$bookId.jpg")
-                f.outputStream().use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+            java.util.zip.ZipFile(tmp).use { zip ->
+                val coverEntry = zip.getEntry("OEBPS/cover.jpg")
+                    ?: zip.getEntry("cover.jpg")
+                    ?: zip.getEntry("OEBPS/cover.png")
+                    ?: zip.getEntry("cover.png")
+                coverEntry?.let { e ->
+                    val dir = File(context.filesDir, "local_covers").apply { mkdirs() }
+                    File(dir, "$bookId.jpg").outputStream().use { out ->
+                        zip.getInputStream(e).copyTo(out)
+                    }
                 }
             }
         }

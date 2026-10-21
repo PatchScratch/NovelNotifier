@@ -84,6 +84,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        // Readium Kotlin toolkit requires core library desugaring.
+        isCoreLibraryDesugaringEnabled = true
     }
     buildFeatures {
         compose = true
@@ -115,6 +117,7 @@ dependencies {
     implementation(libs.mlkit.translate)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.2")
     testImplementation(libs.junit)
     // Real implementations of Android's org.json + XML pull parser so the pure
     // parsing helpers can run in plain JVM unit tests (framework stubs throw).
