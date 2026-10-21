@@ -77,15 +77,15 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                 paintSnapshot(snap)
                 val canUpdate = selectedListId.isBlank() || selectedListId !in loadIdSet(prefs, "list_update_off")
                 if (canUpdate && listSyncIsStale(prefs, checkHours)) {
-                    listStatus = "List older than $checkHours hours — checking site..."
+                    status("List older than $checkHours hours — checking site...")
                     scrape()
                 }
             } else {
-                listStatus = "Loading lists..."
+                status("Loading lists...")
                 scrape()
             }
             if (siteCheckNeeded(prefs)) {
-                listStatus = "Checking Novel Updates..."
+                status("Checking Novel Updates...")
                 scrape()
             }
         }
@@ -117,11 +117,11 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
         val cached = novelsByList[list.id].orEmpty()
         listNovels = cached
         if (cached.isNotEmpty()) {
-            listStatus = "Cached ${cached.size} series"
+            status("Cached ${cached.size} series")
         } else if (list.id in loadIdSet(prefs, "list_update_off")) {
-            listStatus = "Updates off for ${list.name}"
+            status("Updates off for ${list.name}")
         } else {
-            listStatus = "Loading ${list.name}..."
+            status("Loading ${list.name}...")
             scrape()
         }
         persistLists()
@@ -130,6 +130,17 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
     // One auto-retry after the user clears a challenge pane (the CF branch
     // of handleScrape arms it; the collector fires when the pane clears).
     private var retryAfterChallenge = false
+
+    /**
+     * Timestamped status (Wayne, 2026-10-21): every list-status message is
+     * stamped "[HH:mm:ss]" so a quiet screen reads as "synced at 14:02" —
+     * not "is this thing alive?". Single funnel; no raw listStatus writes.
+     */
+    private fun status(msg: String) {
+        val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+            .format(java.util.Date())
+        listStatus = "[$stamp] $msg"
+    }
 
     init {
         viewModelScope.launch {
@@ -147,7 +158,7 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
     fun pullToRefreshList() {
         if (selectedListId.isBlank()) return
         if (selectedListId in loadIdSet(prefs, "list_update_off")) return
-        listStatus = "Checking $selectedList..."
+        status("Checking $selectedList...")
         scrape()
     }
 
@@ -175,7 +186,7 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                 // 2026-10-21: "the challenge window does not show") — the
                 // pane must surface here too, with the auto-retry armed.
                 retryAfterChallenge = true
-                listStatus = "Cloudflare — complete the check to continue"
+                status("Cloudflare — complete the check to continue")
                 SiteClient.surfaceChallenge(SiteClient.Site.NU, target)
                 runCatching {
                     s.onPageLoaded = null
@@ -204,12 +215,12 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                 // user-initiated refresh opens the challenge pane right
                 // away, and the refresh auto-retries once it's cleared.
                 retryAfterChallenge = true
-                listStatus = "Cloudflare — complete the check to continue"
+                status("Cloudflare — complete the check to continue")
                 SiteClient.surfaceChallenge(SiteClient.Site.NU, lastFinishedUrl.ifBlank { null })
                 DebugLog.log("SYNC", "list scrape hit Cloudflare — pane surfaced")
             }
             isLoginRedirect(lastFinishedUrl) || raw.contains("wp-login.php") -> {
-                listStatus = "Session expired — log in from Settings"
+                status("Session expired — log in from Settings")
                 DebugLog.log("SYNC", "list scrape hit login redirect")
             }
             else -> {
@@ -261,11 +272,9 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                 // Cloudflare / empty HTML must never wipe a real library.
                 if (parsedNovels.isEmpty() && cachedLooksReal) {
                     listNovels = cachedRows
-                    // TEMP diagnostic (remove once scoping is fixed): the
-                    // structural facts from the page ride in the status so
-                    // one refresh pinpoints which gate drops every row.
-                    listStatus = "Parse 0/kept ${cachedRows.size} [" +
-                        raw.substringAfter(":::DBG:::", "no-dbg").take(90) + "]"
+                    status("Site parse returned nothing — keeping ${cachedRows.size} cached series")
+                    // Structural facts stay in the log (scoping forensics);
+                    // the UI message stays human.
                     DebugLog.log("SYNC", "empty parse: " + raw.substringAfter(":::DBG:::", "no-dbg"))
                     return@launch
                 }
@@ -293,11 +302,14 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                             "coversMissing=${parsedNovels.count { usableCoverUrl(it.coverUrl).isBlank() }}"
                     )
                 }
-                listStatus = when {
-                    parsedNovels.isEmpty() -> "No series found in $selectedList"
-                    changed > 0 -> "Updated $selectedList · $changed chapter change" + if (changed == 1) "" else "s"
-                    else -> "Updated $selectedList · no chapter changes"
-                }
+                status(
+                    when {
+                        parsedNovels.isEmpty() -> "No series found in $selectedList"
+                        changed > 0 -> "Updated $selectedList · ${parsedNovels.size} series · $changed chapter change" +
+                            if (changed == 1) "" else "s"
+                        else -> "Updated $selectedList · ${parsedNovels.size} series · no chapter changes"
+                    }
+                )
                 persistLists()
                 pendingSideEffects = SideEffects(result.rssUrl, result.readRssUrl, lastReads)
                 }
@@ -321,7 +333,7 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 20 s slow-site hint (a slow page is NOT proof of a CF check). */
     fun noteStillWaiting() {
-        if (syncing) listStatus = "Still waiting on Novel Updates — the site is slow right now"
+        if (syncing) status("Still waiting on Novel Updates — the site is slow right now")
     }
 
     // --- Scribble Hub bulk purge (Wayne's rule: NU ignores SH) ---------------
@@ -347,11 +359,11 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                 .filter { it.seriesUrl.isNotBlank() }
                 .filterNot { withContext(Dispatchers.IO) { loadSeriesCache(getApplication(), it.seriesUrl) != null } }
             if (targets.isEmpty()) {
-                listStatus = "No uncached series to scan"
+                status("No uncached series to scan")
                 return@launch
             }
             shScan = ShScan(0, targets.size, running = true)
-            listStatus = "Scanning for Scribble Hub series… 0/${targets.size}"
+            status("Scanning for Scribble Hub series… 0/${targets.size}")
             DebugLog.log("SYNC", "sh scan start: ${targets.size} uncached series")
             var purged = 0
             targets.forEach { novel ->
@@ -373,7 +385,7 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                     DebugLog.log("SYNC", "sh scan skipped ${novel.title.take(30)}", e)
                 }
                 shScan = shScan?.copy(done = (shScan?.done ?: 0) + 1)
-                listStatus = "Scanning for Scribble Hub series… ${shScan?.done}/${targets.size} · $purged purged"
+                status("Scanning for Scribble Hub series… ${shScan?.done}/${targets.size} · $purged purged")
             }
             persistLists()
             listStatus = if (shScanStop) {
