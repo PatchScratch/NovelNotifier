@@ -378,47 +378,51 @@ fun LocalLibraryHome(
     }
 }
 
-/** Cover card for the grid — the site-card anatomy (cover + title + badge). */
+/** Cover card for the grid — the EXACT BookmarkRowsLayout anatomy:
+ *  Column → Box[cover fillMaxWidth + aspectRatio(3:4)] → title below. */
 @Composable
 fun LocalBookCard(book: LocalLibraryStore.LocalBook, onClick: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    Card(
-        modifier = Modifier
-            .aspectRatio(3f / 4f)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp)
+    Column(
+        modifier = Modifier.clickable(onClick = onClick)
     ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                val cover = remember(book.id) { LocalLibraryStore.coverFile(context, book.id) }
-                if (cover != null) {
-                    AsyncImage(
-                        model = cover,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
+        Box(
+            modifier = Modifier.fillMaxWidth().aspectRatio(3f / 4f)
+        ) {
+            val cover = remember(book.id) { LocalLibraryStore.coverFile(context, book.id) }
+            if (cover != null) {
+                AsyncImage(
+                    model = cover,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                // Coverless books: a 📖 on the same background as the sites.
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier.fillMaxSize()
-                    )
-                } else {
+                    ) {}
                     Text(
                         "📖",
-                        fontSize = 32.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        fontSize = 36.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )
                 }
             }
-            Text(
-                book.title,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-            )
         }
+        Text(
+            book.title,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp)
+        )
     }
 }
 
