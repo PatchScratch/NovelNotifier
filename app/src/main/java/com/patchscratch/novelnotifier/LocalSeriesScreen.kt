@@ -47,7 +47,11 @@ fun LocalSeriesScreen(
     var showShelfPicker by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
     var showEditMeta by remember { mutableStateOf(false) }
+    var showMergePicker by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
+    var otherSeries by remember(seriesId) {
+        mutableStateOf<List<LocalLibraryStore.LocalSeries>>(emptyList())
+    }
 
     LaunchedEffect(seriesId) {
         withContext(Dispatchers.IO) {
@@ -59,6 +63,8 @@ fun LocalSeriesScreen(
                 ?.let { LocalLibraryStore.coverFile(context, it.id)?.absolutePath }.orEmpty()
             val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
             readPos = vols.associate { it.id to prefs.getInt("local_pos_${it.id}", 0) }
+            otherSeries = LocalLibraryStore.seriesList(context, libraryId)
+                .filter { it.id != seriesId }
             // Reader-target titles for the Next Chapter volume only —
             // opening rides the preloaded list, no zip IO on the tap.
             firstUnfinished(vols, readPos)?.let { v ->
@@ -151,6 +157,14 @@ fun LocalSeriesScreen(
                     text = { Text(t("Edit description…", "説明を編集…")) },
                     onClick = { closeMenu(); showEditMeta = true }
                 )
+                // The manual fix for auto-grouping misses: pull a stray
+                // series (with all its volumes) into the right one.
+                if (otherSeries.isNotEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text(t("Merge into another series…", "別のシリーズに統合…")) },
+                        onClick = { closeMenu(); showMergePicker = true }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text(t("Delete series", "シリーズを削除"), color = MaterialTheme.colorScheme.error) },
                     onClick = { closeMenu(); showDelete = true }
@@ -182,6 +196,37 @@ fun LocalSeriesScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showShelfPicker = false }) { Text(t("Close", "閉じる")) }
+            }
+        )
+    }
+
+    // Merge picker: this series' volumes fold into the chosen target.
+    if (showMergePicker) {
+        AlertDialog(
+            onDismissRequest = { showMergePicker = false },
+            title = { Text(t("Merge into series", "シリーズに統合")) },
+            text = {
+                Column {
+                    Text(
+                        t(
+                            "All volumes of \"${s.name}\" move into the series you pick; the emptied one disappears.",
+                            "「${s.name}」の全巻が選んだシリーズに移動し、空になったシリーズは削除されます。"
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    otherSeries.forEach { target ->
+                        TextButton(onClick = {
+                            showMergePicker = false
+                            scope.launch(Dispatchers.IO) {
+                                LocalLibraryStore.mergeSeries(context, s.id, target.id)
+                            }
+                            onBack()
+                        }) { Text(target.name, maxLines = 1) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showMergePicker = false }) { Text(t("Close", "閉じる")) }
             }
         )
     }

@@ -222,7 +222,7 @@ object LocalLibraryStore {
                 val coverHref = Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""")
                     .find(opf)?.groupValues?.get(1)
                 val coverBytes: ByteArray? = coverHref?.let { ch ->
-                    val full = if (base.isBlank()) ch else "$base/$ch"
+                    val full = zipPath(base, ch)
                     zip.getEntry(full)?.let { zip.getInputStream(it).readBytes() }
                 } ?: zip.getEntry("OEBPS/cover.jpg")?.let { zip.getInputStream(it).readBytes() }
                   ?: zip.getEntry("OEBPS/cover.png")?.let { zip.getInputStream(it).readBytes() }
@@ -671,6 +671,18 @@ object LocalLibraryStore {
         writeIndex(context, root)
     }
 
+    /**
+     * Merge [fromId] INTO [toId]: every volume moves, then the emptied
+     * series entry goes away (no files touched). The manual fix for
+     * auto-grouping misses (Wayne, 2026-10-21: "Vol. 6 Under By the Grace
+     * of the Gods" landed as its own series).
+     */
+    fun mergeSeries(context: Context, fromId: String, toId: String) {
+        if (fromId == toId) return
+        seriesVolumesOf(context, fromId).forEach { moveBookToSeries(context, it.id, toId) }
+        deleteSeries(context, fromId)
+    }
+
     /** Deletes the series AND every volume in it (epub files only when copied). */
     fun deleteSeries(context: Context, id: String) {
         seriesVolumesOf(context, id).forEach { deleteBook(context, it.id) }
@@ -733,6 +745,9 @@ object LocalLibraryStore {
         // Bare trailing number ("Title 12") — only when a real name remains
         // (the series "86" must not collapse to "").
         t = Regex("""\s+\d{1,3}\s*$""").replace(t, "")
+        // Edition qualifiers that differ across volumes of one work
+        // ("… (Light Novel) Vol. 6" vs plain "…") split the auto key.
+        t = Regex("""\s*\((?:light novel|novel|ln)\)\s*$""", RegexOption.IGNORE_CASE).replace(t, "")
         return t.trim()
     }
 
@@ -809,33 +824,55 @@ object LocalLibraryStore {
                 ?.groupValues?.get(1)?.trim().orEmpty()
             val body = doc.substringAfter("<body", doc).substringAfter(">", doc)
             val paras = extractParagraphs(doc)
-            val images = extractImages(context, book, zip, body, hrefs[index])
+            val images = extractImages(context, book, zip, body, hrefs[index], paras.size)
             val finalParas =
                 if (paras.isEmpty() && images.isNotEmpty()) listOf("") else paras
             LocalChapter(title, finalParas, images)
         }
 
     /**
+     * Resolve an epub-internal href against the chapter/OPF base into a
+     * real zip entry path: chapter files sit in subfolders and reference
+     * "../images/x.jpg" / "./img/x.jpg" — a naive join produces paths the
+     * zip never contained, so illustrations silently vanished (Wayne,
+     * 2026-10-21: "images are still not showing in the reader").
+     */
+    internal fun zipPath(base: String, src: String): String {
+        val joined = if (base.isBlank()) src else "$base/$src"
+        val parts = ArrayDeque<String>()
+        joined.split("/").forEach { seg ->
+            when (seg) {
+                "", "." -> {}
+                ".." -> if (parts.isNotEmpty()) parts.removeLast()
+                else -> parts.addLast(seg)
+            }
+        }
+        return parts.joinToString("/")
+    }
+    /**
      * <img> and SVG-wrapped <image> elements in a chapter body → cached
      * local files. The src resolves against the chapter's own directory
-     * (the same base-path discipline as spineHrefs — never the OPF's);
-     * bytes land in filesDir/local_lib_media/<bookId>/ so re-opening a
-     * chapter doesn't re-extract. Coil loads the returned file:// URLs
-     * directly; EpubMediaStore's http-only cache stays out of it.
+     * via [zipPath] (../ and ./ segments normalized); bytes land in
+     * filesDir/local_lib_media/<bookId>/ so re-opening a chapter doesn't
+     * re-extract. Coil loads the returned file:// URLs directly.
      */
     private fun extractImages(
-        context: Context, book: LocalBook, zip: ZipFile, body: String, chapterHref: String
+        context: Context, book: LocalBook, zip: ZipFile, body: String, chapterHref: String,
+        paragraphCount: Int
     ): List<Pair<Int, String>> {
         val base = chapterHref.substringBeforeLast("/", "")
         // Paragraph anchor = how many <p> opens precede the image, so art
-        // sits between the paragraphs it visually belongs to.
+        // sits between the paragraphs it visually belongs to. Trailing art
+        // (after the last <p>) clamps onto the last paragraph — the render
+        // loop only walks existing indices and dropped it before.
         val pOpens = Regex("<p\\b").findAll(body).map { it.range.first }.toList()
+        val lastIdx = maxOf(paragraphCount - 1, 0)
         val out = mutableListOf<Pair<Int, String>>()
         val imgTag = Regex("""<img[^>]+src="([^"]+)"|<image[^>]+(?:xlink:)?href="([^"]+)"""")
         imgTag.findAll(body).forEach { m ->
             val src = (m.groupValues[1].ifBlank { m.groupValues[2] }).substringBefore("?")
             if (src.isBlank() || src.startsWith("http")) return@forEach
-            val full = if (base.isBlank()) src else "$base/$src"
+            val full = zipPath(base, src)
             val entry = zip.getEntry(full) ?: return@forEach
             val ext = full.substringAfterLast('.', "jpg").lowercase()
                 .takeIf { it.length in 2..4 && it.all { c -> c.isLetterOrDigit() } } ?: "jpg"
@@ -845,7 +882,9 @@ object LocalLibraryStore {
                 runCatching { zip.getInputStream(entry).use { it.copyTo(f.outputStream()) } }
             }
             if (f.isFile && f.length() > 0) {
-                out.add(pOpens.count { it < m.range.first } to f.toURI().toString())
+                // Canonical three-slash file URI — File.toURI()'s single
+                // slash form is legal but some loaders balk.
+                out.add(minOf(pOpens.count { it < m.range.first }, lastIdx) to ("file://" + f.absolutePath))
             }
         }
         return out
@@ -900,7 +939,7 @@ object LocalLibraryStore {
                 val coverHref = Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""")
                     .find(opf)?.groupValues?.get(1)
                 val coverBytes: ByteArray? = coverHref?.let { ch ->
-                    val full = if (base.isBlank()) ch else "$base/$ch"
+                    val full = zipPath(base, ch)
                     zip.getEntry(full)?.let { zip.getInputStream(it).readBytes() }
                 } ?: zip.getEntry("OEBPS/cover.jpg")?.let { zip.getInputStream(it).readBytes() }
                   ?: zip.getEntry("cover.jpg")?.let { zip.getInputStream(it).readBytes() }
