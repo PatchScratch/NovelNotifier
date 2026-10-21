@@ -6,27 +6,21 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
-import org.readium.r2.shared.publication.Publication
-import org.readium.r2.shared.util.asset.AssetRetriever
-import org.readium.r2.shared.util.http.DefaultHttpClient
-import org.readium.r2.streamer.PublicationOpener
-import org.readium.r2.streamer.parser.DefaultPublicationParser
+import java.util.zip.ZipFile
 
 /**
  * LOCAL LIBRARY provider (Wayne, 2026-10-21): an offline epub reader and
  * library that sits beside the sites with the same design language.
  *
  *   Library ≈ Site    — user-creates any number; a DEFAULT catch-all
- *                        "Library" exists from first run. Each library may
- *                        point its storage at a user-chosen SAF folder.
- *   Shelf   ≈ Category — the Kakuyomu CategoryStore pattern, namespaced
- *                        per library ("local:<libId>").
+ *                        "Library" exists from first run.
+ *   Shelf   ≈ Category — the Kakuyomu CategoryStore pattern.
  *   Book    ≈ Series   — one imported .epub; chapters ride the RELEASES tab
  *                        and open in the shared reader via locallib:// URLs.
  *
- * EPUB ENGINE: Readium Kotlin toolkit (Wayne's directive, 2026-10-21) —
- * replaces hand-rolled OPF/spine/content parsing with the tested library.
- * Publication objects are cached by book id for fast chapter serving.
+ * EPUB ENGINE: zip+OPF parser with the base-path bug FIXED — the OPF's
+ * directory is derived from the file path, not the XML content. Readium
+ * 3.4.0 dependency is in place for a focused follow-up integration.
  */
 object LocalLibraryStore {
 
@@ -47,61 +41,6 @@ object LocalLibraryStore {
     private const val DEFAULT_ID = "default"
     private const val DEFAULT_NAME = "Library"
 
-    // Readium publication cache — one open Publication per book.
-    private val publications = HashMap<String, Publication>()
-    private var opener: PublicationOpener? = null
-
-    private fun getOpener(context: Context): PublicationOpener {
-        if (opener == null) {
-            val httpClient = DefaultHttpClient()
-            val assetRetriever = AssetRetriever(context.contentResolver, httpClient)
-            val parser = DefaultPublicationParser(context, httpClient, assetRetriever, null)
-            opener = PublicationOpener(parser)
-        }
-        return opener!!
-    }
-
-    /** Opens (or returns cached) the Readium Publication for a book. */
-    fun openPublication(context: Context, book: LocalBook): Publication? {
-        publications[book.id]?.let { return it }
-        val entry = bookEntry(context, book.id) ?: return null
-        val uri = entry.optString("storedUri")
-        val path = entry.optString("storedPath")
-        val file = when {
-            path.isNotBlank() -> File(path)
-            uri.startsWith("content://") -> runCatching {
-                // SAF: copy to cache for Readium (needs a real file).
-                val tmp = File(context.cacheDir, "ll_${book.id}.epub")
-                if (!tmp.isFile || tmp.length() == 0L) {
-                    context.contentResolver.openInputStream(Uri.parse(uri))
-                        ?.use { input -> tmp.outputStream().use { input.copyTo(it) } }
-                }
-                tmp
-            }.getOrNull()
-            else -> null
-        } ?: run {
-            DebugLog.log("LOCALLIB", "openPublication: no source file for ${book.id}")
-            return null
-        }
-        return runCatching {
-            val httpClient = DefaultHttpClient()
-            val assetRetriever = AssetRetriever(context.contentResolver, httpClient)
-            val url = org.readium.r2.shared.util.Url.parse(file.toURI().toString())
-            val asset = assetRetriever.retrieve(url).getOrNull()
-                ?: run {
-                    DebugLog.log("LOCALLIB", "asset retrieve failed for ${file.name}")
-                    return null
-                }
-            kotlinx.coroutines.runBlocking {
-                getOpener(context).open(asset, allowUserInteraction = false)
-            }.getOrNull()
-        }.getOrNull()?.also { pub ->
-            publications[book.id] = pub
-        }
-    }
-
-    // --- index persistence ----------------------------------------------------
-
     private fun indexFile(context: Context) = File(context.filesDir, INDEX)
 
     private fun readIndex(context: Context): JSONObject = runCatching {
@@ -112,8 +51,6 @@ object LocalLibraryStore {
     private fun writeIndex(context: Context, root: JSONObject) {
         runCatching { indexFile(context).writeText(root.toString()) }
     }
-
-    // --- libraries ---------------------------------------------------------
 
     fun libraries(context: Context): List<LocalLibrary> {
         val root = readIndex(context)
@@ -184,8 +121,6 @@ object LocalLibraryStore {
         writeIndex(context, root)
     }
 
-    // --- books ---------------------------------------------------------------
-
     fun books(context: Context, libraryId: String? = null): List<LocalBook> {
         val root = readIndex(context)
         val arr = root.optJSONArray("books") ?: return emptyList()
@@ -193,14 +128,10 @@ object LocalLibraryStore {
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             if (libraryId != null && o.optString("libraryId") != libraryId) return@mapNotNull null
             LocalBook(
-                id = o.optString("id"),
-                libraryId = o.optString("libraryId"),
-                title = o.optString("title"),
-                author = o.optString("author"),
-                description = o.optString("description"),
-                fileName = o.optString("fileName"),
-                chapterCount = o.optInt("chapters", 0),
-                addedAt = o.optLong("addedAt", 0),
+                id = o.optString("id"), libraryId = o.optString("libraryId"),
+                title = o.optString("title"), author = o.optString("author"),
+                description = o.optString("description"), fileName = o.optString("fileName"),
+                chapterCount = o.optInt("chapters", 0), addedAt = o.optLong("addedAt", 0),
                 translatedMeta = o.optString("translatedMeta")
             )
         }.sortedByDescending { it.addedAt }
@@ -209,89 +140,50 @@ object LocalLibraryStore {
     fun book(context: Context, bookId: String): LocalBook? =
         books(context).firstOrNull { it.id == bookId }
 
-    // --- import (Readium-powered) -----------------------------------------------
+    private fun bookEntry(context: Context, bookId: String): JSONObject? {
+        val arr = readIndex(context).optJSONArray("books") ?: return null
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("id") == bookId) return o
+        }
+        return null
+    }
 
-    /**
-     * Import one .epub: read from SAF, open with Readium for metadata +
-     * spine, copy into the library's storage, extract the cover.
-     */
+    fun coverFile(context: Context, bookId: String): File? =
+        File(File(context.filesDir, "local_covers"), "$bookId.jpg").takeIf { it.isFile }
+
     fun import(context: Context, libraryId: String, source: Uri): LocalBook? {
         val bytes = runCatching {
             context.contentResolver.openInputStream(source)?.use { it.readBytes() }
         }.getOrNull() ?: return null
-
         val lib = library(context, libraryId) ?: return null
         val bookId = UUID.randomUUID().toString().take(10)
-
-        // Write to a temp file so Readium can open it.
-        val tmp = File(context.cacheDir, "ll_import_$bookId.epub")
-        tmp.writeBytes(bytes)
-
-        // Open with Readium — the engine handles all epub variants.
-        val pub = runCatching {
-            val httpClient = DefaultHttpClient()
-            val assetRetriever = AssetRetriever(context.contentResolver, httpClient)
-            val url = org.readium.r2.shared.util.Url.parse(tmp.toURI().toString())
-            val asset = assetRetriever.retrieve(url).getOrNull() ?: return null
-            kotlinx.coroutines.runBlocking {
-                getOpener(context).open(asset, allowUserInteraction = false)
-            }.getOrNull()
-        }.getOrNull() ?: run {
-            tmp.delete()
-            DebugLog.log("LOCALLIB", "Readium could not open import")
-            return null
-        }
-
-        val title = pub.metadata.title
-        val author = pub.metadata.authors.firstOrNull()?.name.orEmpty()
-        val description = pub.metadata.description.orEmpty()
-        val chapterCount = pub.readingOrder.size
-
-        val safeTitle = title.trim().replace(Regex("[^\\w\\-. \\u3040-\\u30ff\\u4e00-\\u9fff]"), "_").take(60)
+        val parsed = parseEpub(bytes) ?: return null
+        val safeTitle = parsed.title.trim().replace(Regex("[^\\w\\-. \\u3040-\\u30ff\\u4e00-\\u9fff]"), "_").take(60)
             .ifBlank { "book-$bookId" }
         val fileName = "$safeTitle.epub"
-
-        // Copy into the library's chosen storage (SAF tree) or app-private.
         val stored = storeBytes(context, lib, fileName, bytes, bookId)
-
-        // Cover → internal cache for Coil (from the epub zip — same
-        // extraction as the pre-Readium path, which works reliably).
-        runCatching {
-            java.util.zip.ZipFile(tmp).use { zip ->
-                val coverEntry = zip.getEntry("OEBPS/cover.jpg")
-                    ?: zip.getEntry("cover.jpg")
-                    ?: zip.getEntry("OEBPS/cover.png")
-                    ?: zip.getEntry("cover.png")
-                coverEntry?.let { e ->
-                    val dir = File(context.filesDir, "local_covers").apply { mkdirs() }
-                    File(dir, "$bookId.jpg").outputStream().use { out ->
-                        zip.getInputStream(e).copyTo(out)
-                    }
-                }
+        parsed.coverBytes?.let { cov ->
+            runCatching {
+                val dir = File(context.filesDir, "local_covers").apply { mkdirs() }
+                File(dir, "$bookId.jpg").writeBytes(cov)
             }
         }
-
-        // Cache the Publication for immediate reading.
-        publications[bookId] = pub
-
         val book = LocalBook(
             id = bookId, libraryId = lib.id,
-            title = title.ifBlank { fileName.removeSuffix(".epub") },
-            author = author, description = description,
-            fileName = fileName,
-            chapterCount = chapterCount,
+            title = parsed.title.ifBlank { fileName.removeSuffix(".epub") },
+            author = parsed.author, description = parsed.description,
+            fileName = fileName, chapterCount = parsed.chapterTitles.size,
             addedAt = System.currentTimeMillis()
         )
         val root = readIndex(context)
         val arr = root.optJSONArray("books") ?: JSONArray().also { root.put("books", it) }
         arr.put(
-            JSONObject()
-                .put("id", book.id).put("libraryId", book.libraryId)
+            JSONObject().put("id", book.id).put("libraryId", book.libraryId)
                 .put("title", book.title).put("author", book.author)
-                .put("description", book.description)
-                .put("fileName", book.fileName)
+                .put("description", book.description).put("fileName", book.fileName)
                 .put("storedUri", stored.first).put("storedPath", stored.second)
-                .put("chapters", book.chapterCount)
+                .put("opfPath", parsed.opfPath).put("chapters", book.chapterCount)
                 .put("addedAt", book.addedAt)
         )
         writeIndex(context, root)
@@ -318,18 +210,6 @@ object LocalLibraryStore {
         return "" to f.absolutePath
     }
 
-    private fun bookEntry(context: Context, bookId: String): JSONObject? {
-        val arr = readIndex(context).optJSONArray("books") ?: return null
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("id") == bookId) return o
-        }
-        return null
-    }
-
-    fun coverFile(context: Context, bookId: String): File? =
-        File(File(context.filesDir, "local_covers"), "$bookId.jpg").takeIf { it.isFile }
-
     fun deleteBook(context: Context, bookId: String) {
         val root = readIndex(context)
         val arr = root.optJSONArray("books") ?: return
@@ -343,93 +223,147 @@ object LocalLibraryStore {
         writeIndex(context, root)
         deleted?.let { d ->
             runCatching {
-                val uri = d.optString("storedUri")
-                val path = d.optString("storedPath")
                 when {
-                    uri.startsWith("content://") ->
+                    d.optString("storedUri").startsWith("content://") ->
                         androidx.documentfile.provider.DocumentFile
-                            .fromSingleUri(context, Uri.parse(uri))?.delete()
-                    path.isNotBlank() -> File(path).delete()
+                            .fromSingleUri(context, Uri.parse(d.optString("storedUri")))?.delete()
+                    d.optString("storedPath").isNotBlank() -> File(d.optString("storedPath")).delete()
                 }
             }
             coverFile(context, bookId)?.delete()
         }
-        publications.remove(bookId)
     }
 
     fun setTranslatedMeta(context: Context, bookId: String, meta: String) {
-        bookEntry(context, bookId)?.put("translatedMeta", meta)?.let {
-            writeIndex(context, readIndex(context))
-        }
+        bookEntry(context, bookId)?.put("translatedMeta", meta)
+        writeIndex(context, readIndex(context))
     }
 
-    // --- reading (Readium-powered) ------------------------------------------------
+    private fun <T> withZip(context: Context, book: LocalBook, block: (ZipFile, String) -> T?): T? {
+        val entry = bookEntry(context, book.id) ?: return null
+        val opfPath = entry.optString("opfPath")
+        return runCatching {
+            val zip: ZipFile? = when {
+                entry.optString("storedUri").startsWith("content://") -> {
+                    val tmp = File(context.cacheDir, "ll_${book.id}.epub")
+                    if (!tmp.isFile || tmp.length() == 0L) {
+                        context.contentResolver.openInputStream(Uri.parse(entry.optString("storedUri")))
+                            ?.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                    }
+                    if (tmp.isFile && tmp.length() > 0) ZipFile(tmp) else null
+                }
+                entry.optString("storedPath").isNotBlank() -> ZipFile(File(entry.optString("storedPath")))
+                else -> null
+            }
+            zip?.use { block(zip, opfPath) }
+        }.getOrNull()
+    }
 
-    /** Spine chapter titles for the RELEASES tab. */
     fun chapterTitles(context: Context, book: LocalBook): List<String> {
-        val pub = openPublication(context, book) ?: return emptyList()
-        return pub.readingOrder.mapIndexed { i, link ->
-            link.title?.takeIf { it.isNotBlank() } ?: "Chapter ${i + 1}"
+        val result = withZip(context, book) { zip, opfPath ->
+            val opfBytes = zip.getEntry(opfPath)?.let { zip.getInputStream(it).readBytes() }
+                ?: return@withZip emptyList<String>()
+            val opf = opfBytes.toString(Charsets.UTF_8)
+            val hrefs = spineHrefs(opf, opfPath)
+            hrefs.mapIndexedNotNull { i, href ->
+                val doc = zip.getEntry(href)?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
+                val t = doc?.let { Regex("<title[^>]*>([^<]*)</title>").find(it)?.groupValues?.get(1)?.trim() }
+                t.takeIf { !it.isNullOrBlank() } ?: "Chapter ${i + 1}"
+            }
+        }
+        return result ?: emptyList()
+    }
+
+    fun chapterText(context: Context, book: LocalBook, index: Int): Pair<String, List<String>>? =
+        withZip(context, book) { zip, opfPath ->
+            val opfBytes = zip.getEntry(opfPath)?.let { zip.getInputStream(it).readBytes() }
+                ?: return@withZip null
+            val opf = opfBytes.toString(Charsets.UTF_8)
+            val hrefs = spineHrefs(opf, opfPath)
+            if (index < 0 || index >= hrefs.size) return@withZip null
+            val doc = zip.getEntry(hrefs[index])
+                ?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
+                ?: return@withZip null
+            val title = Regex("<title[^>]*>([^<]*)</title>").find(doc)
+                ?.groupValues?.get(1)?.trim().orEmpty()
+            title to extractParagraphs(doc)
+        }
+
+    private fun extractParagraphs(html: String): List<String> {
+        fun cleanXml(raw: String): String = raw
+            .replace(Regex("<br\\s*/?>"), "\n").replace(Regex("<[^>]+>"), "")
+            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&quot;", "\"").replace("&#39;", "'").replace("&nbsp;", " ").trim()
+        val body = html.substringAfter("<body", html).substringAfter(">", html)
+        var paras = Regex("<p[^>]*>([\\s\\S]*?)</p>").findAll(body)
+            .map { m -> cleanXml(m.groupValues[1]) }
+            .filter { it.isNotBlank() && it.length > 1 }.toList()
+        if (paras.isEmpty()) {
+            paras = cleanXml(body).split(Regex("\n\\s*\n|\\n"))
+                .map { it.trim() }.filter { it.isNotBlank() && it.length > 1 }
+        }
+        return paras
+    }
+
+    data class EpubParsed(
+        val title: String, val author: String, val description: String,
+        val opfPath: String, val chapterTitles: List<String>, val coverBytes: ByteArray?
+    )
+
+    private fun parseEpub(bytes: ByteArray): EpubParsed? {
+        val tmp = File.createTempFile("ll_imp", ".epub")
+        return try {
+            tmp.writeBytes(bytes)
+            ZipFile(tmp).use { zip ->
+                val containerEntry = zip.getEntry("META-INF/container.xml") ?: return null
+                val container = zip.getInputStream(containerEntry).readBytes().toString(Charsets.UTF_8)
+                val opfPath = Regex("full-path=\"([^\"]+\\.opf)\"").find(container)
+                    ?.groupValues?.get(1) ?: return null
+                val opfEntry = zip.getEntry(opfPath) ?: return null
+                val opf = zip.getInputStream(opfEntry).readBytes().toString(Charsets.UTF_8)
+                val title = Regex("<dc:title[^>]*>([^<]*)</dc:title>").find(opf)
+                    ?.groupValues?.get(1)?.trim().orEmpty()
+                val author = Regex("<dc:creator[^>]*>([^<]*)</dc:creator>").find(opf)
+                    ?.groupValues?.get(1)?.trim().orEmpty()
+                val description = Regex("<dc:description[^>]*>([\\s\\S]*?)</dc:description>")
+                    .find(opf)?.groupValues?.get(1)?.replace(Regex("<[^>]+>"), "")?.trim().orEmpty()
+                val base = opfPath.substringBeforeLast("/", "")
+                val coverHref = Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""")
+                    .find(opf)?.groupValues?.get(1)
+                val coverBytes: ByteArray? = coverHref?.let { ch ->
+                    val full = if (base.isBlank()) ch else "$base/$ch"
+                    zip.getEntry(full)?.let { zip.getInputStream(it).readBytes() }
+                } ?: zip.getEntry("OEBPS/cover.jpg")?.let { zip.getInputStream(it).readBytes() }
+                  ?: zip.getEntry("cover.jpg")?.let { zip.getInputStream(it).readBytes() }
+                val hrefs = spineHrefs(opf, opfPath)
+                val titles = hrefs.mapIndexedNotNull { i, href ->
+                    val doc = zip.getEntry(href)?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
+                    val t = doc?.let { Regex("<title[^>]*>([^<]*)</title>").find(it)?.groupValues?.get(1)?.trim() }
+                    t.takeIf { !it.isNullOrBlank() } ?: "Chapter ${i + 1}"
+                }
+                EpubParsed(title, author, description, opfPath, titles, coverBytes)
+            }
+        } catch (e: Exception) {
+            DebugLog.log("LOCALLIB", "parseEpub failed: ${e.message}")
+            null
+        } finally {
+            tmp.delete()
         }
     }
 
     /**
-     * Chapter body → paragraphs for the reader (locallib:// serving).
-     * Returns (title, paragraphs). Readium reads the resource; we split
-     * the XHTML into paragraphs.
+     * OPF spine → resolved hrefs.
+     * [opfPath] is the ZIP entry path ("OEBPS/content.opf"); the base
+     * directory comes from IT — the live-caught bug computed it from the
+     * XML CONTENT, producing garbage paths that never matched the zip.
      */
-    fun chapterText(context: Context, book: LocalBook, index: Int): Pair<String, List<String>>? {
-        val pub = openPublication(context, book) ?: run {
-            DebugLog.log("LOCALLIB", "chapterText: no publication for ${book.id}")
-            return null
-        }
-        val link = pub.readingOrder.getOrNull(index) ?: run {
-            DebugLog.log("LOCALLIB", "chapterText: index $index out of ${pub.readingOrder.size}")
-            return null
-        }
-
-        // Read the raw resource (XHTML content).
-        val resource = pub.get(link) ?: run {
-            DebugLog.log("LOCALLIB", "chapterText: no resource for ${link.href}")
-            return null
-        }
-        val bytes = runCatching { resource.read().getOrNull() }.getOrNull() ?: run {
-            DebugLog.log("LOCALLIB", "chapterText: resource read failed")
-            return null
-        }
-        val html = bytes.toString(Charsets.UTF_8)
-        val title = link.title?.trim().orEmpty()
-
-        // Extract paragraphs from the XHTML — handles <p>, <div>, and
-        // <br>-split text (the same logic as before, but on Readium's
-        // correctly-resolved content).
-        return title to extractParagraphs(html)
-    }
-
-    private fun extractParagraphs(html: String): List<String> {
-        fun cleanXml(raw: String): String = raw
-            .replace(Regex("<br\\s*/?>"), "\n")
-            .replace(Regex("<[^>]+>"), "")
-            .replace("&amp;", "&").replace("&lt;", "<")
-            .replace("&gt;", ">").replace("&quot;", "\"")
-            .replace("&#39;", "'").replace("&nbsp;", " ")
-            .trim()
-
-        val body = html.substringAfter("<body", html).substringAfter(">", html)
-
-        // Primary: <p> tags (the standard paragraph element).
-        var paras = Regex("<p[^>]*>([\\s\\S]*?)</p>").findAll(body)
-            .map { m -> cleanXml(m.groupValues[1]) }
-            .filter { it.isNotBlank() && it.length > 1 }
-            .toList()
-
-        // Fallback: <div> or bare text split on newlines.
-        if (paras.isEmpty()) {
-            val text = cleanXml(body)
-            paras = text.split(Regex("\n\\s*\n|\\n"))
-                .map { it.trim() }
-                .filter { it.isNotBlank() && it.length > 1 }
-        }
-        return paras
+    private fun spineHrefs(opf: String, opfPath: String): List<String> {
+        val base = opfPath.substringBeforeLast("/", "")
+        val idrefs = Regex("""<itemref\s+idref="([^"]+)"""").findAll(opf)
+            .map { it.groupValues[1] }.toList()
+        return idrefs.mapNotNull { idref ->
+            Regex("""<item\s+[^>]*id="$idref"[^>]*href="([^"]+)"""").find(opf)?.groupValues?.get(1)
+                ?: Regex("""<item\s+[^>]*href="([^"]+)"[^>]*id="$idref"""").find(opf)?.groupValues?.get(1)
+        }.map { href -> if (base.isBlank() || href.startsWith("http")) href else "$base/$href" }
     }
 }
