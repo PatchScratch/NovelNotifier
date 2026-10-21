@@ -692,16 +692,18 @@ fun ReaderScreen(
                 } else {
                     val r = LocalLibraryStore.chapterText(context, b, idx)
                     if (r == null) DebugLog.log("LOCALLIB", "chapterText null for idx=$idx")
-                    else DebugLog.log("LOCALLIB", "chapterText: ${r.second.size} paras, title=${r.first.take(40)}")
+                    else DebugLog.log(
+                        "LOCALLIB",
+                        "chapterText: ${r.paragraphs.size} paras, ${r.images.size} imgs, title=${r.title.take(40)}"
+                    )
                     r
                 }
             }
-            val paras = result?.second ?: emptyList()
-            val title = result?.first ?: ""
-            if (paras.isNotEmpty()) {
+            if (result != null) {
                 extractResult = ChapterExtract(
-                    title = title.ifBlank { chapter.chapter },
-                    paragraphs = paras
+                    title = result.title.ifBlank { chapter.chapter },
+                    paragraphs = result.paragraphs,
+                    images = result.images
                 )
                 // Persist read position for the detail's Next Chapter.
                 prefs.edit { putInt("local_pos_$bookId", idx + 1) }

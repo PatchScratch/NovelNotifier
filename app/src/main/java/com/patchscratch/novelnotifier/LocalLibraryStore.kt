@@ -267,6 +267,8 @@ object LocalLibraryStore {
                 }
             }
             coverFile(context, bookId)?.delete()
+            // Extracted illustration cache rides with the book.
+            File(context.filesDir, "local_lib_media/$bookId").deleteRecursively()
         }
     }
 
@@ -310,7 +312,22 @@ object LocalLibraryStore {
         return result ?: emptyList()
     }
 
-    fun chapterText(context: Context, book: LocalBook, index: Int): Pair<String, List<String>>? =
+    /**
+     * Chapter body for the reader (locallib:// serving).
+     *
+     * [images] are inline illustrations (cover pages, inserted art) whose
+     * bytes come from the epub zip; they render through the shared reader's
+     * paragraph-anchored illustration path. An image-only page synthesizes
+     * one blank paragraph — otherwise the render loop never runs and the
+     * page reads as "Couldn't extract" (live-caught on an epub cover page).
+     */
+    data class LocalChapter(
+        val title: String,
+        val paragraphs: List<String>,
+        val images: List<Pair<Int, String>> = emptyList()   // (paragraphIndex, file:// URL)
+    )
+
+    fun chapterText(context: Context, book: LocalBook, index: Int): LocalChapter? =
         withZip(context, book) { zip, opfPath ->
             val opfBytes = zip.getEntry(opfPath)?.let { zip.getInputStream(it).readBytes() }
                 ?: return@withZip null
@@ -322,8 +339,49 @@ object LocalLibraryStore {
                 ?: return@withZip null
             val title = Regex("<title[^>]*>([^<]*)</title>").find(doc)
                 ?.groupValues?.get(1)?.trim().orEmpty()
-            title to extractParagraphs(doc)
+            val body = doc.substringAfter("<body", doc).substringAfter(">", doc)
+            val paras = extractParagraphs(doc)
+            val images = extractImages(context, book, zip, body, hrefs[index])
+            val finalParas =
+                if (paras.isEmpty() && images.isNotEmpty()) listOf("") else paras
+            LocalChapter(title, finalParas, images)
         }
+
+    /**
+     * <img> and SVG-wrapped <image> elements in a chapter body → cached
+     * local files. The src resolves against the chapter's own directory
+     * (the same base-path discipline as spineHrefs — never the OPF's);
+     * bytes land in filesDir/local_lib_media/<bookId>/ so re-opening a
+     * chapter doesn't re-extract. Coil loads the returned file:// URLs
+     * directly; EpubMediaStore's http-only cache stays out of it.
+     */
+    private fun extractImages(
+        context: Context, book: LocalBook, zip: ZipFile, body: String, chapterHref: String
+    ): List<Pair<Int, String>> {
+        val base = chapterHref.substringBeforeLast("/", "")
+        // Paragraph anchor = how many <p> opens precede the image, so art
+        // sits between the paragraphs it visually belongs to.
+        val pOpens = Regex("<p\\b").findAll(body).map { it.range.first }.toList()
+        val out = mutableListOf<Pair<Int, String>>()
+        val imgTag = Regex("""<img[^>]+src="([^"]+)"|<image[^>]+(?:xlink:)?href="([^"]+)"""")
+        imgTag.findAll(body).forEach { m ->
+            val src = (m.groupValues[1].ifBlank { m.groupValues[2] }).substringBefore("?")
+            if (src.isBlank() || src.startsWith("http")) return@forEach
+            val full = if (base.isBlank()) src else "$base/$src"
+            val entry = zip.getEntry(full) ?: return@forEach
+            val ext = full.substringAfterLast('.', "jpg").lowercase()
+                .takeIf { it.length in 2..4 && it.all { c -> c.isLetterOrDigit() } } ?: "jpg"
+            val dir = File(context.filesDir, "local_lib_media/${book.id}").apply { mkdirs() }
+            val f = File(dir, "${full.hashCode()}.$ext")
+            if (!f.isFile || f.length() == 0L) {
+                runCatching { zip.getInputStream(entry).use { it.copyTo(f.outputStream()) } }
+            }
+            if (f.isFile && f.length() > 0) {
+                out.add(pOpens.count { it < m.range.first } to f.toURI().toString())
+            }
+        }
+        return out
+    }
 
     private fun extractParagraphs(html: String): List<String> {
         fun cleanXml(raw: String): String = raw
