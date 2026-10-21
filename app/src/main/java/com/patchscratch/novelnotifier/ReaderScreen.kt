@@ -1601,15 +1601,20 @@ fun ReaderScreen(
         }
 
         // --- the page: extracted text surface + (hidden) WebView ---
+        val isLocalLibChapter = chapter.url.startsWith("locallib://")
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(if (showText) palette.background else Color.White)
+                // Always the themed background — the old Color.White
+                // fallback showed a jarring white panel on locallib://
+                // chapters and on slow-loading sites (Wayne 2026-10-21).
+                .background(palette.background)
         ) {
             // WebView stays composed (keeps its page + session) but moves
-            // off-screen while the extracted text is on top.
-            AndroidView(
+            // off-screen while the extracted text is on top. Local Library
+            // chapters skip it entirely — no page to load.
+            if (!isLocalLibChapter) {
                 modifier = if (showText) {
                     Modifier
                         .size(1.dp)
@@ -1748,6 +1753,7 @@ fun ReaderScreen(
                     }
                 }
             )
+            } // !isLocalLibChapter
 
             // Qidian/Webnovel warning (Wayne's rule, 2026-10-20): these
             // sites are never scraped or loaded by the app — they actively

@@ -299,7 +299,9 @@ object LocalLibraryStore {
 
     /**
      * Chapter body → paragraphs for the reader (locallib:// serving).
-     * Returns (title, paragraphs).
+     * Returns (title, paragraphs). Handles <p>, <div>, <span>, and <br>
+     * markup — epubs vary widely; the extraction tries <p> first (the
+     * cleanest signal) then falls back to <br>-split div text.
      */
     fun chapterText(context: Context, book: LocalBook, index: Int): Pair<String, List<String>>? =
         withZip(context, book) { zip, opfPath ->
@@ -313,19 +315,37 @@ object LocalLibraryStore {
                 ?: return@withZip null
             val title = Regex("<title[^>]*>([^<]*)</title>").find(doc)
                 ?.groupValues?.get(1)?.trim().orEmpty()
+
+            fun cleanXml(raw: String): String = raw
+                .replace(Regex("<br\\s*/?>"), "\n")
+                .replace(Regex("<[^>]+>"), "")
+                .replace("&amp;", "&").replace("&lt;", "<")
+                .replace("&gt;", ">").replace("&quot;", "\"")
+                .replace("&#39;", "'").replace("&nbsp;", " ")
+                .trim()
+
             val body = doc.substringAfter("<body", doc).substringAfter(">", doc)
-            val paras = Regex("<p[^>]*>([\\s\\S]*?)</p>").findAll(body)
-                .map { m ->
-                    m.groupValues[1]
-                        .replace(Regex("<br\\s*/?>"), "\n")
-                        .replace(Regex("<[^>]+>"), "")
-                        .replace("&amp;", "&").replace("&lt;", "<")
-                        .replace("&gt;", ">").replace("&quot;", "\"")
-                        .replace("&#39;", "'").replace("&nbsp;", " ")
-                        .trim()
-                }
+
+            // Primary: <p> tags (the standard paragraph element).
+            var paras = Regex("<p[^>]*>([\\s\\S]*?)</p>").findAll(body)
+                .map { m -> cleanXml(m.groupValues[1]) }
                 .filter { it.isNotBlank() && it.length > 1 }
                 .toList()
+
+            // Fallback: epubs using <div> or <span> for paragraphs — split
+            // the body text on <br> boundaries or double newlines.
+            if (paras.isEmpty()) {
+                val text = cleanXml(body)
+                paras = text.split(Regex("\n\\s*\n|\\n"))
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() && it.length > 1 }
+                if (paras.size == 1 && paras[0].length > 5000) {
+                    // One giant block: split on sentence-like boundaries.
+                    paras = paras[0].split(Regex("(?<=[.!?。！？])\\s+"))
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                }
+            }
             title to paras
         }
 
