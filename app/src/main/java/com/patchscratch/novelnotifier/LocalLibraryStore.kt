@@ -149,8 +149,40 @@ object LocalLibraryStore {
         return null
     }
 
-    fun coverFile(context: Context, bookId: String): File? =
-        File(File(context.filesDir, "local_covers"), "$bookId.jpg").takeIf { it.isFile }
+    /**
+     * Cover for a book: cached file, or lazily extracted from the epub zip
+     * (books imported before the base-path fix have no cached cover).
+     */
+    fun coverFile(context: Context, bookId: String): File? {
+        val cached = File(File(context.filesDir, "local_covers"), "$bookId.jpg")
+        if (cached.isFile) return cached
+        // Lazy extraction: books imported with the pre-fix code have no
+        // cover in the cache — pull it from the epub now (one-time).
+        val book = book(context, bookId) ?: return null
+        runCatching {
+            withZip(context, book) { zip, opfPath ->
+                val opf = zip.getEntry(opfPath)
+                    ?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
+                    ?: return@withZip null
+                val base = opfPath.substringBeforeLast("/", "")
+                val coverHref = Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""")
+                    .find(opf)?.groupValues?.get(1)
+                val coverBytes: ByteArray? = coverHref?.let { ch ->
+                    val full = if (base.isBlank()) ch else "$base/$ch"
+                    zip.getEntry(full)?.let { zip.getInputStream(it).readBytes() }
+                } ?: zip.getEntry("OEBPS/cover.jpg")?.let { zip.getInputStream(it).readBytes() }
+                  ?: zip.getEntry("OEBPS/cover.png")?.let { zip.getInputStream(it).readBytes() }
+                  ?: zip.getEntry("cover.jpg")?.let { zip.getInputStream(it).readBytes() }
+                  ?: zip.getEntry("cover.png")?.let { zip.getInputStream(it).readBytes() }
+                coverBytes?.let { bytes ->
+                    val dir = File(context.filesDir, "local_covers").apply { mkdirs() }
+                    File(dir, "$bookId.jpg").writeBytes(bytes)
+                }
+                null // withZip expects T?; we use it for the side effect
+            }
+        }
+        return cached.takeIf { it.isFile }
+    }
 
     fun import(context: Context, libraryId: String, source: Uri): LocalBook? {
         val bytes = runCatching {
