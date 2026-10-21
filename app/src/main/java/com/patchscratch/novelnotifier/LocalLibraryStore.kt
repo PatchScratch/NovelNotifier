@@ -153,11 +153,17 @@ object LocalLibraryStore {
      * Cover for a book: cached file, or lazily extracted from the epub zip
      * (books imported before the base-path fix have no cached cover).
      */
+    /**
+     * Cover for a book, stored in CoverStore (keyed by the locallib:// URL)
+     * so the shared CoverThumb component finds it via its standard
+     * CoverStore.localFile() lookup. Books imported before the base-path
+     * fix get their cover lazily extracted from the epub on first access.
+     */
     fun coverFile(context: Context, bookId: String): File? {
-        val cached = File(File(context.filesDir, "local_covers"), "$bookId.jpg")
-        if (cached.isFile) return cached
-        // Lazy extraction: books imported with the pre-fix code have no
-        // cover in the cache — pull it from the epub now (one-time).
+        val seriesUrl = "locallib://$bookId"
+        // CoverStore first — this is what CoverThumb checks.
+        CoverStore.localFile(context, seriesUrl)?.let { return it }
+        // Lazy extraction from the epub.
         val book = book(context, bookId) ?: return null
         runCatching {
             withZip(context, book) { zip, opfPath ->
@@ -175,13 +181,12 @@ object LocalLibraryStore {
                   ?: zip.getEntry("cover.jpg")?.let { zip.getInputStream(it).readBytes() }
                   ?: zip.getEntry("cover.png")?.let { zip.getInputStream(it).readBytes() }
                 coverBytes?.let { bytes ->
-                    val dir = File(context.filesDir, "local_covers").apply { mkdirs() }
-                    File(dir, "$bookId.jpg").writeBytes(bytes)
+                    CoverStore.saveGenerated(context, seriesUrl, bytes, "jpg")
                 }
-                null // withZip expects T?; we use it for the side effect
+                null
             }
         }
-        return cached.takeIf { it.isFile }
+        return CoverStore.localFile(context, seriesUrl)
     }
 
     fun import(context: Context, libraryId: String, source: Uri): LocalBook? {
@@ -197,8 +202,7 @@ object LocalLibraryStore {
         val stored = storeBytes(context, lib, fileName, bytes, bookId)
         parsed.coverBytes?.let { cov ->
             runCatching {
-                val dir = File(context.filesDir, "local_covers").apply { mkdirs() }
-                File(dir, "$bookId.jpg").writeBytes(cov)
+                CoverStore.saveGenerated(context, "locallib://$bookId", cov, "jpg")
             }
         }
         val book = LocalBook(
