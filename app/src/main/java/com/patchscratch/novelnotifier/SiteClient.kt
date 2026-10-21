@@ -100,6 +100,19 @@ object SiteClient {
         return state.processing || state.sessionActive || state.queue.isNotEmpty()
     }
 
+    /**
+     * Surface the challenge pane NOW for a user-initiated load (Wayne,
+     * 2026-10-21: "where is my human intervention — it should happen and
+     * not force the user to wait hours"). Pull-to-refresh hitting CF opens
+     * the pane immediately instead of the repeat-within-60s gate.
+     */
+    fun surfaceChallenge(site: Site, blockedUrl: String? = null) {
+        if (_cfNeeded.value == null) {
+            _cfNeeded.value = CfChallenge(site, blockedUrl ?: site.homeUrl())
+            DebugLog.log("SITE", "challenge pane surfaced for ${site.name} (user-initiated)")
+        }
+    }
+
     /** Cloudflare encountered — apply escalating cooldown. */
     fun reportCloudflare(site: Site, blockedUrl: String? = null) {
         val state = sites[site] ?: return

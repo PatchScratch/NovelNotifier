@@ -127,6 +127,22 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
         persistLists()
     }
 
+    // One auto-retry after the user clears a challenge pane (the CF branch
+    // of handleScrape arms it; the collector fires when the pane clears).
+    private var retryAfterChallenge = false
+
+    init {
+        viewModelScope.launch {
+            SiteClient.cfNeeded.collect { challenge ->
+                if (challenge == null && retryAfterChallenge) {
+                    retryAfterChallenge = false
+                    DebugLog.log("SYNC", "challenge cleared — retrying list scrape")
+                    if (selectedListId.isNotBlank()) scrape()
+                }
+            }
+        }
+    }
+
     /** Pull-to-refresh on a site list (RSS-mode refresh is handled by the screen). */
     fun pullToRefreshList() {
         if (selectedListId.isBlank()) return
@@ -179,8 +195,13 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
         when {
             raw == "CF" -> {
                 markSiteCheckNeeded(prefs)
-                listStatus = "Site check needed — try again shortly"
-                DebugLog.log("SYNC", "list scrape hit Cloudflare")
+                // Human intervention FIRST (Wayne, 2026-10-21): a blocked
+                // user-initiated refresh opens the challenge pane right
+                // away, and the refresh auto-retries once it's cleared.
+                retryAfterChallenge = true
+                listStatus = "Cloudflare — complete the check to continue"
+                SiteClient.surfaceChallenge(SiteClient.Site.NU, lastFinishedUrl.ifBlank { null })
+                DebugLog.log("SYNC", "list scrape hit Cloudflare — pane surfaced")
             }
             isLoginRedirect(lastFinishedUrl) || raw.contains("wp-login.php") -> {
                 listStatus = "Session expired — log in from Settings"
