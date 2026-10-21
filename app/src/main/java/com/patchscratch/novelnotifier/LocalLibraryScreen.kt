@@ -43,7 +43,7 @@ fun LocalLibraryHome(
     onOpenSettings: () -> Unit,
     onCheckUpdate: () -> Unit,
     onOpenBook: (LocalLibraryStore.LocalBook) -> Unit,
-    onOpenSeries: (LocalLibraryStore.SeriesGroup) -> Unit,
+    onOpenSeries: (String) -> Unit,
     onOpenCategories: () -> Unit
 ) {
     val context = LocalContext.current
@@ -154,58 +154,51 @@ fun LocalLibraryHome(
         }
     }
 
-    // Build BookmarkRow items — the exact same shape the sites produce.
-    // B3: shelf filter applies before grouping (a series shows when ANY of
-    // its volumes sits on the shelf); multi-volume epubs collapse into one
-    // series row whose cover/name come from volume 1. Books on a hidden
+    // Rows are SERIES (Wayne, 2026-10-21: "Series = Series") — the same unit
+    // the sites' grids show. Cover/name from volume 1; unread = chapters
+    // remaining across volumes; shelves hold series. Books on a hidden
     // (locked) shelf stay out of the grid entirely.
+    val sidMap = LocalLibraryStore.seriesIdMap(context)
     val hiddenShelfIds = shelves.cats.filter { it.hidden && !nsfwUnlocked }.map { it.id }.toSet()
     val visibleBooks = books.filter { b ->
-        shelves.assign[b.id]?.let { it !in hiddenShelfIds } ?: true
+        val sid = sidMap[b.id]
+        sid?.let { shelves.assign[it] }?.let { it !in hiddenShelfIds } ?: true
     }
-    val shelfBooks = if (shelfFilter != null) {
-        visibleBooks.filter { shelves.assign[it.id] == shelfFilter }
-    } else visibleBooks
-    val items = LocalLibraryStore.groupedBooks(
-        shelfBooks.filter { it.title.contains(searchQuery, ignoreCase = true) }
-            .sortedWith(
-                when (sortMode) {
-                    SORT_ALPHA -> compareBy { it.title.lowercase() }
-                    SORT_UPDATE_TIME -> compareByDescending { it.addedAt }
-                    else -> compareByDescending { it.addedAt }
-                }
-            )
-    )
-    val rows = items.map { item ->
-        when (item) {
-            is LocalLibraryStore.SeriesGroup -> {
-                val vol1 = item.volumes[0]
-                val coverPath = LocalLibraryStore.coverFile(context, vol1.id)?.absolutePath.orEmpty()
-                BookmarkRow(
-                    title = item.name.ifBlank { vol1.title },
-                    subtitle = vol1.author,
-                    coverUrl = if (coverPath.isNotBlank()) "file://$coverPath" else "",
-                    // Volume 1's CoverStore key — the group has no stored
-                    // cover of its own, it borrows the first epub's.
-                    seriesUrl = "locallib://${vol1.id}",
-                    open = { onOpenSeries(item) },
-                    unread = 0,
-                    latestLabel = "${item.volumes.size} ${t("vols", "巻")}"
-                )
+    val bySeries = visibleBooks.groupBy { sidMap[it.id] ?: it.id }
+    val prefsForUnread = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+    val allSeries = LocalLibraryStore.seriesList(context, libraryId)
+    val rows = allSeries
+        .filter { s -> (shelves.assign[s.id]?.let { it !in hiddenShelfIds } ?: true) }
+        .filter { s -> shelfFilter == null || shelves.assign[s.id] == shelfFilter }
+        .filter { s -> bySeries[s.id].orEmpty().isNotEmpty() }
+        .filter { s -> s.name.contains(searchQuery, ignoreCase = true) }
+        .sortedWith(
+            when (sortMode) {
+                SORT_ALPHA -> compareBy { it.name.lowercase() }
+                else -> compareByDescending { s -> bySeries[s.id].orEmpty().maxOfOrNull { it.addedAt } ?: 0 }
             }
-            is LocalLibraryStore.LocalBook -> BookmarkRow(
-                title = item.title,
-                subtitle = item.author,
-                coverUrl = LocalLibraryStore.coverFile(context, item.id)
-                    ?.let { "file://${it.absolutePath}" } ?: "",
-                seriesUrl = "locallib://${item.id}",
-                open = { onOpenBook(item) },
-                unread = 0,
-                latestLabel = if (item.chapterCount > 0) "${item.chapterCount} ${t("ch", "話")}" else ""
+        )
+        .map { s ->
+            val vols = bySeries[s.id].orEmpty()
+                .sortedWith(compareBy({ LocalLibraryStore.volumeNumber(it.title) }, { it.addedAt }))
+            val vol1 = vols.firstOrNull()
+            val unread = vols.sumOf { v ->
+                val pos = prefsForUnread.getInt("local_pos_${v.id}", 0)
+                maxOf(0, v.chapterCount - pos)
+            }
+            val coverPath = vol1?.let { LocalLibraryStore.coverFile(context, it.id)?.absolutePath }.orEmpty()
+            BookmarkRow(
+                title = s.name,
+                subtitle = vol1?.author.orEmpty(),
+                coverUrl = if (coverPath.isNotBlank()) "file://$coverPath" else "",
+                // Volume 1's CoverStore key — the series borrows its cover.
+                seriesUrl = vol1?.let { "locallib://${it.id}" } ?: "",
+                open = { onOpenSeries(s.id) },
+                unread = unread,
+                latestLabel = if (vols.size > 1) "${vols.size} ${t("vols", "巻")}"
+                else vol1?.takeIf { it.chapterCount > 0 }?.let { "${it.chapterCount} ${t("ch", "話")}" } ?: ""
             )
-            else -> null
         }
-    }.filterNotNull()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -287,7 +280,8 @@ fun LocalLibraryHome(
                             )
                         }
                         shelves.cats.filter { !it.hidden || nsfwUnlocked }.forEach { cat ->
-                            val count = visibleBooks.count { assignments[it.id] == cat.id }
+                            // Shelves hold SERIES now — counts follow.
+                            val count = allSeries.count { assignments[it.id] == cat.id }
                             NavigationDrawerItem(
                                 label = { Text("${cat.name}  ($count)" ) },
                                 selected = shelfFilter == cat.id,

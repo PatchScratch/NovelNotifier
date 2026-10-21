@@ -44,11 +44,16 @@ object LocalLibraryStore {
         val linked: Boolean = false
     )
 
-    /** A multi-volume group on the home grid: name = volume 1's stripped title. */
-    data class SeriesGroup(
-        val key: String,
+    /** A series: the unit the grid shows and shelves hold (Wayne, 2026-10-21:
+     *  "Library = Sites, Shelves = Categories, Series = Series"). [key] is
+     *  the auto-match key imports join on; [description] is a display
+     *  override — epub files are never rewritten. */
+    data class LocalSeries(
+        val id: String,
+        val libraryId: String,
         val name: String,
-        val volumes: List<LocalBook>   // volume-number order
+        val key: String,
+        val description: String = ""
     )
 
     private const val INDEX = "local_libraries.json"
@@ -249,8 +254,28 @@ object LocalLibraryStore {
             fileName = fileName, chapterCount = parsed.chapterTitles.size,
             addedAt = System.currentTimeMillis(), linked = linkInPlace
         )
-        val root = readIndex(context)
-        val arr = root.optJSONArray("books") ?: JSONArray().also { root.put("books", it) }
+        ensureSeriesMigration(context)
+        val rootNow = readIndex(context)
+        // Join the series whose key matches (auto-grouping); otherwise this
+        // import founds a new one. Solo pins are gone — membership is direct.
+        val key = seriesKey(book.title)
+        val seriesArr = rootNow.optJSONArray("series") ?: JSONArray().also { rootNow.put("series", it) }
+        var seriesId: String? = null
+        for (i in 0 until seriesArr.length()) {
+            val o = seriesArr.optJSONObject(i) ?: continue
+            if (o.optString("libraryId") == lib.id && o.optString("key") == key) {
+                seriesId = o.optString("id"); break
+            }
+        }
+        if (seriesId == null) {
+            seriesId = "s" + UUID.randomUUID().toString().take(8)
+            seriesArr.put(
+                JSONObject().put("id", seriesId).put("libraryId", lib.id)
+                    .put("name", strippedTitle(book.title).ifBlank { book.title })
+                    .put("key", key)
+            )
+        }
+        val arr = rootNow.optJSONArray("books") ?: JSONArray().also { rootNow.put("books", it) }
         arr.put(
             JSONObject().put("id", book.id).put("libraryId", book.libraryId)
                 .put("title", book.title).put("author", book.author)
@@ -258,8 +283,9 @@ object LocalLibraryStore {
                 .put("storedUri", stored.first).put("storedPath", stored.second)
                 .put("opfPath", parsed.opfPath).put("chapters", book.chapterCount)
                 .put("addedAt", book.addedAt).put("ref", linkInPlace)
+                .put("seriesId", seriesId)
         )
-        writeIndex(context, root)
+        writeIndex(context, rootNow)
         return book
     }
 
@@ -387,57 +413,170 @@ object LocalLibraryStore {
         writeIndex(context, root)
     }
 
-    fun setSeriesOverride(context: Context, bookId: String, override: String) {
+    /** Volume metadata edit (index-level — epubs on disk never change). */
+    fun setBookMeta(
+        context: Context, bookId: String,
+        title: String? = null, author: String? = null, description: String? = null
+    ) {
         val root = readIndex(context)
         val arr = root.optJSONArray("books") ?: return
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("id") == bookId) { o.put("seriesOverride", override); break }
+            if (o.optString("id") == bookId) {
+                title?.takeIf { it.isNotBlank() }?.let { o.put("title", it.trim()) }
+                author?.let { o.put("author", it.trim()) }
+                description?.let { o.put("description", it.trim()) }
+                break
+            }
         }
         writeIndex(context, root)
     }
 
-    /** Blank override → the title-derived auto key; "solo:" never groups. */
-    fun effectiveSeriesKey(book: LocalBook): String = when {
-        book.seriesOverride.startsWith("solo:") -> book.seriesOverride
-        book.seriesOverride.isNotBlank() -> book.seriesOverride
-        else -> seriesKey(book.title)
+    /**
+     * Index v3 migration (one-shot): every book lands in an explicit series
+     * (grouped by the old effective key; solo-override books get their own).
+     * Shelf assignments re-key bookId → seriesId in the same pass so nothing
+     * already shelved falls off. Detected by the absence of "series".
+     */
+    private fun ensureSeriesMigration(context: Context) {
+        val root = readIndex(context)
+        if (root.has("series")) return
+        val booksArr = root.optJSONArray("books") ?: JSONArray().also { root.put("books", it) }
+        val bookObjs = (0 until booksArr.length()).mapNotNull { booksArr.optJSONObject(it) }
+        if (bookObjs.isEmpty()) { root.put("series", JSONArray()); writeIndex(context, root); return }
+        val byKey = bookObjs.groupBy { o ->
+            val override = o.optString("seriesOverride")
+            when {
+                override.startsWith("solo:") -> "solo:" + o.optString("id")
+                override.isNotBlank() -> override
+                else -> o.optString("libraryId") + "|||" + seriesKey(o.optString("title"))
+            }
+        }
+        val seriesArr = JSONArray()
+        val bookToSeries = HashMap<String, String>()
+        byKey.values.forEach { group ->
+            val first = group.first()
+            val sid = "s" + UUID.randomUUID().toString().take(8)
+            seriesArr.put(
+                JSONObject().put("id", sid).put("libraryId", first.optString("libraryId"))
+                    .put("name", strippedTitle(first.optString("title")).ifBlank { first.optString("title") })
+                    .put("key", seriesKey(first.optString("title")))
+            )
+            group.forEach { it.put("seriesId", sid); bookToSeries[it.optString("id")] = sid }
+        }
+        root.put("series", seriesArr)
+        writeIndex(context, root)
+        // Re-key shelf assignments to series ids.
+        val libs = root.optJSONArray("libraries") ?: JSONArray()
+        for (i in 0 until libs.length()) {
+            val libId = libs.optJSONObject(i)?.optString("id") ?: continue
+            val st = CategoryStore.load(context, "local:$libId")
+            if (st.assign.isEmpty()) continue
+            val rekeyed = st.assign.mapKeys { (bookId, _) -> bookToSeries[bookId] ?: bookId }
+            if (rekeyed != st.assign) CategoryStore.save(context, "local:$libId", st.copy(assign = rekeyed))
+        }
+    }
+
+    fun seriesList(context: Context, libraryId: String? = null): List<LocalSeries> {
+        ensureSeriesMigration(context)
+        val root = readIndex(context)
+        val arr = root.optJSONArray("series") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { o ->
+                if (libraryId != null && o.optString("libraryId") != libraryId) return@mapNotNull null
+                LocalSeries(
+                    o.optString("id"), o.optString("libraryId"),
+                    o.optString("name"), o.optString("key"), o.optString("description")
+                )
+            }
+        }
+    }
+
+    fun seriesById(context: Context, id: String): LocalSeries? =
+        seriesList(context).firstOrNull { it.id == id }
+
+    /** The series' volumes in volume order (volume number, then addedAt). */
+    fun seriesVolumesOf(context: Context, seriesId: String): List<LocalBook> {
+        ensureSeriesMigration(context)
+        val map = seriesIdMap(context)
+        return books(context).filter { map[it.id] == seriesId }
+            .sortedWith(compareBy({ volumeNumber(it.title) }, { it.addedAt }))
+    }
+
+    /** bookId → seriesId in one index read (migration guarantees one). */
+    fun seriesIdMap(context: Context): Map<String, String> {
+        val arr = readIndex(context).optJSONArray("books") ?: return emptyMap()
+        val m = HashMap<String, String>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val sid = o.optString("seriesId").takeIf { it.isNotBlank() } ?: continue
+            m[o.optString("id")] = sid
+        }
+        return m
+    }
+
+    fun renameSeries(context: Context, id: String, name: String) {
+        val clean = name.trim()
+        if (clean.isBlank()) return
+        mutateSeries(context, id) { it.put("name", clean) }
+    }
+
+    fun setSeriesDescription(context: Context, id: String, description: String) {
+        mutateSeries(context, id) { it.put("description", description.trim()) }
+    }
+
+    private fun mutateSeries(context: Context, id: String, fn: (JSONObject) -> Unit) {
+        val root = readIndex(context)
+        val arr = root.optJSONArray("series") ?: return
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("id") == id) { fn(o); break }
+        }
+        writeIndex(context, root)
+    }
+
+    /** Deletes the series AND every volume in it (epub files only when copied). */
+    fun deleteSeries(context: Context, id: String) {
+        seriesVolumesOf(context, id).forEach { deleteBook(context, it.id) }
+        val root = readIndex(context)
+        val arr = root.optJSONArray("series") ?: return
+        val keep = JSONArray()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("id") != id) keep.put(o)
+        }
+        root.put("series", keep)
+        writeIndex(context, root)
     }
 
     /**
-     * Home rows: solo books stay books; keys with 2+ volumes collapse into
-     * ONE SeriesGroup at the first-encountered position so every sort mode
-     * stays meaningful (recency: the newest volume's slot; alpha: the
-     * series name's slot). Volume order inside a group = volume number,
-     * then addedAt; the group's cover/name come from volume 1 (Wayne's
-     * B1/B2 rule: "extract cover from first epub in series").
+     * Move a volume to another series; null spawns a fresh solo series —
+     * this replaces the old override/solo machinery with direct membership.
      */
-    fun groupedBooks(books: List<LocalBook>): List<Any> {
-        val byKey = books.groupBy { effectiveSeriesKey(it) }
-        val seen = mutableSetOf<String>()
-        val out = mutableListOf<Any>()
-        books.forEach { b ->
-            val key = effectiveSeriesKey(b)
-            val group = byKey[key].orEmpty()
-            if (group.size >= 2) {
-                if (key in seen) return@forEach
-                seen.add(key)
-                val volumes = group.sortedWith(
-                    compareBy({ volumeNumber(it.title) }, { it.addedAt })
-                )
-                out.add(SeriesGroup(key, strippedTitle(volumes[0].title), volumes))
-            } else {
-                out.add(b)
-            }
+    fun moveBookToSeries(context: Context, bookId: String, seriesId: String?) {
+        val root = readIndex(context)
+        val books = root.optJSONArray("books")
+        var book: JSONObject? = null
+        for (i in 0 until (books?.length() ?: 0)) {
+            val o = books!!.optJSONObject(i) ?: continue
+            if (o.optString("id") == bookId) { book = o; break }
         }
-        return out
+        if (book == null) return
+        val target = seriesId ?: run {
+            val sid = "s" + UUID.randomUUID().toString().take(8)
+            val seriesArr = root.optJSONArray("series") ?: JSONArray().also { root.put("series", it) }
+            seriesArr.put(
+                JSONObject().put("id", sid).put("libraryId", book.optString("libraryId"))
+                    .put("name", strippedTitle(book.optString("title")).ifBlank { book.optString("title") })
+                    .put("key", seriesKey(book.optString("title")))
+            )
+            book.put("seriesOverride", "")  // solo pins are obsolete under v3
+            sid
+        }
+        book.put("seriesId", target)
+        book.put("seriesOverride", "")
+        writeIndex(context, root)
     }
-
-    /** Books whose effective key matches [key], volume order (series page). */
-    fun seriesVolumes(context: Context, libraryId: String, key: String): List<LocalBook> =
-        books(context, libraryId)
-            .filter { effectiveSeriesKey(it) == key }
-            .sortedWith(compareBy({ volumeNumber(it.title) }, { it.addedAt }))
 
     /**
      * Auto-grouping key: the title with its trailing volume token stripped

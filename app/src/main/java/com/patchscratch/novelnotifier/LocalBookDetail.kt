@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,22 +36,19 @@ fun LocalBookDetail(
     bookId: String,
     onBack: () -> Unit,
     onOpenReader: (ReaderTarget) -> Unit,
-    onOpenCategories: () -> Unit = {}
+    onOpenSeries: (String) -> Unit
 ) {
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var book by remember(bookId) { mutableStateOf<LocalLibraryStore.LocalBook?>(null) }
     var chapters by remember(bookId) { mutableStateOf<List<String>>(emptyList()) }
-    var shelves by remember(bookId) { mutableStateOf(CategoryState()) }
+    var mySeries by remember(bookId) { mutableStateOf<LocalLibraryStore.LocalSeries?>(null) }
+    var otherSeries by remember(bookId) { mutableStateOf<List<LocalLibraryStore.LocalSeries>>(emptyList()) }
     var loading by remember(bookId) { mutableStateOf(true) }
-    var showShelfPicker by remember { mutableStateOf(false) }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-    var translatedTitle by remember(bookId) { mutableStateOf("") }
-    var readPos by remember(bookId) { mutableIntStateOf(0) }
-    // B3 series grouping: other books in this library (picker) + whether
-    // this book currently sits inside a group.
-    var libraryBooks by remember(bookId) { mutableStateOf<List<LocalLibraryStore.LocalBook>>(emptyList()) }
     var showSeriesPicker by remember { mutableStateOf(false) }
+    var showEditMeta by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var readPos by remember(bookId) { mutableIntStateOf(0) }
 
     fun currentLibraryId(): String = book?.libraryId ?: "default"
 
@@ -59,8 +57,10 @@ fun LocalBookDetail(
             book = LocalLibraryStore.book(context, bookId)
             book?.let { b ->
                 chapters = LocalLibraryStore.chapterTitles(context, b)
-                shelves = CategoryStore.load(context, "local:${b.libraryId}")
-                libraryBooks = LocalLibraryStore.books(context, b.libraryId)
+                val sid = LocalLibraryStore.seriesIdMap(context)[b.id]
+                mySeries = sid?.let { LocalLibraryStore.seriesById(context, it) }
+                otherSeries = LocalLibraryStore.seriesList(context, b.libraryId)
+                    .filter { it.id != sid }
             }
         }
         val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
@@ -69,11 +69,6 @@ fun LocalBookDetail(
     }
 
     val b = book ?: return
-    val currentShelf = shelves.assign[b.id]?.let { id -> shelves.cats.firstOrNull { it.id == id } }
-    // Series state: a book is "grouped" when another book shares its
-    // effective key (auto or manual).
-    val myKey = LocalLibraryStore.effectiveSeriesKey(b)
-    val siblings = libraryBooks.filter { it.id != b.id && LocalLibraryStore.effectiveSeriesKey(it) == myKey }
 
     fun toChapters(): List<Release> = chapters.mapIndexed { i, title ->
         Release(chapter = title, group = "", date = "", url = "locallib://$bookId/$i")
@@ -103,10 +98,14 @@ fun LocalBookDetail(
             title = b.title,
             author = b.author,
             rating = "",
-            groupBadge = currentShelf?.name ?: "",
-            changeGroupLabel = if (currentShelf != null) "⚑ ${currentShelf.name}"
-            else t("⚑ SHELF", "⚑ 棚"),
-            onChangeGroup = { showShelfPicker = true },
+            // Shelves hold SERIES now — the badge on a volume opens its
+            // series page (the ⚑ action row is the natural door).
+            groupBadge = mySeries?.name ?: "",
+            changeGroupLabel = mySeries?.let { "📚 ${it.name}" } ?: t("📚 SERIES", "📚 シリーズ"),
+            onChangeGroup = {
+                val sid = mySeries?.id
+                if (sid != null) onOpenSeries(sid) else showSeriesPicker = true
+            },
             statusLine = "",
             nextChapterLabel = when {
                 chapters.isNotEmpty() && readPos < chapters.size ->
@@ -121,29 +120,40 @@ fun LocalBookDetail(
                 openAt(if (readPos > 0) readPos else 0)
             },
             onMarkRead = null, // local-only: position advances by reading
-            // Series grouping (v3.0 B3): grouped books offer Remove; solo
-            // books offer the merge picker. "solo:" pins a book out of
-            // every group until a manual Add brings it back.
+            // Series membership (v3.0 restructure): move between series or
+            // pull out into a fresh solo one; volume metadata is editable
+            // in place (index-level — epub files never change).
             menuExtra = { closeMenu ->
-                if (siblings.isNotEmpty()) {
+                if (mySeries != null && otherSeries.isNotEmpty()) {
+                    DropdownMenuItem(
+                        text = { Text(t("Move to another series…", "別のシリーズへ移動…")) },
+                        onClick = { closeMenu(); showSeriesPicker = true }
+                    )
+                }
+                if (mySeries != null) {
                     DropdownMenuItem(
                         text = { Text(t("Remove from series", "シリーズから外す")) },
                         onClick = {
                             closeMenu()
                             scope.launch(Dispatchers.IO) {
-                                // "solo:" pins the book out of every group
-                                // until a manual Add brings it back.
-                                LocalLibraryStore.setSeriesOverride(context, b.id, "solo:${b.id}")
-                                libraryBooks = LocalLibraryStore.books(context, b.libraryId)
+                                LocalLibraryStore.moveBookToSeries(context, b.id, null)
+                                val sid = LocalLibraryStore.seriesIdMap(context)[b.id]
+                                mySeries = sid?.let { LocalLibraryStore.seriesById(context, it) }
+                                otherSeries = LocalLibraryStore.seriesList(context, b.libraryId)
+                                    .filter { it.id != sid }
                             }
                         }
                     )
                 } else {
                     DropdownMenuItem(
-                        text = { Text(t("Add to series…", "シリーズに追加…")) },
+                        text = { Text(t("Move to series…", "シリーズに移動…")) },
                         onClick = { closeMenu(); showSeriesPicker = true }
                     )
                 }
+                DropdownMenuItem(
+                    text = { Text(t("Edit volume info…", "巻情報を編集…")) },
+                    onClick = { closeMenu(); showEditMeta = true }
+                )
             },
             synopsis = b.description,
             typeLine = listOfNotNull(
@@ -213,61 +223,74 @@ fun LocalBookDetail(
         )
     )
 
-    // Shelf picker (the Kakuyomu category-picker pattern).
-    if (showShelfPicker) {
-        AlertDialog(
-            onDismissRequest = { showShelfPicker = false },
-            title = { Text(t("Move to shelf", "棚に移動")) },
-            text = {
-                Column {
-                    shelves.cats.forEach { cat ->
-                        TextButton(onClick = {
-                            shelves = CategoryStore.move(shelves, b.id, cat.id)
-                            CategoryStore.save(context, "local:${currentLibraryId()}", shelves)
-                            showShelfPicker = false
-                        }) { Text((if (currentShelf?.id == cat.id) "✓ " else "　") + cat.name) }
-                    }
-                    TextButton(onClick = {
-                        showShelfPicker = false
-                        onOpenCategories()
-                    }) { Text(t("Manage shelves…", "棚を管理…")) }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showShelfPicker = false }) { Text(t("Close", "閉じる")) }
-            }
-        )
-    }
-
-    // Series merge picker (v3.0 B3): pick the book to group with — this
-    // book inherits its effective key, so future auto-matched imports join
-    // the same series.
+    // Series move picker: series, not books — shelves and identity live there.
     if (showSeriesPicker) {
-        val others = libraryBooks.filter { it.id != b.id }
         AlertDialog(
             onDismissRequest = { showSeriesPicker = false },
-            title = { Text(t("Add to series", "シリーズに追加")) },
+            title = { Text(t("Move to series", "シリーズに移動")) },
             text = {
                 Column {
-                    if (others.isEmpty()) {
-                        Text(t("No other books in this library.", "このライブラリに他の本がありません。"))
+                    if (otherSeries.isEmpty()) {
+                        Text(t("No other series in this library.", "このライブラリに他のシリーズはありません。"))
                     }
-                    others.forEach { other ->
+                    otherSeries.forEach { s ->
                         TextButton(onClick = {
                             showSeriesPicker = false
                             scope.launch(Dispatchers.IO) {
-                                LocalLibraryStore.setSeriesOverride(
-                                    context, b.id, LocalLibraryStore.effectiveSeriesKey(other)
-                                )
-                                libraryBooks = LocalLibraryStore.books(context, b.libraryId)
+                                LocalLibraryStore.moveBookToSeries(context, b.id, s.id)
+                                mySeries = LocalLibraryStore.seriesById(context, s.id)
+                                otherSeries = LocalLibraryStore.seriesList(context, b.libraryId)
+                                    .filter { it.id != s.id }
                             }
-                        }) { Text(other.title, maxLines = 1) }
+                        }) { Text(s.name, maxLines = 1) }
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = { showSeriesPicker = false }) { Text(t("Close", "閉じる")) }
             }
+        )
+    }
+
+    // Volume metadata editor (index-level; epub files stay untouched).
+    if (showEditMeta) {
+        var mTitle by remember { mutableStateOf(b.title) }
+        var mAuthor by remember { mutableStateOf(b.author) }
+        var mDesc by remember { mutableStateOf(b.description) }
+        AlertDialog(
+            onDismissRequest = { showEditMeta = false },
+            title = { Text(t("Edit volume info", "巻情報を編集")) },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = mTitle, onValueChange = { mTitle = it },
+                        label = { Text(t("Title", "タイトル")) }, singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = mAuthor, onValueChange = { mAuthor = it },
+                        label = { Text(t("Author", "作者")) }, singleLine = true,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    OutlinedTextField(
+                        value = mDesc, onValueChange = { mDesc = it },
+                        label = { Text(t("Description", "説明")) }, minLines = 3, maxLines = 8,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showEditMeta = false
+                    scope.launch(Dispatchers.IO) {
+                        LocalLibraryStore.setBookMeta(
+                            context, b.id,
+                            title = mTitle, author = mAuthor, description = mDesc
+                        )
+                        book = LocalLibraryStore.book(context, b.id)
+                    }
+                }) { Text(t("Save", "保存")) }
+            },
+            dismissButton = { TextButton(onClick = { showEditMeta = false }) { Text("Cancel") } }
         )
     }
 

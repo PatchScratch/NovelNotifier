@@ -42,8 +42,8 @@ sealed interface Route {
     data class KakuyomuLibrary(val categoryId: String = "") : Route
     /** Local Library book detail (v3.0). */
     data class LocalDetail(val bookId: String) : Route
-    // v3.0 B3: a home-grid series row (grouped multi-volume epubs).
-    data class LocalSeries(val libraryId: String, val key: String) : Route
+    // v3.0 restructure: series is the unit shelves hold and grids show.
+    data class LocalSeries(val libraryId: String, val seriesId: String) : Route
     /** Per-site category management + hidden switches (SFW/NSFW). */
     data class Categories(val site: String) : Route
     data object Discover : Route

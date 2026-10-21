@@ -584,9 +584,13 @@ fun NovelApp(
 
         is Route.LocalSeries -> LocalSeriesScreen(
             libraryId = route.libraryId,
-            seriesKey = route.key,
+            seriesId = route.seriesId,
             onBack = { router.pop() },
-            onOpenBook = { router.push(Route.LocalDetail(it.id)) }
+            onOpenBook = { router.push(Route.LocalDetail(it.id)) },
+            onOpenReader = { target ->
+                readerVm.open(target)
+                router.push(Route.Reader)
+            }
         )
 
         is Route.LocalDetail -> LocalBookDetail(
@@ -596,7 +600,10 @@ fun NovelApp(
                 readerVm.open(target)
                 router.push(Route.Reader)
             },
-            onOpenCategories = { router.push(Route.Categories(app.activeSite)) }
+            onOpenSeries = { sid ->
+                val libId = app.activeSite.removePrefix("local:")
+                router.push(Route.LocalSeries(libraryId = libId, seriesId = sid))
+            }
         )
 
         is Route.AlpDetail -> {
@@ -645,8 +652,12 @@ fun NovelApp(
                 onOpenBook = { book ->
                     router.push(Route.LocalDetail(book.id))
                 },
-                onOpenSeries = { group ->
-                    router.push(Route.LocalSeries(libraryId = app.activeSite.removePrefix("local:"), key = group.key))
+                onOpenSeries = { sid ->
+                    router.push(
+                        Route.LocalSeries(
+                            libraryId = app.activeSite.removePrefix("local:"), seriesId = sid
+                        )
+                    )
                 },
                 onOpenCategories = {
                     router.push(Route.Categories(app.activeSite))
