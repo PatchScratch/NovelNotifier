@@ -99,6 +99,29 @@ fun LocalLibraryHome(
         }
     }
 
+    // Read-in-place import (Wayne, 2026-10-21): epubs already on the device
+    // join the Library through a persistable URI grant — no copy, no move.
+    val linkPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            importing = true
+            scope.launch {
+                var ok = 0
+                withContext(Dispatchers.IO) {
+                    uris.forEach { uri ->
+                        if (LocalLibraryStore.import(context, libraryId, uri, linkInPlace = true) != null) ok++
+                    }
+                }
+                reload()
+                importing = false
+                importMsg = "[${
+                    java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                }] Linked $ok of ${uris.size}"
+            }
+        }
+    }
+
     val storagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -174,11 +197,19 @@ fun LocalLibraryHome(
                     SiteSwitcherChips(activeSite, onSwitchSite)
 
                     NavigationDrawerItem(
-                        label = { Text(t("Import epubs…", "EPUBをインポート…")) },
+                        label = { Text(t("Import epubs (copy)…", "EPUBをインポート（コピー）…")) },
                         selected = false,
                         onClick = {
                             scope.launch { drawerState.close() }
                             importPicker.launch(arrayOf("application/epub+zip"))
+                        }
+                    )
+                    NavigationDrawerItem(
+                        label = { Text(t("Link epubs on device (no copy)…", "端末内EPUBをリンク（コピーなし）…")) },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            linkPicker.launch(arrayOf("application/epub+zip"))
                         }
                     )
                     NavigationDrawerItem(

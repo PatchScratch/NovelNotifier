@@ -38,7 +38,10 @@ object LocalLibraryStore {
         // Manual series grouping override (v3.0 B3): blank = auto-key from
         // the title; "solo:<id>" = pinned out of every group; otherwise the
         // effective series key of the book it was grouped with.
-        val seriesOverride: String = ""
+        val seriesOverride: String = "",
+        // Linked book: the epub is READ IN PLACE from its on-device URI —
+        // never copied, and deleteBook must NOT remove the original file.
+        val linked: Boolean = false
     )
 
     /** A multi-volume group on the home grid: name = volume 1's stripped title. */
@@ -144,7 +147,8 @@ object LocalLibraryStore {
                 description = o.optString("description"), fileName = o.optString("fileName"),
                 chapterCount = o.optInt("chapters", 0), addedAt = o.optLong("addedAt", 0),
                 translatedMeta = o.optString("translatedMeta"),
-                seriesOverride = o.optString("seriesOverride")
+                seriesOverride = o.optString("seriesOverride"),
+                linked = o.optBoolean("ref", false)
             )
         }.sortedByDescending { it.addedAt }
     }
@@ -201,7 +205,15 @@ object LocalLibraryStore {
         return CoverStore.localFile(context, seriesUrl)
     }
 
-    fun import(context: Context, libraryId: String, source: Uri): LocalBook? {
+    /**
+     * Import an epub. Copy mode stores bytes in the library's storage
+     * (SAF tree or app-private dir); [linkInPlace] leaves the file where
+     * it is and reads it through a persistable URI grant — the parse
+     * bytes double as withZip's cache copy so the first open is warm.
+     */
+    fun import(
+        context: Context, libraryId: String, source: Uri, linkInPlace: Boolean = false
+    ): LocalBook? {
         val bytes = runCatching {
             context.contentResolver.openInputStream(source)?.use { it.readBytes() }
         }.getOrNull() ?: return null
@@ -211,7 +223,17 @@ object LocalLibraryStore {
         val safeTitle = parsed.title.trim().replace(Regex("[^\\w\\-. \\u3040-\\u30ff\\u4e00-\\u9fff]"), "_").take(60)
             .ifBlank { "book-$bookId" }
         val fileName = "$safeTitle.epub"
-        val stored = storeBytes(context, lib, fileName, bytes, bookId)
+        val stored: Pair<String, String> = if (linkInPlace) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    source, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            runCatching { File(context.cacheDir, "ll_$bookId.epub").writeBytes(bytes) }
+            source.toString() to ""
+        } else {
+            storeBytes(context, lib, fileName, bytes, bookId)
+        }
         parsed.coverBytes?.let { cov ->
             runCatching {
                 CoverStore.saveGenerated(context, "locallib://$bookId", cov, "jpg")
@@ -222,7 +244,7 @@ object LocalLibraryStore {
             title = parsed.title.ifBlank { fileName.removeSuffix(".epub") },
             author = parsed.author, description = parsed.description,
             fileName = fileName, chapterCount = parsed.chapterTitles.size,
-            addedAt = System.currentTimeMillis()
+            addedAt = System.currentTimeMillis(), linked = linkInPlace
         )
         val root = readIndex(context)
         val arr = root.optJSONArray("books") ?: JSONArray().also { root.put("books", it) }
@@ -232,7 +254,7 @@ object LocalLibraryStore {
                 .put("description", book.description).put("fileName", book.fileName)
                 .put("storedUri", stored.first).put("storedPath", stored.second)
                 .put("opfPath", parsed.opfPath).put("chapters", book.chapterCount)
-                .put("addedAt", book.addedAt)
+                .put("addedAt", book.addedAt).put("ref", linkInPlace)
         )
         writeIndex(context, root)
         return book
@@ -270,14 +292,26 @@ object LocalLibraryStore {
         root.put("books", keep)
         writeIndex(context, root)
         deleted?.let { d ->
+            // LINKED books: the epub is the user's own file somewhere on the
+            // device — delete only OUR cache and release the read grant.
+            // Copied books: remove the library's copy as before.
+            val linked = d.optBoolean("ref", false)
             runCatching {
-                when {
-                    d.optString("storedUri").startsWith("content://") ->
-                        androidx.documentfile.provider.DocumentFile
-                            .fromSingleUri(context, Uri.parse(d.optString("storedUri")))?.delete()
-                    d.optString("storedPath").isNotBlank() -> File(d.optString("storedPath")).delete()
+                if (!linked) {
+                    when {
+                        d.optString("storedUri").startsWith("content://") ->
+                            androidx.documentfile.provider.DocumentFile
+                                .fromSingleUri(context, Uri.parse(d.optString("storedUri")))?.delete()
+                        d.optString("storedPath").isNotBlank() -> File(d.optString("storedPath")).delete()
+                    }
+                } else if (d.optString("storedUri").startsWith("content://")) {
+                    context.contentResolver.releasePersistableUriPermission(
+                        Uri.parse(d.optString("storedUri")),
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
                 }
             }
+            File(context.cacheDir, "ll_$bookId.epub").delete()
             coverFile(context, bookId)?.delete()
             // Extracted illustration cache rides with the book.
             File(context.filesDir, "local_lib_media/$bookId").deleteRecursively()

@@ -148,7 +148,10 @@ fun LocalBookDetail(
             synopsis = b.description,
             typeLine = listOfNotNull(
                 "ePub".takeIf { b.chapterCount > 0 },
-                "${b.chapterCount} ${t("chapters", "話")}".takeIf { b.chapterCount > 0 }
+                "${b.chapterCount} ${t("chapters", "話")}".takeIf { b.chapterCount > 0 },
+                // Linked books read from the user's own file — worth seeing
+                // on the page so delete expectations are clear.
+                t("Linked (read in place)", "リンク（その場で読取）").takeIf { b.linked }
             ).joinToString(" ・ "),
             genres = "",
             tags = "",
@@ -272,7 +275,15 @@ fun LocalBookDetail(
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text(t("Delete book?", "この本を削除？")) },
-            text = { Text(t("Removes the epub and its cover from this library.", "EPUBとカバーをこのライブラリから削除します。")) },
+            text = { Text(
+                if (b.linked) t(
+                    "Removes this book from the library. Your original file on the device is NOT deleted.",
+                    "ライブラリからこの本を削除します。端末上の元ファイルは削除されません。"
+                ) else t(
+                    "Removes the epub and its cover from this library.",
+                    "EPUBとカバーをこのライブラリから削除します。"
+                )
+            ) },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteConfirm = false
