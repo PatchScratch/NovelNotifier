@@ -261,7 +261,12 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
                 // Cloudflare / empty HTML must never wipe a real library.
                 if (parsedNovels.isEmpty() && cachedLooksReal) {
                     listNovels = cachedRows
-                    listStatus = "Site parse returned nothing — keeping ${cachedRows.size} cached series"
+                    // TEMP diagnostic (remove once scoping is fixed): the
+                    // structural facts from the page ride in the status so
+                    // one refresh pinpoints which gate drops every row.
+                    listStatus = "Parse 0/kept ${cachedRows.size} [" +
+                        raw.substringAfter(":::DBG:::", "no-dbg").take(90) + "]"
+                    DebugLog.log("SYNC", "empty parse: " + raw.substringAfter(":::DBG:::", "no-dbg"))
                     return@launch
                 }
                 val stamped = stampChapterTimes(listNovels, parsedNovels)
