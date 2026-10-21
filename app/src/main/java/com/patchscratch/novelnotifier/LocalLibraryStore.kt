@@ -224,12 +224,15 @@ object LocalLibraryStore {
             .ifBlank { "book-$bookId" }
         val fileName = "$safeTitle.epub"
         val stored: Pair<String, String> = if (linkInPlace) {
+            // Per-file persistable grants cap at ~128 system-wide — mass
+            // linking through the file picker dies there. Folder links
+            // hold ONE tree grant that covers every child, so there is
+            // nothing to take per file here.
             runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     source, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
             }
-            runCatching { File(context.cacheDir, "ll_$bookId.epub").writeBytes(bytes) }
             source.toString() to ""
         } else {
             storeBytes(context, lib, fileName, bytes, bookId)
@@ -258,6 +261,59 @@ object LocalLibraryStore {
         )
         writeIndex(context, root)
         return book
+    }
+
+    /**
+     * Link every .epub under [treeUri] (recursive). ONE persistable tree
+     * grant covers all descendants — per-file grants from the multi-picker
+     * cap at ~128 and broke large libraries (Wayne, 2026-10-21). Files
+     * already linked are skipped so the folder can be re-run safely.
+     * Returns (linked, skipped). Runs on the caller's IO dispatcher.
+     */
+    fun linkFolder(
+        context: Context, libraryId: String, treeUri: Uri,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
+    ): Pair<Int, Int> {
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                treeUri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+        val tree = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
+            ?: return 0 to 0
+        val files = mutableListOf<androidx.documentfile.provider.DocumentFile>()
+        fun collect(dir: androidx.documentfile.provider.DocumentFile) {
+            dir.listFiles().forEach { f ->
+                when {
+                    f.isDirectory -> collect(f)
+                    f.name?.endsWith(".epub", ignoreCase = true) == true -> files.add(f)
+                }
+            }
+        }
+        runCatching { collect(tree) }
+        if (files.isEmpty()) return 0 to 0
+        val seen = run {
+            val arr = readIndex(context).optJSONArray("books") ?: JSONArray()
+            val set = HashSet<String>()
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.optString("storedUri")?.takeIf { it.isNotBlank() }
+                    ?.let { set.add(it) }
+            }
+            set
+        }
+        var linked = 0
+        var skipped = 0
+        files.forEachIndexed { i, f ->
+            onProgress(i + 1, files.size)
+            val uri = f.uri.toString()
+            if (uri in seen || import(context, libraryId, f.uri, linkInPlace = true) == null) {
+                skipped++
+            } else {
+                seen.add(uri)
+                linked++
+            }
+        }
+        return linked to skipped
     }
 
     private fun storeBytes(

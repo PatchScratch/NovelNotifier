@@ -122,6 +122,29 @@ fun LocalLibraryHome(
         }
     }
 
+    // Folder linking: one tree grant, every epub beneath it — the scale path
+    // (Wayne, 2026-10-21: linking a large library file-by-file didn't work).
+    val folderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            importing = true
+            importMsg = t("Scanning folder…", "フォルダをスキャン中…")
+            scope.launch {
+                val (linked, skipped) = withContext(Dispatchers.IO) {
+                    LocalLibraryStore.linkFolder(context, libraryId, uri) { done, total ->
+                        importMsg = "${t("Linking", "リンク中")} $done/$total…"
+                    }
+                }
+                reload()
+                importing = false
+                importMsg = "[${
+                    java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                }] ${t("Linked", "リンク")} $linked, ${t("skipped", "スキップ")} $skipped"
+            }
+        }
+    }
+
     val storagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -210,6 +233,14 @@ fun LocalLibraryHome(
                         onClick = {
                             scope.launch { drawerState.close() }
                             linkPicker.launch(arrayOf("application/epub+zip"))
+                        }
+                    )
+                    NavigationDrawerItem(
+                        label = { Text(t("Link a whole folder…", "フォルダごとリンク…")) },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            folderPicker.launch(null)
                         }
                     )
                     NavigationDrawerItem(
