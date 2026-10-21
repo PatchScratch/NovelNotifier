@@ -2,10 +2,17 @@ package com.patchscratch.novelnotifier
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
@@ -304,37 +311,68 @@ fun LocalLibraryHome(
         }
     ) {
         // THE shared scaffold — identical rendering to every site's home.
-        Column(modifier = Modifier.fillMaxWidth()) {
-            if (importMsg.isNotBlank()) {
-                Text(
-                    importMsg,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+        // During imports/folder scans a CENTERED overlay carries the live
+        // progress — the tiny status line hugged the gesture bar and was
+        // easy to miss (Wayne, 2026-10-22).
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (importMsg.isNotBlank()) {
+                    Text(
+                        importMsg,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+                    )
+                }
+                BookmarkLibraryBody(
+                    heading = shelfFilter?.let { id ->
+                        shelves.cats.firstOrNull { it.id == id }?.name
+                    } ?: snap?.library?.name ?: "Library",
+                    rows = rows,
+                    emptyMessage = if (snap == null) t("Loading library…", "ライブラリ読み込み中…")
+                    else t(
+                        "No books yet — ☰ → Import epubs… to add your first",
+                        "本がまだありません — ☰ → EPUBをインポート…"
+                    ),
+                    searchQuery = searchQuery,
+                    onSearchChange = { searchQuery = it },
+                    onOpenDrawer = { scope.launch { drawerState.open() } },
+                    isRefreshing = importing,
+                    onRefresh = null,
+                    sortControl = {
+                        SortMenu(sortMode = sortMode, onSort = {
+                            sortMode = it
+                            saveSortMode(prefs, it)
+                        })
+                    },
+                    sortLabel = sortModeLabel(sortMode)
                 )
             }
-            BookmarkLibraryBody(
-                heading = shelfFilter?.let { id ->
-                    shelves.cats.firstOrNull { it.id == id }?.name
-                } ?: snap?.library?.name ?: "Library",
-                rows = rows,
-                emptyMessage = if (snap == null) t("Loading library…", "ライブラリ読み込み中…")
-                else t(
-                    "No books yet — ☰ → Import epubs… to add your first",
-                    "本がまだありません — ☰ → EPUBをインポート…"
-                ),
-                searchQuery = searchQuery,
-                onSearchChange = { searchQuery = it },
-                onOpenDrawer = { scope.launch { drawerState.open() } },
-                isRefreshing = importing,
-                onRefresh = null,
-                sortControl = {
-                    SortMenu(sortMode = sortMode, onSort = {
-                        sortMode = it
-                        saveSortMode(prefs, it)
-                    })
-                },
-                sortLabel = sortModeLabel(sortMode)
-            )
+            if (importing) {
+                // Centered, unmissable progress: scrim + card + spinner +
+                // the live message ("Scanning folder…", "Linking 37/214…").
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.35f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator()
+                            Text(
+                                importMsg.ifBlank { t("Working…", "処理中…") },
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(top = 12.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -108,6 +108,8 @@ fun LocalSeriesScreen(
         state = SeriesDetailState(
             seriesUrl = "locallib://series/${s.id}",
             onBack = onBack,
+            // Breadcrumb: the library this series lives in.
+            crumbLabel = LocalLibraryStore.library(context, libraryId)?.name.orEmpty(),
             coverUrl = if (coverPath.isNotBlank()) "file://$coverPath" else "",
             coverSeriesUrl = vol1?.let { "locallib://${it.id}" } ?: "",
             title = s.name,

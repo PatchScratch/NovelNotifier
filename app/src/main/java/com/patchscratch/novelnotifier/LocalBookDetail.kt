@@ -91,6 +91,8 @@ fun LocalBookDetail(
         state = SeriesDetailState(
             seriesUrl = "locallib://$bookId",
             onBack = onBack,
+            // Breadcrumb: the series this volume belongs to.
+            crumbLabel = mySeries?.name.orEmpty(),
             // Cover from the epub's embedded cover image (filesDir cache).
             coverUrl = LocalLibraryStore.coverFile(context, bookId)
                 ?.let { "file://${it.absolutePath}" } ?: "",

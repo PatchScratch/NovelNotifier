@@ -118,6 +118,11 @@ data class SeriesEpisodeRow(
 data class SeriesDetailState(
     val seriesUrl: String,
     val onBack: () -> Unit,
+    // Breadcrumb (Wayne, 2026-10-22): a small label beside the back arrow
+    // naming the PARENT level ("Light Novel Library" on a series page,
+    // the series name on a volume) — deep local-library stacks stay
+    // readable. Tapping it backs out one level, like the arrow. Blank = bare arrow.
+    val crumbLabel: String = "",
     // header
     val coverUrl: String,
     val coverSeriesUrl: String = seriesUrl,
@@ -214,6 +219,16 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                 ) {
                     IconButton(onClick = state.onBack, modifier = Modifier.size(64.dp)) {
                         Text("←", fontSize = 36.sp)
+                    }
+                    if (state.crumbLabel.isNotBlank()) {
+                        TextButton(onClick = state.onBack) {
+                            Text(
+                                state.crumbLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                maxLines = 1
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     Box {
