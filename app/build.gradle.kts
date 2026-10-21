@@ -95,6 +95,9 @@ dependencies {
     implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
     // SAF tree file management for the Local Library storage locations.
     implementation("androidx.documentfile:documentfile:1.0.1")
+    // Readium Kotlin toolkit (Wayne 2026-10-21): epub parsing engine —
+    // replaces hand-rolled OPF/spine/content parsing with the tested library.
+    implementation("org.readium.kotlin-toolkit:readium-streamer:3.4.0")
     // Sherpa-ONNX neural TTS (arm64-v8a only, ~12MB). Download with
     // scripts/download-sherpa-onnx.sh — never commit the binary.
     implementation(files("libs/sherpa-onnx.aar"))
