@@ -155,6 +155,9 @@ data class SeriesDetailState(
     // top-right ⋮ menu
     val openOnSiteLabel: String = "",
     val onRefresh: (() -> Unit)? = null,
+    // Provider-supplied ⋮ entries (Local Library's series actions). Runs
+    // inside the dropdown — closeMenu dismisses it before the action's UI.
+    val menuExtra: @Composable (closeMenu: () -> Unit) -> Unit = {},
     // capability slots (never layout changes — additive rows)
     val loading: Boolean = false,
     val headerExtra: @Composable () -> Unit = {},
@@ -232,6 +235,7 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                                     onToggle = { showPageMenu = false; state.onToggleTranslateMeta() }
                                 )
                             }
+                            state.menuExtra { showPageMenu = false }
                             if (state.openOnSiteLabel.isNotBlank()) {
                                 DropdownMenuItem(
                                     text = { Text(state.openOnSiteLabel) },

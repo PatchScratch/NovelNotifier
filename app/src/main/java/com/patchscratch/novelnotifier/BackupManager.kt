@@ -61,6 +61,15 @@ object BackupManager {
             .put("lists", snap.lists.size)
             .put("seriesCacheFiles", context.filesDir.resolve("series_cache").listFiles()?.size ?: 0)
             .put("coverFiles", CoverStore.count(context))
+            .put(
+                "localBooks",
+                runCatching {
+                    org.json.JSONObject(
+                        context.filesDir.resolve("local_libraries.json").takeIf { it.isFile }
+                            ?.readText() ?: "{}"
+                    ).optJSONArray("books")?.length() ?: 0
+                }.getOrDefault(0)
+            )
     }
 
     /** Pure so tests can verify the crash rule: only STRING_SET_KEYS may be
@@ -121,6 +130,12 @@ object BackupManager {
             listOfNotNull(context.filesDir.resolve("jp_notify_state.json").takeIf { it.exists() }).forEach {
                 put("data/jp_notify_state.json", it.readBytes())
             }
+            // Local-library INDEX (libraries, books, series overrides, SAF
+            // locations). EPUB FILES NEVER RIDE — same policy as site epubs;
+            // the index survives so SAF-stored libraries keep their shape.
+            listOfNotNull(context.filesDir.resolve("local_libraries.json").takeIf { it.exists() }).forEach {
+                put("data/local_libraries.json", it.readBytes())
+            }
             context.filesDir.resolve("series_cache").listFiles().orEmpty().forEach {
                 put("data/series_cache/${it.name}", it.readBytes())
             }
@@ -170,6 +185,12 @@ object BackupManager {
                         context.filesDir.resolve("jp_notify_state.json").writeBytes(zip.readBytes())
                         restoredFiles++
                     }
+                    name == "data/local_libraries.json" -> {
+                        val f = context.filesDir.resolve("local_libraries.json")
+                        f.writeBytes(zip.readBytes())
+                        pruneDeadLocalBooks(f)
+                        restoredFiles++
+                    }
                     name.startsWith("data/series_cache/") -> {
                         val target = context.filesDir.resolve("series_cache").apply { mkdirs() }
                             .resolve(name.substringAfterLast('/'))
@@ -194,6 +215,31 @@ object BackupManager {
         if (!sawManifest) return@withContext "That file is not a NovelNotifier backup"
         DebugLog.log("BACKUP", "restored files=$restoredFiles covers=$restoredCovers")
         "Restored $restoredFiles caches and $restoredCovers covers — log in to finish"
+    }
+
+    /**
+     * A restored local-library index describes books from ANOTHER device:
+     * drop entries whose app-private epub path (storedPath) is dead here —
+     * those files can't exist. SAF storedUri entries stay: they may point
+     * at shared storage that survived the move.
+     */
+    private fun pruneDeadLocalBooks(index: java.io.File) {
+        runCatching {
+            val root = org.json.JSONObject(index.readText())
+            val books = root.optJSONArray("books") ?: return
+            val keep = org.json.JSONArray()
+            var dropped = 0
+            for (i in 0 until books.length()) {
+                val o = books.optJSONObject(i) ?: continue
+                val path = o.optString("storedPath")
+                if (path.isBlank() || java.io.File(path).isFile) keep.put(o) else dropped++
+            }
+            if (dropped > 0) {
+                root.put("books", keep)
+                index.writeText(root.toString())
+                DebugLog.log("BACKUP", "pruned $dropped local books with dead files")
+            }
+        }
     }
 
     // --- covers-only transfer (phone ↔ tablet sync) ----------------------------

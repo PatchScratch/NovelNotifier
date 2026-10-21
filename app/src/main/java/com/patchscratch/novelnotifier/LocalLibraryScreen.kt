@@ -43,6 +43,7 @@ fun LocalLibraryHome(
     onOpenSettings: () -> Unit,
     onCheckUpdate: () -> Unit,
     onOpenBook: (LocalLibraryStore.LocalBook) -> Unit,
+    onOpenSeries: (LocalLibraryStore.SeriesGroup) -> Unit,
     onOpenCategories: () -> Unit
 ) {
     val context = LocalContext.current
@@ -58,6 +59,8 @@ fun LocalLibraryHome(
     var importMsg by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var showRename by remember { mutableStateOf(false) }
+    // B3: drawer-shelf filter; null = all books.
+    var shelfFilter by remember { mutableStateOf<String?>(null) }
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
     var sortMode by remember { mutableStateOf(loadSortMode(prefs)) }
 
@@ -102,27 +105,52 @@ fun LocalLibraryHome(
     }
 
     // Build BookmarkRow items — the exact same shape the sites produce.
-    val rows = books
-        .filter { it.title.contains(searchQuery, ignoreCase = true) }
-        .sortedWith(
-            when (sortMode) {
-                SORT_ALPHA -> compareBy { it.title.lowercase() }
-                SORT_UPDATE_TIME -> compareByDescending { it.addedAt }
-                else -> compareByDescending { it.addedAt }
-            }
-        )
-        .map { book ->
-            val coverPath = LocalLibraryStore.coverFile(context, book.id)?.absolutePath.orEmpty()
-            BookmarkRow(
-                title = book.title,
-                subtitle = book.author,
-                coverUrl = if (coverPath.isNotBlank()) "file://$coverPath" else "",
-                seriesUrl = "locallib://${book.id}",
-                open = { onOpenBook(book) },
-                unread = 0,
-                latestLabel = if (book.chapterCount > 0) "${book.chapterCount} ${t("ch", "話")}" else ""
+    // B3: shelf filter applies before grouping (a series shows when ANY of
+    // its volumes sits on the shelf); multi-volume epubs collapse into one
+    // series row whose cover/name come from volume 1.
+    val shelfBooks = if (shelfFilter != null) {
+        books.filter { shelves.assign[it.id] == shelfFilter }
+    } else books
+    val items = LocalLibraryStore.groupedBooks(
+        shelfBooks.filter { it.title.contains(searchQuery, ignoreCase = true) }
+            .sortedWith(
+                when (sortMode) {
+                    SORT_ALPHA -> compareBy { it.title.lowercase() }
+                    SORT_UPDATE_TIME -> compareByDescending { it.addedAt }
+                    else -> compareByDescending { it.addedAt }
+                }
             )
+    )
+    val rows = items.map { item ->
+        when (item) {
+            is LocalLibraryStore.SeriesGroup -> {
+                val vol1 = item.volumes[0]
+                val coverPath = LocalLibraryStore.coverFile(context, vol1.id)?.absolutePath.orEmpty()
+                BookmarkRow(
+                    title = item.name.ifBlank { vol1.title },
+                    subtitle = vol1.author,
+                    coverUrl = if (coverPath.isNotBlank()) "file://$coverPath" else "",
+                    // Volume 1's CoverStore key — the group has no stored
+                    // cover of its own, it borrows the first epub's.
+                    seriesUrl = "locallib://${vol1.id}",
+                    open = { onOpenSeries(item) },
+                    unread = 0,
+                    latestLabel = "${item.volumes.size} ${t("vols", "巻")}"
+                )
+            }
+            is LocalLibraryStore.LocalBook -> BookmarkRow(
+                title = item.title,
+                subtitle = item.author,
+                coverUrl = LocalLibraryStore.coverFile(context, item.id)
+                    ?.let { "file://${it.absolutePath}" } ?: "",
+                seriesUrl = "locallib://${item.id}",
+                open = { onOpenBook(item) },
+                unread = 0,
+                latestLabel = if (item.chapterCount > 0) "${item.chapterCount} ${t("ch", "話")}" else ""
+            )
+            else -> null
         }
+    }.filterNotNull()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -176,12 +204,24 @@ fun LocalLibraryHome(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                         )
                         val assignments = shelves.assign
+                        // B3: tapping a shelf filters the grid (the NU
+                        // reading-list rows' behavior); tapping it again
+                        // clears back to all books.
+                        if (shelfFilter != null) {
+                            NavigationDrawerItem(
+                                label = { Text(t("All books", "すべての本")) },
+                                selected = false,
+                                onClick = { shelfFilter = null }
+                            )
+                        }
                         shelves.cats.forEach { cat ->
                             val count = books.count { assignments[it.id] == cat.id }
                             NavigationDrawerItem(
-                                label = { Text("${cat.name}  ($count)") },
-                                selected = false,
-                                onClick = { /* B3: shelf filter */ }
+                                label = { Text("${cat.name}  ($count)" ) },
+                                selected = shelfFilter == cat.id,
+                                onClick = {
+                                    shelfFilter = if (shelfFilter == cat.id) null else cat.id
+                                }
                             )
                         }
                     }
@@ -210,7 +250,9 @@ fun LocalLibraryHome(
                 )
             }
             BookmarkLibraryBody(
-                heading = library?.name ?: "Library",
+                heading = shelfFilter?.let { id ->
+                    shelves.cats.firstOrNull { it.id == id }?.name
+                } ?: library?.name ?: "Library",
                 rows = rows,
                 emptyMessage = t(
                     "No books yet — ☰ → Import epubs… to add your first",

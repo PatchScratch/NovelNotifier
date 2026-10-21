@@ -582,6 +582,13 @@ fun NovelApp(
             onCancel = { router.pop() }
         )
 
+        is Route.LocalSeries -> LocalSeriesScreen(
+            libraryId = route.libraryId,
+            seriesKey = route.key,
+            onBack = { router.pop() },
+            onOpenBook = { router.push(Route.LocalDetail(it.id)) }
+        )
+
         is Route.LocalDetail -> LocalBookDetail(
             bookId = route.bookId,
             onBack = { router.pop() },
@@ -637,6 +644,9 @@ fun NovelApp(
                 onCheckUpdate = { app.checkForAppUpdate(context, manual = true) },
                 onOpenBook = { book ->
                     router.push(Route.LocalDetail(book.id))
+                },
+                onOpenSeries = { group ->
+                    router.push(Route.LocalSeries(libraryId = app.activeSite.removePrefix("local:"), key = group.key))
                 },
                 onOpenCategories = {
                     router.push(Route.Categories(app.activeSite))

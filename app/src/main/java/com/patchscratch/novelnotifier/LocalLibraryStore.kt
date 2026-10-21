@@ -34,7 +34,18 @@ object LocalLibraryStore {
         val fileName: String,
         val chapterCount: Int,
         val addedAt: Long,
-        val translatedMeta: String = ""
+        val translatedMeta: String = "",
+        // Manual series grouping override (v3.0 B3): blank = auto-key from
+        // the title; "solo:<id>" = pinned out of every group; otherwise the
+        // effective series key of the book it was grouped with.
+        val seriesOverride: String = ""
+    )
+
+    /** A multi-volume group on the home grid: name = volume 1's stripped title. */
+    data class SeriesGroup(
+        val key: String,
+        val name: String,
+        val volumes: List<LocalBook>   // volume-number order
     )
 
     private const val INDEX = "local_libraries.json"
@@ -132,7 +143,8 @@ object LocalLibraryStore {
                 title = o.optString("title"), author = o.optString("author"),
                 description = o.optString("description"), fileName = o.optString("fileName"),
                 chapterCount = o.optInt("chapters", 0), addedAt = o.optLong("addedAt", 0),
-                translatedMeta = o.optString("translatedMeta")
+                translatedMeta = o.optString("translatedMeta"),
+                seriesOverride = o.optString("seriesOverride")
             )
         }.sortedByDescending { it.addedAt }
     }
@@ -272,10 +284,101 @@ object LocalLibraryStore {
         }
     }
 
+    // Both setters below hold ONE parsed index root across read-modify-write
+    // — re-reading inside writeIndex() would parse a fresh tree and drop
+    // the mutation (shipped silently: translatedMeta never persisted).
     fun setTranslatedMeta(context: Context, bookId: String, meta: String) {
-        bookEntry(context, bookId)?.put("translatedMeta", meta)
-        writeIndex(context, readIndex(context))
+        val root = readIndex(context)
+        val arr = root.optJSONArray("books") ?: return
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("id") == bookId) { o.put("translatedMeta", meta); break }
+        }
+        writeIndex(context, root)
     }
+
+    fun setSeriesOverride(context: Context, bookId: String, override: String) {
+        val root = readIndex(context)
+        val arr = root.optJSONArray("books") ?: return
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("id") == bookId) { o.put("seriesOverride", override); break }
+        }
+        writeIndex(context, root)
+    }
+
+    /** Blank override → the title-derived auto key; "solo:" never groups. */
+    fun effectiveSeriesKey(book: LocalBook): String = when {
+        book.seriesOverride.startsWith("solo:") -> book.seriesOverride
+        book.seriesOverride.isNotBlank() -> book.seriesOverride
+        else -> seriesKey(book.title)
+    }
+
+    /**
+     * Home rows: solo books stay books; keys with 2+ volumes collapse into
+     * ONE SeriesGroup at the first-encountered position so every sort mode
+     * stays meaningful (recency: the newest volume's slot; alpha: the
+     * series name's slot). Volume order inside a group = volume number,
+     * then addedAt; the group's cover/name come from volume 1 (Wayne's
+     * B1/B2 rule: "extract cover from first epub in series").
+     */
+    fun groupedBooks(books: List<LocalBook>): List<Any> {
+        val byKey = books.groupBy { effectiveSeriesKey(it) }
+        val seen = mutableSetOf<String>()
+        val out = mutableListOf<Any>()
+        books.forEach { b ->
+            val key = effectiveSeriesKey(b)
+            val group = byKey[key].orEmpty()
+            if (group.size >= 2) {
+                if (key in seen) return@forEach
+                seen.add(key)
+                val volumes = group.sortedWith(
+                    compareBy({ volumeNumber(it.title) }, { it.addedAt })
+                )
+                out.add(SeriesGroup(key, strippedTitle(volumes[0].title), volumes))
+            } else {
+                out.add(b)
+            }
+        }
+        return out
+    }
+
+    /** Books whose effective key matches [key], volume order (series page). */
+    fun seriesVolumes(context: Context, libraryId: String, key: String): List<LocalBook> =
+        books(context, libraryId)
+            .filter { effectiveSeriesKey(it) == key }
+            .sortedWith(compareBy({ volumeNumber(it.title) }, { it.addedAt }))
+
+    /**
+     * Auto-grouping key: the title with its trailing volume token stripped
+     * ("Re:Zero −Starting Life− Vol. 2" → "Re:Zero −Starting Life−").
+     * Lowercased for MATCHING only — display name = [strippedTitle].
+     */
+    fun seriesKey(title: String): String = strippedTitle(title).lowercase()
+
+    fun strippedTitle(title: String): String {
+        var t = title.trim()
+        // Explicit markers: Vol./Volume/v/Book/第 + digits (+ optional 巻/卷).
+        t = Regex(
+            """\s*[-–—:：]?\s*(?:Vol(?:ume)?\.?|v\.?|Book|第)\s*\d+\s*[巻卷]?\s*$""",
+            RegexOption.IGNORE_CASE
+        ).replace(t, "")
+        // Trailing "(4)" / "[4]".
+        t = Regex("""\s*[\(\[]\s*\d+\s*[\)\]]\s*$""").replace(t, "")
+        // Bare trailing number ("Title 12") — only when a real name remains
+        // (the series "86" must not collapse to "").
+        t = Regex("""\s+\d{1,3}\s*$""").replace(t, "")
+        return t.trim()
+    }
+
+    /** Volume ordinal for ordering; MAX_VALUE when absent → addedAt order. */
+    fun volumeNumber(title: String): Int = Regex(
+        """(?:Vol(?:ume)?\.?|v\.?|Book|第)\s*(\d+)|[\(\[]\s*(\d+)\s*[\)\]]|\s(\d{1,3})\s*$""",
+        RegexOption.IGNORE_CASE
+    ).find(title)?.let { m ->
+        (m.groupValues[1].ifBlank { m.groupValues[2] }.ifBlank { m.groupValues[3] })
+            .toIntOrNull()
+    } ?: Int.MAX_VALUE
 
     private fun <T> withZip(context: Context, book: LocalBook, block: (ZipFile, String) -> T?): T? {
         val entry = bookEntry(context, book.id) ?: return null
