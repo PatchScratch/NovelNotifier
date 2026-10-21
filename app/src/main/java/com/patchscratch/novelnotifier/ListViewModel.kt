@@ -171,7 +171,12 @@ class ListViewModel(app: Application) : AndroidViewModel(app) {
             if (!delivered && syncing) {
                 DebugLog.log("SYNC", "list scrape timed out (challenge loop?)")
                 markSiteCheckNeeded(prefs)
-                listStatus = "Site check needed — try again shortly"
+                // A never-completing load is a challenge loop (Wayne,
+                // 2026-10-21: "the challenge window does not show") — the
+                // pane must surface here too, with the auto-retry armed.
+                retryAfterChallenge = true
+                listStatus = "Cloudflare — complete the check to continue"
+                SiteClient.surfaceChallenge(SiteClient.Site.NU, target)
                 runCatching {
                     s.onPageLoaded = null
                     s.close()
