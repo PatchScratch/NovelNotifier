@@ -225,30 +225,19 @@ fun LocalBookDetail(
 
     // Series move picker: series, not books — shelves and identity live there.
     if (showSeriesPicker) {
-        AlertDialog(
-            onDismissRequest = { showSeriesPicker = false },
-            title = { Text(t("Move to series", "シリーズに移動")) },
-            text = {
-                Column {
-                    if (otherSeries.isEmpty()) {
-                        Text(t("No other series in this library.", "このライブラリに他のシリーズはありません。"))
-                    }
-                    otherSeries.forEach { s ->
-                        TextButton(onClick = {
-                            showSeriesPicker = false
-                            scope.launch(Dispatchers.IO) {
-                                LocalLibraryStore.moveBookToSeries(context, b.id, s.id)
-                                mySeries = LocalLibraryStore.seriesById(context, s.id)
-                                otherSeries = LocalLibraryStore.seriesList(context, b.libraryId)
-                                    .filter { it.id != s.id }
-                            }
-                        }) { Text(s.name, maxLines = 1) }
-                    }
+        SeriesPickerDialog(
+            title = t("Move to series", "シリーズに移動"),
+            series = otherSeries,
+            onPick = { target ->
+                showSeriesPicker = false
+                scope.launch(Dispatchers.IO) {
+                    LocalLibraryStore.moveBookToSeries(context, b.id, target.id)
+                    mySeries = LocalLibraryStore.seriesById(context, target.id)
+                    otherSeries = LocalLibraryStore.seriesList(context, b.libraryId)
+                        .filter { it.id != target.id }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showSeriesPicker = false }) { Text(t("Close", "閉じる")) }
-            }
+            onDismiss = { showSeriesPicker = false }
         )
     }
 

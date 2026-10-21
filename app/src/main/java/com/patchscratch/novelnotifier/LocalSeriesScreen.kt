@@ -1,6 +1,11 @@
 package com.patchscratch.novelnotifier
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -202,32 +207,21 @@ fun LocalSeriesScreen(
 
     // Merge picker: this series' volumes fold into the chosen target.
     if (showMergePicker) {
-        AlertDialog(
-            onDismissRequest = { showMergePicker = false },
-            title = { Text(t("Merge into series", "シリーズに統合")) },
-            text = {
-                Column {
-                    Text(
-                        t(
-                            "All volumes of \"${s.name}\" move into the series you pick; the emptied one disappears.",
-                            "「${s.name}」の全巻が選んだシリーズに移動し、空になったシリーズは削除されます。"
-                        ),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    otherSeries.forEach { target ->
-                        TextButton(onClick = {
-                            showMergePicker = false
-                            scope.launch(Dispatchers.IO) {
-                                LocalLibraryStore.mergeSeries(context, s.id, target.id)
-                            }
-                            onBack()
-                        }) { Text(target.name, maxLines = 1) }
-                    }
+        SeriesPickerDialog(
+            title = t("Merge into series", "シリーズに統合"),
+            note = t(
+                "All volumes of \"${s.name}\" move into the series you pick; the emptied one disappears.",
+                "「${s.name}」の全巻が選んだシリーズに移動し、空になったシリーズは削除されます。"
+            ),
+            series = otherSeries,
+            onPick = { target ->
+                showMergePicker = false
+                scope.launch(Dispatchers.IO) {
+                    LocalLibraryStore.mergeSeries(context, s.id, target.id)
                 }
+                onBack()
             },
-            confirmButton = {
-                TextButton(onClick = { showMergePicker = false }) { Text(t("Close", "閉じる")) }
-            }
+            onDismiss = { showMergePicker = false }
         )
     }
 
@@ -303,3 +297,55 @@ private fun firstUnfinished(
     readPos: Map<String, Int>
 ): LocalLibraryStore.LocalBook? =
     volumes.firstOrNull { v -> v.chapterCount > (readPos[v.id] ?: 0) }
+
+/**
+ * Scrollable, searchable series picker for dialogs — a plain Column of
+ * thousands of series overflows the dialog and can't scroll (Wayne,
+ * 2026-10-21). LazyColumn with a bounded height + filter box.
+ */
+@Composable
+fun SeriesPickerDialog(
+    title: String,
+    series: List<LocalLibraryStore.LocalSeries>,
+    onPick: (LocalLibraryStore.LocalSeries) -> Unit,
+    onDismiss: () -> Unit,
+    note: String? = null
+) {
+    var query by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                note?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text(t("Search", "検索")) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp, top = 4.dp)
+                )
+                val filtered = if (query.isBlank()) series
+                else series.filter { it.name.contains(query, ignoreCase = true) }
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                ) {
+                    items(filtered, key = { it.id }) { s ->
+                        TextButton(onClick = { onPick(s) }) {
+                            Text(s.name, maxLines = 1)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(t("Close", "閉じる")) }
+        }
+    )
+}
