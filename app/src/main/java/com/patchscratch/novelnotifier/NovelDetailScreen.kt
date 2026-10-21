@@ -158,15 +158,6 @@ fun NovelDetailScreen(
     var coverState by remember { mutableStateOf(0) }
     val lastReadNum = lastRead?.first?.let(::chapterNum) ?: -1
     val expectedNextNum = if (lastReadNum > 0) lastReadNum + 1 else -1
-    // Next unread = last-read c-number + 1 if that row is loaded, else the lowest c we have.
-    val nextUnread = if (expectedNextNum > 0) {
-        page.releases.firstOrNull { chapterNum(it.chapter) == expectedNextNum }
-    } else {
-        page.releases.minByOrNull { num ->
-            val n = chapterNum(num.chapter)
-            if (n < 0) Int.MAX_VALUE else n
-        }
-    }
     val shownReleases = sortedReleases(page.releases, newestFirst).filter { release ->
         !hideRead || lastRead == null || chapterNum(release.chapter) >= lastReadNum
     }
@@ -226,6 +217,58 @@ fun NovelDetailScreen(
     val readingOrder = remember(page.releases, groupOff, tocActive, tocList) {
         if (tocActive && tocList != null) tocList!!
         else sortedReleases(page.releases, newestFirst = false).filter { it.group.isBlank() || it.group !in groupOff }
+    }
+    // Next unread = last-read c-number + 1 when that row is loaded; else the
+    // row AFTER the ticked one in reading order. The number-only lookup stayed
+    // permanently stuck on volume-restart numbering (v3c1 follows v2c20, so
+    // the expected c21 never exists), on unnumbered gaps, and on series whose
+    // active reading order is a word-titled site ToC ("Chapter 2 – …") while
+    // the tick is an NU vNcM label — refreshing could never fix it (Wayne,
+    // 2026-10-21: "Info tab won't refresh" on a 135-chapter cache).
+    var caughtUpAfterMarker = false
+    val nextUnread = if (expectedNextNum > 0) {
+        page.releases.firstOrNull { chapterNum(it.chapter) == expectedNextNum }
+            ?: run {
+                val url = lastRead?.second.orEmpty()
+                val label = lastRead?.first.orEmpty()
+                // The tick's extnu link → the site permalink the reader's
+                // cover hop learned (one file read, not one per row).
+                val bridged = url.takeIf { it.isNotBlank() }
+                    ?.let { ReaderTocStore.mappedUrl(novel.seriesUrl, it, context) }
+                val key = label.takeIf { it.isNotBlank() }?.let(::chapterKey)
+                fun matchesTick(r: Release): Boolean {
+                    if (url.isNotBlank() && r.url == url) return true
+                    if (label.isNotBlank() && r.chapter == label) return true
+                    if (bridged != null && r.url == bridged) return true
+                    if (key != null) {
+                        chapterKey(r.chapter)?.let { (wv, wc) ->
+                            if ((key.first == 0 || key.first == wv) && key.second == wc) return true
+                        }
+                    }
+                    return false
+                }
+                // Search the ACTIVE reading order first (what READ CHAPTER
+                // opens), then the NU cache order (the tick's native list).
+                val nuOrder = sortedReleases(page.releases, newestFirst = false)
+                    .filter { it.group.isBlank() || it.group !in groupOff }
+                var found: Release? = null
+                var atEnd = false
+                listOf(readingOrder, nuOrder).forEach { order ->
+                    if (found != null) return@forEach
+                    val at = order.indexOfFirst(::matchesTick)
+                    when {
+                        at in 0 until order.lastIndex -> found = order[at + 1]
+                        at == order.lastIndex -> atEnd = true
+                    }
+                }
+                if (found == null && atEnd) caughtUpAfterMarker = true
+                found
+            }
+    } else {
+        page.releases.minByOrNull { num ->
+            val n = chapterNum(num.chapter)
+            if (n < 0) Int.MAX_VALUE else n
+        }
     }
     // Title-page metadata rides along once the series page has been scraped
     // (blank fields simply drop rows); until then the reader keeps book meta.
@@ -406,6 +449,11 @@ fun NovelDetailScreen(
             statusLine = listStatus,
             nextChapterLabel = when {
                 nextUnread != null -> "${nextUnread.chapter}  by ${nextUnread.group}"
+                caughtUpAfterMarker ->
+                    // The ticked row is the last in reading order — the
+                    // number gap above it is just label shape, not a
+                    // missing page.
+                    t("Caught up — nothing after your read position", "最新まで読了 — 続きはまだ")
                 expectedNextNum > 0 ->
                     "c$expectedNextNum is not in the loaded pages yet. Wait for cache or scroll RELEASES."
                 else -> "No chapter link found"
