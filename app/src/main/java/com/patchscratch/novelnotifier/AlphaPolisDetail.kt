@@ -129,6 +129,8 @@ fun AlphaPolisDetailScreen(
 
     SeriesDetailScreen(
         state = SeriesDetailState(
+            // JP-native content: metadata translation always on
+            translateMeta = true,
             seriesUrl = work.url,
             onBack = onBack,
             coverUrl = detail?.work?.coverUrl ?: work.coverUrl,

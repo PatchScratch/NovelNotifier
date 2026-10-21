@@ -175,6 +175,14 @@ fun NovelDetailScreen(
     // reading order plus the tapped row's index. Groups the user filtered
     // out are excluded — reading order, the reader, and bulk download all
     // cover only the chosen groups.
+    // NU metadata translation (Wayne, 2026-10-21): default OFF — English in,
+    // English out; ML Kit round-trips were pure overhead ("9 queued" lag).
+    var nuMetaXlate by remember {
+        mutableStateOf(
+            context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+                .getBoolean("nu_meta_xlate", false)
+        )
+    }
     // Site-ToC override state (Wayne, 2026-10-20): mirrors the reader's
     // Chapter-list submenu choice; RELEASES and reader open from it.
     var tocActive by remember(novel.seriesUrl) {
@@ -375,6 +383,14 @@ fun NovelDetailScreen(
 
     SeriesDetailScreen(
         state = SeriesDetailState(
+            // NU is English-native — metadata translation defaults OFF
+            // (Wayne 2026-10-21: "redundant"); the ⋮ toggle overrides.
+            translateMeta = nuMetaXlate,
+            onToggleTranslateMeta = {
+                nuMetaXlate = !nuMetaXlate
+                context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+                    .edit().putBoolean("nu_meta_xlate", nuMetaXlate).apply()
+            },
             seriesUrl = novel.seriesUrl,
             onBack = onBackClick,
             coverUrl = cover,

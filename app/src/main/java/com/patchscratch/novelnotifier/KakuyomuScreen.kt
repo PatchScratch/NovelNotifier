@@ -637,6 +637,8 @@ fun KakuyomuDetailScreen(
 
     SeriesDetailScreen(
         state = SeriesDetailState(
+            // JP-native content: metadata translation always on
+            translateMeta = true,
             seriesUrl = work.url,
             onBack = onBack,
             coverUrl = work.coverUrl,

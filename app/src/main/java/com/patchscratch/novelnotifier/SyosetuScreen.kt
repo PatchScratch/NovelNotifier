@@ -602,7 +602,9 @@ fun SyosetuDetailScreen(
     }
 
     SeriesDetailScreen(
-        state = SeriesDetailState(
+SeriesDetailState(
+            // JP-native content: metadata translation always on
+            translateMeta = true,
             seriesUrl = novel.url,
             onBack = onBack,
             coverUrl = "",

@@ -146,6 +146,12 @@ data class SeriesDetailState(
     // RELEASES tab
     val episodes: List<SeriesEpisodeRow> = emptyList(),
     val readOrdinal: Int = 0,               // drives hide-read + next-chapter fallback
+    // Metadata translation for title/author/synopsis (Wayne, 2026-10-21:
+    // "translation for NU is redundant" — JP sites render the dimmed ML
+    // line; NU (English-native) defaults OFF. Null = follow the site
+    // default; the toggle below overrides per view).
+    val translateMeta: Boolean = false,
+    val onToggleTranslateMeta: (() -> Unit)? = null,
     // top-right ⋮ menu
     val openOnSiteLabel: String = "",
     val onRefresh: (() -> Unit)? = null,
@@ -216,6 +222,20 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                             expanded = showPageMenu,
                             onDismissRequest = { showPageMenu = false }
                         ) {
+                            // Metadata translation toggle (Wayne, 2026-10-21):
+                            // JP sites render it always; NU defaults OFF and
+                            // can flip it here if ever wanted.
+                            if (state.onToggleTranslateMeta != null) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (state.translateMeta) t("Translate titles/descriptions: ON", "タイトル・あらすじ翻訳: ON")
+                                            else t("Translate titles/descriptions: OFF", "タイトル・あらすじ翻訳: OFF")
+                                        )
+                                    },
+                                    onClick = { showPageMenu = false; state.onToggleTranslateMeta() }
+                                )
+                            }
                             if (state.openOnSiteLabel.isNotBlank()) {
                                 DropdownMenuItem(
                                     text = { Text(state.openOnSiteLabel) },
@@ -266,11 +286,11 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                     Column(modifier = Modifier.padding(start = 12.dp)) {
                         Text(state.title, style = MaterialTheme.typography.titleMedium)
                         // JP titles/synopses get the dimmed machine line for
-                        // free; English-native content renders nothing extra.
-                        TranslatedHint(text = state.title)
+                        // free; NU (English-native) keeps it off by default.
+                        if (state.translateMeta) TranslatedHint(text = state.title)
                         if (state.author.isNotBlank()) {
                             Text(state.author, style = MaterialTheme.typography.bodySmall)
-                            TranslatedHint(text = state.author)
+                            if (state.translateMeta) TranslatedHint(text = state.author)
                         }
                         if (state.rating.isNotBlank()) {
                             Text(prettyRating(state.rating), style = MaterialTheme.typography.bodySmall)
@@ -363,7 +383,7 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                                     maxLines = if (descExpanded) Int.MAX_VALUE else 6,
                                     modifier = Modifier.padding(top = 8.dp)
                                 )
-                                TranslatedHint(text = state.synopsis, modifier = Modifier.padding(top = 2.dp))
+                                if (state.translateMeta) TranslatedHint(text = state.synopsis, modifier = Modifier.padding(top = 2.dp))
                                 Text(if (descExpanded) "▲" else "▼", modifier = Modifier.padding(top = 4.dp))
                             }
                         }
@@ -386,11 +406,13 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                                 Text(t("Genres", "ジャンル"), style = MaterialTheme.typography.titleMedium)
                                 if (state.genres.isBlank()) {
                                     Text("None listed", modifier = Modifier.padding(top = 8.dp))
-                                } else {
+                                } else if (state.translateMeta) {
                                     TranslatedInfoText(
                                         text = state.genres,
                                         modifier = Modifier.padding(top = 8.dp)
                                     )
+                                } else {
+                                    Text(state.genres, modifier = Modifier.padding(top = 8.dp))
                                 }
                             }
                         }
@@ -402,11 +424,13 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                                 Text(t("Tags", "タグ"), style = MaterialTheme.typography.titleMedium)
                                 if (state.tags.isBlank()) {
                                     Text("None listed", modifier = Modifier.padding(top = 8.dp))
-                                } else {
+                                } else if (state.translateMeta) {
                                     TranslatedInfoText(
                                         text = state.tags,
                                         modifier = Modifier.padding(top = 8.dp)
                                     )
+                                } else {
+                                    Text(state.tags, modifier = Modifier.padding(top = 8.dp))
                                 }
                             }
                         }
