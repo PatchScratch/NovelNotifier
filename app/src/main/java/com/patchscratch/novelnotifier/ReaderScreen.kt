@@ -1615,16 +1615,17 @@ fun ReaderScreen(
             // off-screen while the extracted text is on top. Local Library
             // chapters skip it entirely — no page to load.
             if (!isLocalLibChapter) {
-                modifier = if (showText) {
-                    Modifier
-                        .size(1.dp)
-                        .alpha(0f)
-                        .offset(x = 4000.dp, y = 4000.dp)
-                } else {
-                    Modifier.fillMaxSize()
-                },
-                factory = { ctx ->
-                    WebView(ctx).apply {
+                AndroidView(
+                    modifier = if (showText) {
+                        Modifier
+                            .size(1.dp)
+                            .alpha(0f)
+                            .offset(x = 4000.dp, y = 4000.dp)
+                    } else {
+                        Modifier.fillMaxSize()
+                    },
+                    factory = { ctx ->
+                        WebView(ctx).apply {
                         webViewRef.value = this
                         setBackgroundColor(android.graphics.Color.WHITE)
                         settings.javaScriptEnabled = jsOn
@@ -1749,7 +1750,7 @@ fun ReaderScreen(
                         loadedStamp = stamp
                         webView.settings.javaScriptEnabled = jsOn
                         webView.settings.domStorageEnabled = jsOn
-                        if (!prohibited && !chapter.url.startsWith("locallib://")) webView.loadUrl(chapter.url)
+                        if (!prohibited) webView.loadUrl(chapter.url)
                     }
                 }
             )
