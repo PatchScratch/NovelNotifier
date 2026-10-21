@@ -960,9 +960,10 @@ fun ReaderScreen(
                         saveReaderFontSize(prefs, fontSize)
                     }
                 )
-                DropdownMenuItem(
-                    text = { Text(if (jsOn) t("JavaScript: ON (tap to disable)", "JavaScript: ON（タップで無効）") else t("JavaScript: OFF (tap to enable)", "JavaScript: OFF（タップで有効）")) },
-                    onClick = { showMenu = false; toggleJs() }
+                ToggleMenuItem(
+                    label = t("JavaScript", "JavaScript"),
+                    checked = jsOn,
+                    onToggle = { showMenu = false; toggleJs() }
                 )
 
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
@@ -1267,15 +1268,14 @@ fun ReaderScreen(
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
-                        androidx.compose.material3.TextButton(onClick = {
-                            showDownloadsMenu = false
-                            toggleOfflineForSeries()
-                        }) {
-                            Text(
-                                if (offlineEnabled) t("Include in bulk library: ON", "一括ライブラリに含める: ON")
-                                else t("Include in bulk library: OFF", "一括ライブラリに含める: OFF")
-                            )
-                        }
+                        ToggleMenuItem(
+                            label = t("Include in bulk library", "一括ライブラリに含める"),
+                            checked = offlineEnabled,
+                            onToggle = {
+                                showDownloadsMenu = false
+                                toggleOfflineForSeries()
+                            }
+                        )
                         androidx.compose.material3.TextButton(onClick = {
                             showDownloadsMenu = false
                             scope.launch {

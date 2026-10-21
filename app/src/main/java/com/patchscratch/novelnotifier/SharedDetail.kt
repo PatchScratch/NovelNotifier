@@ -226,14 +226,10 @@ fun SeriesDetailScreen(state: SeriesDetailState) {
                             // JP sites render it always; NU defaults OFF and
                             // can flip it here if ever wanted.
                             if (state.onToggleTranslateMeta != null) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (state.translateMeta) t("Translate titles/descriptions: ON", "タイトル・あらすじ翻訳: ON")
-                                            else t("Translate titles/descriptions: OFF", "タイトル・あらすじ翻訳: OFF")
-                                        )
-                                    },
-                                    onClick = { showPageMenu = false; state.onToggleTranslateMeta() }
+                                ToggleMenuItem(
+                                    label = t("Translate titles/descriptions", "タイトル・あらすじ翻訳"),
+                                    checked = state.translateMeta,
+                                    onToggle = { showPageMenu = false; state.onToggleTranslateMeta() }
                                 )
                             }
                             if (state.openOnSiteLabel.isNotBlank()) {
