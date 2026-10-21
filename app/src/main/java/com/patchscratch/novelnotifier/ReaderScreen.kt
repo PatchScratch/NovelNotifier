@@ -667,6 +667,30 @@ fun ReaderScreen(
             prohibitedNotice = true
             return@LaunchedEffect
         }
+        // Local Library (v3.0): locallib://<bookId>/<index> serves straight
+        // from the epub zip — zero WebView, zero network; ALL reader
+        // features (themes, TTS, translation, position) ride for free.
+        if (chapter.url.startsWith("locallib://")) {
+            val parts = chapter.url.removePrefix("locallib://").split("/")
+            val bookId = parts.getOrNull(0).orEmpty()
+            val idx = parts.getOrNull(1)?.toIntOrNull() ?: 0
+            val (title, paras) = withContext(Dispatchers.IO) {
+                LocalLibraryStore.book(context, bookId)?.let { b ->
+                    LocalLibraryStore.chapterText(context, b, idx)
+                }
+            } ?: ("" to emptyList())
+            if (paras.isNotEmpty()) {
+                extractResult = ChapterExtract(
+                    title = title.ifBlank { chapter.chapter },
+                    paragraphs = paras
+                )
+                // Persist read position for the detail's Next Chapter.
+                prefs.edit { putInt("local_pos_$bookId", idx + 1) }
+                return@LaunchedEffect
+            }
+            extractFailed = true
+            return@LaunchedEffect
+        }
         // AlphaPolis reads fully headless (B4): page → CSRF+episode tokens →
         // POST /novel/episode_body — no WebView in the reading path, so the
         // site's premium chapters (session-authorized) work without any
@@ -1700,7 +1724,9 @@ fun ReaderScreen(
                         // browser-checking hosts; cleaned mobile elsewhere.
                         settings.userAgentString =
                             SitePolicy.uaFor(chapter.url, settings.userAgentString)
-                        if (!prohibited) loadUrl(chapter.url)
+                        // Local Library: never load the WebView — the
+                        // locallib:// branch serves from the epub zip.
+                        if (!prohibited && !chapter.url.startsWith("locallib://")) loadUrl(chapter.url)
                     }
                 },
                 update = { webView ->
@@ -1709,7 +1735,7 @@ fun ReaderScreen(
                         loadedStamp = stamp
                         webView.settings.javaScriptEnabled = jsOn
                         webView.settings.domStorageEnabled = jsOn
-                        if (!prohibited) webView.loadUrl(chapter.url)
+                        if (!prohibited && !chapter.url.startsWith("locallib://")) webView.loadUrl(chapter.url)
                     }
                 }
             )

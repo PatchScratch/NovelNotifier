@@ -93,6 +93,8 @@ android {
 dependencies {
     // Japanese tokenizer for the long-press dictionary (embeds IPADIC)
     implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
+    // SAF tree file management for the Local Library storage locations.
+    implementation("androidx.documentfile:documentfile:1.0.1")
     // Sherpa-ONNX neural TTS (arm64-v8a only, ~12MB). Download with
     // scripts/download-sherpa-onnx.sh — never commit the binary.
     implementation(files("libs/sherpa-onnx.aar"))

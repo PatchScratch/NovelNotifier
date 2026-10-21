@@ -582,6 +582,16 @@ fun NovelApp(
             onCancel = { router.pop() }
         )
 
+        is Route.LocalDetail -> LocalBookDetail(
+            bookId = route.bookId,
+            onBack = { router.pop() },
+            onOpenReader = { target ->
+                readerVm.open(target)
+                router.push(Route.Reader)
+            },
+            onOpenCategories = { router.push(Route.Categories(app.activeSite)) }
+        )
+
         is Route.AlpDetail -> {
             val w = alp.selected
             if (w != null) AlphaPolisDetailScreen(
@@ -617,8 +627,22 @@ fun NovelApp(
             )
         }
 
-        Route.Home -> when (app.activeSite) {
-            "syosetu" -> SyosetuHome(
+        Route.Home -> when {
+            // Local Library (v3.0): libraries appear as "local:<libId>" sites.
+            app.activeSite.startsWith("local:") -> LocalLibraryHome(
+                libraryId = app.activeSite.removePrefix("local:"),
+                activeSite = app.activeSite,
+                onSwitchSite = { app.switchSite(it) },
+                onOpenSettings = { app.openSettings("local") },
+                onCheckUpdate = { app.checkForAppUpdate(context, manual = true) },
+                onOpenBook = { book ->
+                    router.push(Route.LocalDetail(book.id))
+                },
+                onOpenCategories = {
+                    router.push(Route.Categories(app.activeSite))
+                }
+            )
+            app.activeSite == "syosetu" -> SyosetuHome(
                 activeSite = app.activeSite,
                 onSwitchSite = { app.switchSite(it) },
                 onOpenSettings = { app.openSettings("syosetu") },
@@ -649,7 +673,7 @@ fun NovelApp(
                 onRefresh = { syosetu.syncNow() }
             )
 
-            "kakuyomu" -> KakuyomuHome(
+            app.activeSite == "kakuyomu" -> KakuyomuHome(
                 activeSite = app.activeSite,
                 onSwitchSite = { app.switchSite(it) },
                 onOpenSettings = { app.openSettings("kakuyomu") },
@@ -679,7 +703,7 @@ fun NovelApp(
                 onRefresh = { kakuyomu.syncBookmarks() }
             )
 
-            "alphapolis" -> AlphaPolisHome(
+            app.activeSite == "alphapolis" -> AlphaPolisHome(
                 activeSite = app.activeSite,
                 onSwitchSite = { app.switchSite(it) },
                 onOpenSettings = { app.openSettings("alphapolis") },

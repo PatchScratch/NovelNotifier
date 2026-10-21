@@ -270,13 +270,22 @@ fun KakuyomuHome(
 @Composable
 fun SiteSwitcherChips(activeSite: String, onSwitchSite: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     val sites = listOf(
         Triple("nu", "NU", "Novel Updates"),
         Triple("syosetu", t("Syosetu", "なろう"), "Syosetu"),
         Triple("kakuyomu", t("Kakuyomu", "カクヨム"), "Kakuyomu"),
         Triple("alphapolis", t("AlphaPolis", "アルファポリス"), "AlphaPolis")
     )
-    val active = sites.firstOrNull { it.first == activeSite }?.second ?: activeSite
+    // Local libraries (Wayne, 2026-10-21): each library is a site in the
+    // dropdown — the "libraries ≈ sites" mapping. Read at composition.
+    val localLibs = remember(activeSite) {
+        runCatching { LocalLibraryStore.libraries(context) }.getOrDefault(emptyList())
+    }
+    val activeLib = localLibs.firstOrNull { "local:${it.id}" == activeSite }
+    val active = sites.firstOrNull { it.first == activeSite }?.second
+        ?: activeLib?.name?.let { "📖 $it" }
+        ?: activeSite
     androidx.compose.foundation.layout.Box(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
@@ -302,6 +311,31 @@ fun SiteSwitcherChips(activeSite: String, onSwitchSite: (String) -> Unit) {
                     }
                 )
             }
+            if (localLibs.isNotEmpty()) {
+                androidx.compose.material3.HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
+            localLibs.forEach { lib ->
+                val libId = "local:${lib.id}"
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text((if (libId == activeSite) "✓ " else "") + "📖 " + lib.name) },
+                    onClick = {
+                        open = false
+                        if (libId != activeSite) onSwitchSite(libId)
+                    }
+                )
+            }
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("＋ " + t("New library…", "新しいライブラリ…")) },
+                onClick = {
+                    open = false
+                    // Create + switch — the new library opens empty and
+                    // ready for its first import.
+                    val lib = LocalLibraryStore.addLibrary(context, t("New Library", "新しいライブラリ"))
+                    onSwitchSite("local:${lib.id}")
+                }
+            )
         }
     }
 }
