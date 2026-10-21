@@ -69,21 +69,33 @@ object LocalLibraryStore {
 
     private fun writeIndex(context: Context, root: JSONObject) {
         runCatching { indexFile(context).writeText(root.toString()) }
+        // Any write can change what the caches vouch for — drop them all.
+        invalidateCaches()
     }
 
+    // libraries() runs on every drawer open (SiteSwitcherChips) — cached
+    // in-process; library mutations invalidate.
+    @Volatile private var librariesCache: List<LocalLibrary>? = null
+
     fun libraries(context: Context): List<LocalLibrary> {
+        librariesCache?.let { return it }
         val root = readIndex(context)
-        val arr = root.optJSONArray("libraries") ?: JSONArray()
-        val out = (0 until arr.length()).mapNotNull { i ->
-            arr.optJSONObject(i)?.let { o ->
-                LocalLibrary(o.optString("id"), o.optString("name"), o.optString("storageUri"))
-            }
+        val out = parseLibraries(root)
+        if (out.isNotEmpty()) {
+            librariesCache = out
+            return out
         }
-        if (out.isNotEmpty()) return out
         val def = LocalLibrary(DEFAULT_ID, DEFAULT_NAME)
         root.put("libraries", JSONArray().put(JSONObject().put("id", def.id).put("name", def.name)))
         writeIndex(context, root)
+        librariesCache = listOf(def)
         return listOf(def)
+    }
+
+    fun invalidateCaches() {
+        librariesCache = null
+        migrated = false
+        metaCleaned = false
     }
 
     fun library(context: Context, id: String): LocalLibrary? =
@@ -140,10 +152,23 @@ object LocalLibraryStore {
         writeIndex(context, root)
     }
 
-    fun books(context: Context, libraryId: String? = null): List<LocalBook> {
-        ensureSeriesMigration(context)
-        cleanIndexMeta(context)
-        val root = readIndex(context)
+    // Structural one-shots (migration, metadata cleanup) re-scan the whole
+    // index on every call — fine once, deadly per keystroke on a library of
+    // thousands. Process-level done-flags: after the first pass they no-op.
+    @Volatile private var migrated = false
+    @Volatile private var metaCleaned = false
+
+    fun books(context: Context, libraryId: String? = null): List<LocalBook> =
+        parseBooks(readIndexOnce(context), libraryId)
+
+    /** Migration/cleanup + ONE index parse — the common read path. */
+    private fun readIndexOnce(context: Context): JSONObject {
+        if (!migrated) { ensureSeriesMigration(context); migrated = true }
+        if (!metaCleaned) { cleanIndexMeta(context); metaCleaned = true }
+        return readIndex(context)
+    }
+
+    internal fun parseBooks(root: JSONObject, libraryId: String?): List<LocalBook> {
         val arr = root.optJSONArray("books") ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -536,10 +561,52 @@ object LocalLibraryStore {
         }
     }
 
-    fun seriesList(context: Context, libraryId: String? = null): List<LocalSeries> {
-        ensureSeriesMigration(context)
-        cleanIndexMeta(context)
-        val root = readIndex(context)
+    /**
+     * Everything the library screen renders from, in ONE index read plus
+     * cover/read-position resolution — built on the caller's IO dispatcher
+     * and held in Compose state. The screen (and search) then filters pure
+     * in-memory lists: zero store IO per recomposition or keystroke
+     * (Wayne, 2026-10-21: thousands of books froze the grid for seconds).
+     * Covers with no cached file get their one-time zip extraction HERE,
+     * never mid-scroll.
+     */
+    data class LibrarySnapshot(
+        val library: LocalLibrary?,
+        val books: List<LocalBook>,
+        val series: List<LocalSeries>,
+        val seriesIdOf: Map<String, String>,    // bookId → seriesId
+        val coverPathOf: Map<String, String>,   // bookId → absolute path ("" = none)
+        val readPosOf: Map<String, Int>         // bookId → saved reader position
+    )
+
+    fun snapshot(context: Context, libraryId: String): LibrarySnapshot {
+        val root = readIndexOnce(context)
+        val books = parseBooks(root, libraryId)
+        val series = parseSeries(root, libraryId)
+        val sidMap = HashMap<String, String>()
+        val bArr = root.optJSONArray("books")
+        for (i in 0 until (bArr?.length() ?: 0)) {
+            val o = bArr!!.optJSONObject(i) ?: continue
+            val sid = o.optString("seriesId").takeIf { it.isNotBlank() } ?: continue
+            sidMap[o.optString("id")] = sid
+        }
+        val coverPaths = HashMap<String, String>(books.size)
+        books.forEach { b ->
+            coverPaths[b.id] = coverFile(context, b.id)?.absolutePath ?: ""
+        }
+        val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+        val positions = books.associate { it.id to prefs.getInt("local_pos_${it.id}", 0) }
+        return LibrarySnapshot(
+            library = parseLibraries(root).firstOrNull { it.id == libraryId },
+            books = books, series = series, seriesIdOf = sidMap,
+            coverPathOf = coverPaths, readPosOf = positions
+        )
+    }
+
+    fun seriesList(context: Context, libraryId: String? = null): List<LocalSeries> =
+        parseSeries(readIndexOnce(context), libraryId)
+
+    internal fun parseSeries(root: JSONObject, libraryId: String?): List<LocalSeries> {
         val arr = root.optJSONArray("series") ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             arr.optJSONObject(i)?.let { o ->
@@ -548,6 +615,15 @@ object LocalLibraryStore {
                     o.optString("id"), o.optString("libraryId"),
                     o.optString("name"), o.optString("key"), o.optString("description")
                 )
+            }
+        }
+    }
+
+    private fun parseLibraries(root: JSONObject): List<LocalLibrary> {
+        val arr = root.optJSONArray("libraries") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { o ->
+                LocalLibrary(o.optString("id"), o.optString("name"), o.optString("storageUri"))
             }
         }
     }

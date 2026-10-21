@@ -54,10 +54,14 @@ fun LocalLibraryHome(
     val app = androidx.lifecycle.viewmodel.compose.viewModel<AppViewModel>()
     val nsfwUnlocked = app.nsfwUnlocked
 
-    var library by remember(libraryId) {
-        mutableStateOf(LocalLibraryStore.library(context, libraryId))
+    // Snapshot pattern (Wayne, 2026-10-21): the whole library renders from
+    // ONE IO-loaded snapshot — books, series, covers, read positions. The
+    // grid and search then filter pure in-memory lists; before this, every
+    // recomposition (each keystroke!) re-read the multi-MB index and stat'd
+    // covers on the main thread, freezing for seconds at thousands of books.
+    var snap by remember(libraryId) {
+        mutableStateOf<LocalLibraryStore.LibrarySnapshot?>(null)
     }
-    var books by remember(libraryId) { mutableStateOf<List<LocalLibraryStore.LocalBook>>(emptyList()) }
     var shelves by remember(libraryId) { mutableStateOf(CategoryState()) }
     var importing by remember { mutableStateOf(false) }
     var importMsg by remember { mutableStateOf("") }
@@ -69,14 +73,14 @@ fun LocalLibraryHome(
     var sortMode by remember { mutableStateOf(loadSortMode(prefs)) }
 
     fun reload() {
-        library = LocalLibraryStore.library(context, libraryId)
-        books = LocalLibraryStore.books(context, libraryId)
-        shelves = CategoryStore.load(context, "local:$libraryId")
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                snap = LocalLibraryStore.snapshot(context, libraryId)
+                shelves = CategoryStore.load(context, "local:$libraryId")
+            }
+        }
     }
-    LaunchedEffect(libraryId) {
-        withContext(Dispatchers.IO) { LocalLibraryStore.libraries(context) }
-        reload()
-    }
+    LaunchedEffect(libraryId) { reload() }
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -154,51 +158,44 @@ fun LocalLibraryHome(
         }
     }
 
-    // Rows are SERIES (Wayne, 2026-10-21: "Series = Series") — the same unit
-    // the sites' grids show. Cover/name from volume 1; unread = chapters
-    // remaining across volumes; shelves hold series. Books on a hidden
-    // (locked) shelf stay out of the grid entirely.
-    val sidMap = LocalLibraryStore.seriesIdMap(context)
-    val hiddenShelfIds = shelves.cats.filter { it.hidden && !nsfwUnlocked }.map { it.id }.toSet()
-    val visibleBooks = books.filter { b ->
-        val sid = sidMap[b.id]
-        sid?.let { shelves.assign[it] }?.let { it !in hiddenShelfIds } ?: true
-    }
-    val bySeries = visibleBooks.groupBy { sidMap[it.id] ?: it.id }
-    val prefsForUnread = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
-    val allSeries = LocalLibraryStore.seriesList(context, libraryId)
-    val rows = allSeries
-        .filter { s -> (shelves.assign[s.id]?.let { it !in hiddenShelfIds } ?: true) }
-        .filter { s -> shelfFilter == null || shelves.assign[s.id] == shelfFilter }
-        .filter { s -> bySeries[s.id].orEmpty().isNotEmpty() }
-        .filter { s -> s.name.contains(searchQuery, ignoreCase = true) }
-        .sortedWith(
-            when (sortMode) {
-                SORT_ALPHA -> compareBy { it.name.lowercase() }
-                else -> compareByDescending { s -> bySeries[s.id].orEmpty().maxOfOrNull { it.addedAt } ?: 0 }
-            }
-        )
-        .map { s ->
-            val vols = bySeries[s.id].orEmpty()
-                .sortedWith(compareBy({ LocalLibraryStore.volumeNumber(it.title) }, { it.addedAt }))
-            val vol1 = vols.firstOrNull()
-            val unread = vols.sumOf { v ->
-                val pos = prefsForUnread.getInt("local_pos_${v.id}", 0)
-                maxOf(0, v.chapterCount - pos)
-            }
-            val coverPath = vol1?.let { LocalLibraryStore.coverFile(context, it.id)?.absolutePath }.orEmpty()
-            BookmarkRow(
-                title = s.name,
-                subtitle = vol1?.author.orEmpty(),
-                coverUrl = if (coverPath.isNotBlank()) "file://$coverPath" else "",
-                // Volume 1's CoverStore key — the series borrows its cover.
-                seriesUrl = vol1?.let { "locallib://${it.id}" } ?: "",
-                open = { onOpenSeries(s.id) },
-                unread = unread,
-                latestLabel = if (vols.size > 1) "${vols.size} ${t("vols", "巻")}"
-                else vol1?.takeIf { it.chapterCount > 0 }?.let { "${it.chapterCount} ${t("ch", "話")}" } ?: ""
+    // Rows are SERIES (Wayne, 2026-10-21: "Series = Series") — pure
+    // in-memory filtering over the snapshot; zero IO here (search-safe).
+    val s = snap
+    val rows = if (s == null) emptyList() else {
+        val sidMap = s.seriesIdOf
+        val hiddenShelfIds = shelves.cats.filter { it.hidden && !nsfwUnlocked }.map { it.id }.toSet()
+        val bySeries = s.books.groupBy { sidMap[it.id] ?: it.id }
+        val allSeries = s.series
+        allSeries
+            .filter { sr -> (shelves.assign[sr.id]?.let { it !in hiddenShelfIds } ?: true) }
+            .filter { sr -> shelfFilter == null || shelves.assign[sr.id] == shelfFilter }
+            .filter { sr -> bySeries[sr.id].orEmpty().isNotEmpty() }
+            .filter { sr -> sr.name.contains(searchQuery, ignoreCase = true) }
+            .sortedWith(
+                when (sortMode) {
+                    SORT_ALPHA -> compareBy { it.name.lowercase() }
+                    else -> compareByDescending { sr -> bySeries[sr.id].orEmpty().maxOfOrNull { it.addedAt } ?: 0 }
+                }
             )
-        }
+            .map { sr ->
+                val vols = bySeries[sr.id].orEmpty()
+                    .sortedWith(compareBy({ LocalLibraryStore.volumeNumber(it.title) }, { it.addedAt }))
+                val vol1 = vols.firstOrNull()
+                val unread = vols.sumOf { v -> maxOf(0, v.chapterCount - (s.readPosOf[v.id] ?: 0)) }
+                BookmarkRow(
+                    title = sr.name,
+                    subtitle = vol1?.author.orEmpty(),
+                    coverUrl = s.coverPathOf[vol1?.id].orEmpty().takeIf { it.isNotBlank() }
+                        ?.let { "file://$it" } ?: "",
+                    // Volume 1's CoverStore key — the series borrows its cover.
+                    seriesUrl = vol1?.let { "locallib://${it.id}" } ?: "",
+                    open = { onOpenSeries(sr.id) },
+                    unread = unread,
+                    latestLabel = if (vols.size > 1) "${vols.size} ${t("vols", "巻")}"
+                    else vol1?.takeIf { it.chapterCount > 0 }?.let { "${it.chapterCount} ${t("ch", "話")}" } ?: ""
+                )
+            }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -206,7 +203,7 @@ fun LocalLibraryHome(
             ModalDrawerSheet {
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
                     Text(
-                        library?.name ?: "Library",
+                        snap?.library?.name ?: "Library",
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
@@ -281,7 +278,7 @@ fun LocalLibraryHome(
                         }
                         shelves.cats.filter { !it.hidden || nsfwUnlocked }.forEach { cat ->
                             // Shelves hold SERIES now — counts follow.
-                            val count = allSeries.count { assignments[it.id] == cat.id }
+                            val count = snap?.series?.count { assignments[it.id] == cat.id } ?: 0
                             NavigationDrawerItem(
                                 label = { Text("${cat.name}  ($count)" ) },
                                 selected = shelfFilter == cat.id,
@@ -318,9 +315,10 @@ fun LocalLibraryHome(
             BookmarkLibraryBody(
                 heading = shelfFilter?.let { id ->
                     shelves.cats.firstOrNull { it.id == id }?.name
-                } ?: library?.name ?: "Library",
+                } ?: snap?.library?.name ?: "Library",
                 rows = rows,
-                emptyMessage = t(
+                emptyMessage = if (snap == null) t("Loading library…", "ライブラリ読み込み中…")
+                else t(
                     "No books yet — ☰ → Import epubs… to add your first",
                     "本がまだありません — ☰ → EPUBをインポート…"
                 ),
@@ -341,7 +339,7 @@ fun LocalLibraryHome(
     }
 
     if (showRename) {
-        var name by remember { mutableStateOf(library?.name ?: "") }
+        var name by remember { mutableStateOf(snap?.library?.name ?: "") }
         AlertDialog(
             onDismissRequest = { showRename = false },
             title = { Text(t("Rename library", "ライブラリ名変更")) },
