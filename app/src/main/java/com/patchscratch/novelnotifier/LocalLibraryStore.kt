@@ -305,8 +305,12 @@ object LocalLibraryStore {
      */
     fun chapterText(context: Context, book: LocalBook, index: Int): Pair<String, List<String>>? =
         withZip(context, book) { zip, opfPath ->
+            DebugLog.log("LOCALLIB", "withZip: opfPath=$opfPath")
             val opfBytes = zip.getEntry(opfPath)?.let { zip.getInputStream(it).readBytes() }
-                ?: return@withZip null
+            if (opfBytes == null) {
+                DebugLog.log("LOCALLIB", "OPF entry not found: $opfPath; entries=${zip.entries().toList().take(5).map { it.name }}")
+                return@withZip null
+            }
             val opf = opfBytes.toString(Charsets.UTF_8)
             val hrefs = spineHrefs(opf)
             if (index < 0 || index >= hrefs.size) return@withZip null

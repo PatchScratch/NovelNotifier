@@ -683,11 +683,21 @@ fun ReaderScreen(
             val parts = chapter.url.removePrefix("locallib://").split("/")
             val bookId = parts.getOrNull(0).orEmpty()
             val idx = parts.getOrNull(1)?.toIntOrNull() ?: 0
-            val (title, paras) = withContext(Dispatchers.IO) {
-                LocalLibraryStore.book(context, bookId)?.let { b ->
-                    LocalLibraryStore.chapterText(context, b, idx)
+            DebugLog.log("LOCALLIB", "serving book=$bookId idx=$idx")
+            val result = withContext(Dispatchers.IO) {
+                val b = LocalLibraryStore.book(context, bookId)
+                if (b == null) {
+                    DebugLog.log("LOCALLIB", "book not found: $bookId")
+                    null
+                } else {
+                    val r = LocalLibraryStore.chapterText(context, b, idx)
+                    if (r == null) DebugLog.log("LOCALLIB", "chapterText null for idx=$idx")
+                    else DebugLog.log("LOCALLIB", "chapterText: ${r.second.size} paras, title=${r.first.take(40)}")
+                    r
                 }
-            } ?: ("" to emptyList())
+            }
+            val paras = result?.second ?: emptyList()
+            val title = result?.first ?: ""
             if (paras.isNotEmpty()) {
                 extractResult = ChapterExtract(
                     title = title.ifBlank { chapter.chapter },
