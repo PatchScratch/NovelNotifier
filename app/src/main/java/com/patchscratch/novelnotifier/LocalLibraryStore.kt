@@ -313,10 +313,18 @@ object LocalLibraryStore {
             }
             val opf = opfBytes.toString(Charsets.UTF_8)
             val hrefs = spineHrefs(opf)
-            if (index < 0 || index >= hrefs.size) return@withZip null
-            val doc = zip.getEntry(hrefs[index])
-                ?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
-                ?: return@withZip null
+            DebugLog.log("LOCALLIB", "spine: ${hrefs.size} hrefs; first=${hrefs.firstOrNull()?.take(60)}")
+            if (index < 0 || index >= hrefs.size) {
+                DebugLog.log("LOCALLIB", "index $idx out of range (0..${hrefs.size - 1})")
+                return@withZip null
+            }
+            val entry = zip.getEntry(hrefs[index])
+            if (entry == null) {
+                DebugLog.log("LOCALLIB", "chapter entry not in zip: ${hrefs[index]}")
+                DebugLog.log("LOCALLIB", "zip has: ${zip.entries().asSequence().take(8).map { it.name }.joinToString(", ")}")
+                return@withZip null
+            }
+            val doc = zip.getInputStream(entry).readBytes().toString(Charsets.UTF_8)
             val title = Regex("<title[^>]*>([^<]*)</title>").find(doc)
                 ?.groupValues?.get(1)?.trim().orEmpty()
 
