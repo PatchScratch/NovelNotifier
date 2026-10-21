@@ -315,7 +315,7 @@ object LocalLibraryStore {
             val hrefs = spineHrefs(opf)
             DebugLog.log("LOCALLIB", "spine: ${hrefs.size} hrefs; first=${hrefs.firstOrNull()?.take(60)}")
             if (index < 0 || index >= hrefs.size) {
-                DebugLog.log("LOCALLIB", "index $idx out of range (0..${hrefs.size - 1})")
+                DebugLog.log("LOCALLIB", "index $index out of range (0..${hrefs.size - 1})")
                 return@withZip null
             }
             val entry = zip.getEntry(hrefs[index])
