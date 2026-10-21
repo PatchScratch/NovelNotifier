@@ -84,7 +84,9 @@ fun LocalBookDetail(
         state = SeriesDetailState(
             seriesUrl = "locallib://$bookId",
             onBack = onBack,
-            coverUrl = "",
+            // Cover from the epub's embedded cover image (filesDir cache).
+            coverUrl = LocalLibraryStore.coverFile(context, bookId)
+                ?.let { "file://${it.absolutePath}" } ?: "",
             coverSeriesUrl = "locallib://$bookId",
             title = b.title,
             author = b.author,

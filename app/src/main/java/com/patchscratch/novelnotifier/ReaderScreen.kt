@@ -648,11 +648,20 @@ fun ReaderScreen(
     // extraction appends the chapter to the series' offline ePub; total
     // failure falls back to the stored copy when one exists (offline reading).
     LaunchedEffect(extractTick, retryKey, viewMode, chapter.url) {
+        // Local Library chapters have NO WebView dependency — the zip
+        // serving below runs on the first composition, not after a page
+        // finish. Bypass the extractTick/viewMode gates entirely.
+        val isLocalLib = chapter.url.startsWith("locallib://")
+        if (isLocalLib) {
+            viewMode = READER_VIEW_TEXT
+        }
         // During an AlphaPolis web-hop the ladder keeps running in WEB mode —
         // the hop exists precisely so the VISIBLE DOM fills #novelBody for
         // tryExtract to read; success flips the reader back to TEXT.
         val alpHop = alpWebHop && viewMode == READER_VIEW_WEB
-        if ((viewMode != READER_VIEW_TEXT && !alpHop) || extractTick == 0) return@LaunchedEffect
+        if (!isLocalLib && ((viewMode != READER_VIEW_TEXT && !alpHop) || extractTick == 0)) {
+            return@LaunchedEffect
+        }
         if (foxRssStage == 1) return@LaunchedEffect
         extractResult = null
         extractFailed = false
