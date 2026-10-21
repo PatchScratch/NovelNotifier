@@ -292,8 +292,18 @@ fun LocalLibraryHome(
                         )
                     }
                 } else if (layoutMode == LAYOUT_GRID) {
+                    // Same sizing as the sites (BookmarkRowsLayout): fixed
+                    // columns by screen width, 3:4 aspect covers.
+                    val widthDp = with(androidx.compose.ui.platform.LocalDensity.current) {
+                        androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.toDp()
+                    }.value.toInt()
+                    val columns = when {
+                        widthDp >= 840 -> 5
+                        widthDp >= 600 -> 4
+                        else -> 3
+                    }
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(120.dp),
+                        columns = GridCells.Fixed(columns),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -374,7 +384,7 @@ fun LocalBookCard(book: LocalLibraryStore.LocalBook, onClick: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     Card(
         modifier = Modifier
-            .aspectRatio(0.68f)
+            .aspectRatio(3f / 4f)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(8.dp)
     ) {
