@@ -170,6 +170,7 @@ fun ReaderScreen(
     var nuRefreshed by remember(target) { mutableStateOf<List<Release>?>(null) }
     var showChapterListMenu by remember { mutableStateOf(false) }
     var showDownloadsMenu by remember { mutableStateOf(false) }
+    var showTranslationMenu by remember { mutableStateOf(false) }
     val chapters = when {
         tocSource == "toc" && tocChapters != null -> tocChapters!!
         nuRefreshed != null -> nuRefreshed!!
@@ -971,119 +972,23 @@ fun ReaderScreen(
                 // ---- Translation -------------------------------------------------
                 // AI translation: current chapter through the configured
                 // OpenAI-compatible endpoint. Needs the API key from Settings.
+                // ---- Translation submenu (Wayne, 2026-10-21) ------------------
+                // All translation controls in one place; status rides the
+                // opener label so coverage stays visible at a glance.
                 DropdownMenuItem(
                     text = {
                         Text(
-                            when {
-                                translating -> t("Translating…", "翻訳中…")
-                                translation != null -> (if (showTranslation) "✓ " else "") +
-                                    t("Translation (toggle)", "翻訳（切替）")
-                                translateError.isNotBlank() -> t("Translation failed — tap to retry", "翻訳失敗 — タップで再試行")
-                                xlateKey.isBlank() -> t("Translate chapter (set API key in Settings)", "この話を翻訳（設定でAPIキー）")
-                                else -> t("Translate chapter", "この話を翻訳")
+                            t("Translation", "翻訳") + " ▸ " + when {
+                                translating -> t("working…", "実行中…")
+                                translation != null && showTranslation -> t("on", "表示中")
+                                translatedCount > 0 -> "$translatedCount"
+                                else -> ""
                             }
                         )
                     },
-                    onClick = {
-                        showMenu = false
-                        if (translating) return@DropdownMenuItem
-                        if (translation != null) {
-                            // Already translated — the item toggles display.
-                            showTranslation = !showTranslation
-                            return@DropdownMenuItem
-                        }
-                        startTranslate()
-                    }
+                    onClick = { showMenu = false; showTranslationMenu = true }
                 )
-                if (translation != null && !translating && xlateKey.isNotBlank()) {
-                    DropdownMenuItem(
-                        text = { Text(t("Re-translate chapter", "この話を再翻訳")) },
-                        onClick = {
-                            showMenu = false
-                            // Drop the stored/loaded translation so the next
-                            // render can't show stale text mid-run, then redo.
-                            translation = null
-                            startTranslate()
-                        }
-                    )
-                }
-                // Paragraph layout, switchable right here (Settings holds the
-                // saved default): both / Japanese only / English only.
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            t("Layout: ", "レイアウト：") + when (xlateLayout) {
-                                "jp" -> t("Japanese only", "日本語のみ")
-                                "en" -> t("English only", "英語のみ")
-                                else -> t("JP + EN", "日英両方")
-                            }
-                        )
-                    },
-                    onClick = {
-                        xlateLayout = when (xlateLayout) {
-                            "both" -> "jp"; "jp" -> "en"; else -> "both"
-                        }
-                        prefs.edit { putString("xlate_layout", xlateLayout) }
-                    }
-                )
-                // Manual chapter-list control (Wayne, 2026-10-20): submenu
-                // for harvesting a site ToC, refreshing either source, and
-                // toggling which list drives this reader.
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            t("Chapter list", "各話リスト") + " ▸ " +
-                                when {
-                                    tocSource == "toc" && tocChapters != null ->
-                                        t("Site ToC", "サイト目次") + " (${tocChapters!!.size})"
-                                    else -> "NU" + " (${chapters.size})"
-                                }
-                        )
-                    },
-                    onClick = {
-                        showMenu = false
-                        showChapterListMenu = true
-                    }
-                )
-                // Bulk twin of Download all: every STORED chapter through the
-                // translator, one at a time, auto-refining lock files as it
-                // goes. Unstored chapters need Download all first. The label
-                // carries coverage (translated/stored) so a finished bulk
-                // run is visible as "all N translated".
-                if (xlateKey.isNotBlank()) {
-                    val bulk by TranslationQueue.state.collectAsState()
-                    val mine = bulk?.takeIf { it.seriesUrl == target.seriesUrl }
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                when {
-                                    mine?.running == true ->
-                                        t("Translating all… ", "一括翻訳中… ") + mine.done + "/" + mine.total +
-                                            t(" (tap to stop)", "（タップで停止）")
-                                    else -> {
-                                        val n = translatedCount
-                                        val m = epubCount
-                                        when {
-                                            n < 0 -> t("Translate all stored", "保存済みを一括翻訳")
-                                            m > 0 && n >= m -> t("✓ All ", "✓ 全") + "$m" + t(" chapters translated", "話 翻訳済み")
-                                            m > 0 -> t("Translate all stored (", "保存済みを一括翻訳（") + "$n/$m" + t(" translated)", " 翻訳済み）")
-                                            else -> t("Translate all stored", "保存済みを一括翻訳")
-                                        }
-                                    }
-                                }
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            if (mine?.running == true) TranslationQueue.stop()
-                            else TranslationQueue.start(context, target.seriesTitle, target.seriesUrl)
-                        }
-                    )
-                }
-                DropdownMenuItem(
-                    text = { Text(t("Translation files (prompt/glossary/voices)…", "翻訳ファイル（プロンプト/用語集/声）…")) },
-                    onClick = { showMenu = false; onOpenXlateFiles() }
-                )
+
 
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
 
@@ -1315,6 +1220,111 @@ fun ReaderScreen(
                 },
                 confirmButton = {
                     androidx.compose.material3.TextButton(onClick = { showDownloadsMenu = false }) {
+                        Text(t("Close", "閉じる"))
+                    }
+                }
+            )
+        }
+
+
+        // ---- Translation submenu (Wayne, 2026-10-21) ------------------------
+        if (showTranslationMenu) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showTranslationMenu = false },
+                title = { Text(t("Translation", "翻訳")) },
+                text = {
+                    Column {
+                        Text(
+                            when {
+                                translating -> t("Translating this chapter…", "この話を翻訳中…")
+                                translation != null -> t("This chapter: translated", "この話: 翻訳済み")
+                                xlateKey.isBlank() -> t("No API key — set it in Settings", "APIキー未設定 — 設定から")
+                                else -> t("This chapter: not translated", "この話: 未翻訳")
+                            } + "  ·  " + t("stored ", "保存済み ") + "$epubCount" +
+                                (if (translatedCount > 0) " · " + t("translated ", "翻訳済み ") + "$translatedCount" else ""),
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        androidx.compose.material3.TextButton(onClick = {
+                            showTranslationMenu = false
+                            if (translating) return@TextButton
+                            if (translation != null) {
+                                showTranslation = !showTranslation
+                            } else {
+                                startTranslate()
+                            }
+                        }) {
+                            Text(
+                                when {
+                                    translating -> t("Translating…", "翻訳中…")
+                                    translation != null -> (if (showTranslation) "✓ " else "") +
+                                        t("Show/hide translation", "翻訳の表示切替")
+                                    translateError.isNotBlank() -> t("Translation failed — tap to retry", "翻訳失敗 — タップで再試行")
+                                    xlateKey.isBlank() -> t("Translate chapter (set API key in Settings)", "この話を翻訳（設定でAPIキー）")
+                                    else -> t("Translate chapter", "この話を翻訳")
+                                }
+                            )
+                        }
+                        if (translation != null && !translating && xlateKey.isNotBlank()) {
+                            androidx.compose.material3.TextButton(onClick = {
+                                showTranslationMenu = false
+                                translation = null
+                                startTranslate()
+                            }) { Text(t("Re-translate chapter", "この話を再翻訳")) }
+                        }
+                        // Paragraph layout: both / Japanese only / English
+                        // only (Settings holds the saved default).
+                        androidx.compose.material3.TextButton(onClick = {
+                            xlateLayout = when (xlateLayout) {
+                                "both" -> "jp"; "jp" -> "en"; else -> "both"
+                            }
+                            prefs.edit { putString("xlate_layout", xlateLayout) }
+                        }) {
+                            Text(
+                                t("Layout: ", "レイアウト：") + when (xlateLayout) {
+                                    "jp" -> t("Japanese only", "日本語のみ")
+                                    "en" -> t("English only", "英語のみ")
+                                    else -> t("JP + EN", "日英両方")
+                                }
+                            )
+                        }
+                        if (xlateKey.isNotBlank()) {
+                            val bulk by TranslationQueue.state.collectAsState()
+                            val mine = bulk?.takeIf { it.seriesUrl == target.seriesUrl }
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    showTranslationMenu = false
+                                    if (mine?.running == true) TranslationQueue.stop()
+                                    else TranslationQueue.start(context, target.seriesTitle, target.seriesUrl)
+                                }
+                            ) {
+                                Text(
+                                    when {
+                                        mine?.running == true ->
+                                            t("Translating all… ", "一括翻訳中… ") + mine.done + "/" + mine.total +
+                                                t(" (tap to stop)", "（タップで停止）")
+                                        else -> {
+                                            val n = translatedCount
+                                            val m = epubCount
+                                            when {
+                                                n < 0 -> t("Translate all stored", "保存済みを一括翻訳")
+                                                m > 0 && n >= m -> t("✓ All ", "✓ 全") + "$m" + t(" chapters translated", "話 翻訳済み")
+                                                m > 0 -> t("Translate all stored (", "保存済みを一括翻訳（") + "$n/$m" + t(" translated)", " 翻訳済み）")
+                                                else -> t("Translate all stored", "保存済みを一括翻訳")
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        androidx.compose.material3.TextButton(onClick = {
+                            showTranslationMenu = false
+                            onOpenXlateFiles()
+                        }) { Text(t("Translation files (prompt/glossary/voices)…", "翻訳ファイル（プロンプト/用語集/声）…")) }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { showTranslationMenu = false }) {
                         Text(t("Close", "閉じる"))
                     }
                 }
