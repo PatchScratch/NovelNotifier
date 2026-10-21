@@ -141,6 +141,8 @@ object LocalLibraryStore {
     }
 
     fun books(context: Context, libraryId: String? = null): List<LocalBook> {
+        ensureSeriesMigration(context)
+        cleanIndexMeta(context)
         val root = readIndex(context)
         val arr = root.optJSONArray("books") ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
@@ -342,6 +344,63 @@ object LocalLibraryStore {
         return linked to skipped
     }
 
+    /**
+     * ePub3 metadata can carry HTML — titles like "Volume 2 &lt;strong&gt;
+     * The Quest&lt;/strong&gt;" leaked into rows verbatim (Wayne's tablet,
+     * 2026-10-21). Unescape entities, strip any tags, collapse whitespace.
+     */
+    internal fun cleanMeta(raw: String): String {
+        var t = raw
+            .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+            .replace("&apos;", "'").replace("&#39;", "'").replace("&nbsp;", " ")
+        t = Regex("&#(\\d+);").replace(t) { m ->
+            m.groupValues[1].toIntOrNull()?.toChar()?.toString() ?: m.value
+        }
+        t = Regex("&#x([0-9a-fA-F]+);").replace(t) { m ->
+            m.groupValues[1].toIntOrNull(16)?.toChar()?.toString() ?: m.value
+        }
+        t = t.replace("&amp;", "&")   // last — avoids double-unescaping
+        t = t.replace(Regex("<[^>]+>"), " ")
+        return t.replace(Regex("\\s+"), " ").trim()
+    }
+
+    /**
+     * Idempotent index cleanup: books imported before cleanMeta() carry
+     * escaped HTML in title/author/description, and series names/keys
+     * inherited it. Keys recompute from volume 1's cleaned title so future
+     * imports still auto-join. Writes only when something changed.
+     */
+    private fun cleanIndexMeta(context: Context) {
+        val root = readIndex(context)
+        var dirty = false
+        val books = root.optJSONArray("books")
+        val titlesBySeries = HashMap<String, MutableList<String>>()
+        for (i in 0 until (books?.length() ?: 0)) {
+            val o = books!!.optJSONObject(i) ?: continue
+            listOf("title", "author", "description").forEach { f ->
+                val v = o.optString(f)
+                val c = cleanMeta(v)
+                if (c != v) { o.put(f, c); dirty = true }
+            }
+            titlesBySeries.getOrPut(o.optString("seriesId")) { mutableListOf() }
+                .add(o.optString("title"))
+        }
+        val series = root.optJSONArray("series")
+        for (i in 0 until (series?.length() ?: 0)) {
+            val o = series!!.optJSONObject(i) ?: continue
+            val name = o.optString("name")
+            val cleaned = cleanMeta(name)
+            if (cleaned != name) { o.put("name", cleaned); dirty = true }
+            val vol1 = titlesBySeries[o.optString("id")]
+                ?.sortedWith(compareBy({ volumeNumber(it) }, { it }))?.firstOrNull()
+            if (vol1 != null) {
+                val k = seriesKey(vol1)
+                if (k != o.optString("key")) { o.put("key", k); dirty = true }
+            }
+        }
+        if (dirty) writeIndex(context, root)
+    }
+
     private fun storeBytes(
         context: Context, lib: LocalLibrary, fileName: String, bytes: ByteArray, bookId: String
     ): Pair<String, String> {
@@ -423,9 +482,9 @@ object LocalLibraryStore {
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             if (o.optString("id") == bookId) {
-                title?.takeIf { it.isNotBlank() }?.let { o.put("title", it.trim()) }
-                author?.let { o.put("author", it.trim()) }
-                description?.let { o.put("description", it.trim()) }
+                title?.takeIf { it.isNotBlank() }?.let { o.put("title", cleanMeta(it)) }
+                author?.let { o.put("author", cleanMeta(it)) }
+                description?.let { o.put("description", cleanMeta(it)) }
                 break
             }
         }
@@ -479,6 +538,7 @@ object LocalLibraryStore {
 
     fun seriesList(context: Context, libraryId: String? = null): List<LocalSeries> {
         ensureSeriesMigration(context)
+        cleanIndexMeta(context)
         val root = readIndex(context)
         val arr = root.optJSONArray("series") ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
@@ -747,12 +807,19 @@ object LocalLibraryStore {
                     ?.groupValues?.get(1) ?: return null
                 val opfEntry = zip.getEntry(opfPath) ?: return null
                 val opf = zip.getInputStream(opfEntry).readBytes().toString(Charsets.UTF_8)
-                val title = Regex("<dc:title[^>]*>([^<]*)</dc:title>").find(opf)
-                    ?.groupValues?.get(1)?.trim().orEmpty()
-                val author = Regex("<dc:creator[^>]*>([^<]*)</dc:creator>").find(opf)
-                    ?.groupValues?.get(1)?.trim().orEmpty()
-                val description = Regex("<dc:description[^>]*>([\\s\\S]*?)</dc:description>")
-                    .find(opf)?.groupValues?.get(1)?.replace(Regex("<[^>]+>"), "")?.trim().orEmpty()
+                // Metadata can carry escaped HTML — clean before storing.
+                val title = cleanMeta(
+                    Regex("<dc:title[^>]*>([^<]*)</dc:title>").find(opf)
+                        ?.groupValues?.get(1).orEmpty()
+                )
+                val author = cleanMeta(
+                    Regex("<dc:creator[^>]*>([^<]*)</dc:creator>").find(opf)
+                        ?.groupValues?.get(1).orEmpty()
+                )
+                val description = cleanMeta(
+                    Regex("<dc:description[^>]*>([\\s\\S]*?)</dc:description>")
+                        .find(opf)?.groupValues?.get(1).orEmpty()
+                )
                 val base = opfPath.substringBeforeLast("/", "")
                 val coverHref = Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""")
                     .find(opf)?.groupValues?.get(1)
