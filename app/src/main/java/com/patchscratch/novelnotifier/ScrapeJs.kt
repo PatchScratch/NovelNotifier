@@ -181,18 +181,32 @@ fun listPageJs(): String = """
       // checkboxes — so marks alone can't scope. Anchor the scope to the
       // smallest ancestor of the "Series (N)" header that holds enough
       // series links; only rows inside it are list rows.
+      function chainOf(el) {
+        var parts = [];
+        var n = el;
+        for (var i = 0; i < 3 && n && n !== document.body; i++) {
+          parts.push(n.tagName + (n.className && typeof n.className === 'string' ? '.' + n.className.split(' ')[0] : ''));
+          n = n.parentElement;
+        }
+        return parts.join('<');
+      }
       var expectedCount = -1;
       var cmMatch = document.body.textContent.match(/Series\s*\((\d+)\)/);
       if (cmMatch) expectedCount = parseInt(cmMatch[1], 10);
       var scopeEl = null;
+      var dbgHdr = 'none';
       if (cmMatch) {
-        var tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        // ELEMENT-level search (live-caught via Wayne's status dump
+        // 2026-10-21: NU renders "Series" and "(41)" as separate child
+        // nodes — a single text node never matches, so the text-node walk
+        // found no header and scope stayed null (every row dropped).
         var countEl = null;
-        while (tw.nextNode()) {
-          if (/Series\s*\(\d+\)/.test(tw.currentNode.nodeValue || '')) {
-            countEl = tw.currentNode.parentElement; break;
-          }
+        var els = document.querySelectorAll('h1,h2,h3,h4,h5,h6,span,b,strong,em,p,td,th,div,a');
+        for (var ei = 0; ei < els.length; ei++) {
+          var et = els[ei].textContent || '';
+          if (et.length < 200 && /Series\s*\(\d+\)/.test(et)) { countEl = els[ei]; break; }
         }
+        dbgHdr = countEl ? countEl.tagName : 'notfound';
         // Uncapped walk (live-caught on the rig 2026-10-20: the mobile
         // render nests the header deep enough that 10 levels miss the list
         // container — scope resolved to nothing and every row dropped).
@@ -227,8 +241,11 @@ fun listPageJs(): String = """
       return lists.join('|||') + ':::NOVELS:::' + novels.join('|||') + ':::RSS:::' + feeds.join('|||') +
         ':::COUNT:::' + expectedCount +
         ':::DBG:::' + 'table=' + !!listTable + ',marked=' + anyMarked + ',count=' + expectedCount +
+        ',hdr=' + dbgHdr +
         ',scope=' + (scopeEl ? scopeEl.querySelectorAll('a[href*="/series/"]').length : -1) +
-        ',cands=' + candidates.length;
+        ',cands=' + candidates.length +
+        ',b41=' + (candidates[40] ? chainOf(candidates[40].el) : '-') +
+        ',b42=' + (candidates[41] ? chainOf(candidates[41].el) : '-');
     })();
 """.trimIndent()
 
