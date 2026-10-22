@@ -1,6 +1,6 @@
 # NovelNotifier
 
-[English](README.md) · [日本語](README.ja.md)
+[English](README.md) · [日本語](README.ja.md) · **[User guide](docs/USERGUIDE.md)** — a plain-language walkthrough of every feature.
 
 An Android app for reading web novels: follow your [Novel Updates](https://www.novelupdates.com) reading lists (covers, unread counts, chapter alerts, mark-as-read), and discover/read/download from the Japanese webnovel sites [Syosetu (なろう)](https://syosetu.com) and [Kakuyomu (カクヨム)](https://kakuyomu.jp) — rankings, search, in-app reading, and offline ePub building across all three.
 
@@ -50,6 +50,7 @@ A whole offline library that sits beside the sites with the same design language
 - **Read in place, or copy** — import ePubs the usual way, or **link files where they already live on the device** (no copy, no move; your originals are never modified or deleted), including **whole folders in one go** through a single storage grant.
 - **The epub's own table of contents** drives the chapter list — real titles in the book's declared order — and chapters stream from an open publication: fast opens, inline illustrations, cover pages.
 - **Covers and metadata under your control** — covers extract through Readium's cover service with a manual per-book override; series names, descriptions and volume metadata are editable in place; a series cover can be pinned to any volume.
+- **AI translation of your books** — through your own key: translate a series' title & description (shown dimmed beneath the original), translate the volume you're reading chapter-by-chapter in the reader, or bulk-translate every chapter of every volume from the series menu — resumable, with live progress. Translations live as sidecars; the epub files are never modified.
 - **Self-maintaining** — a background pass finds duplicate entries (same file linked twice, re-rips under slightly different names) and dead links (moved/deleted files) and offers one-tap cleanup; shelf assignments and the whole library index ride backups.
 - **Multi-select** — long-press a series to start a selection; batch move to a shelf, merge into another series, or delete.
 

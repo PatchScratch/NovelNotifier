@@ -17,15 +17,43 @@ import java.util.zip.ZipFile
  * LOCAL LIBRARY provider (Wayne, 2026-10-21): an offline epub reader and
  * library that sits beside the sites with the same design language.
  *
- *   Library ≈ Site    — user-creates any number; a DEFAULT catch-all
- *                        "Library" exists from first run.
+ *   Library ≈ Site     — user-creates any number; a DEFAULT catch-all
+ *                         "Library" exists from first run.
  *   Shelf   ≈ Category — the Kakuyomu CategoryStore pattern.
- *   Book    ≈ Series   — one imported .epub; chapters ride the RELEASES tab
- *                        and open in the shared reader via locallib:// URLs.
+ *   Series  ≈ Series   — the unit the grid shows and shelves hold, with a
+ *                         STABLE id (never re-derived from titles).
+ *   Book    = Volume   — one .epub; chapters ride the RELEASES tab and open
+ *                         in the shared reader via locallib:// URLs.
  *
- * EPUB ENGINE: zip+OPF parser with the base-path bug FIXED — the OPF's
- * directory is derived from the file path, not the XML content. Readium
- * 3.4.0 dependency is in place for a focused follow-up integration.
+ * EPUB ENGINE: Readium (see [ReadiumEngine]) is the parser — publications
+ * stream from SAF, stay open per session, and drive the ToC, chapters,
+ * covers and metadata. The zip+OPf parser below it is the FALLBACK for
+ * anything Readium can't open.
+ *
+ * ── SECTION MAP (for collaborators) ─────────────────────────────────────
+ *   index I/O & caches ....... readIndex/writeIndex, readIndexOnce,
+ *                              invalidateCaches (every write drops caches)
+ *   libraries CRUD ........... libraries/add/rename/setStorage/delete
+ *   series model ............. LocalSeries, seriesList, seriesVolumesOf,
+ *                              mergeSeries, moveBookToSeries, cover pin
+ *   books CRUD & import ...... books/book/import (copy | link-in-place),
+ *                              linkFolder, setBookMeta, deleteBook
+ *   snapshot & sweep ......... snapshot/buildSnapshotCore (one IO pass the
+ *                              grid renders from), ensureBackfill (covers +
+ *                              existence GC, store-scope, survives nav)
+ *   garbage collection ....... dupScan (three duplicate signatures),
+ *                              dedupeBooks, missing-link detection
+ *   covers ................... coverCached (stat-only), coverFileR
+ *                              (Readium-first), coverFile (zip ladder),
+ *                              looksLikeImage, no-cover markers
+ *   Readium serving .......... chapterListR (the book's OWN ToC first),
+ *                              chapterTextR, chapterTitlesR, coverBytesR
+ *   zip fallbacks ............ withZip, spineHrefs, parseEpub,
+ *                              chapterText/chapterTitles, extractImages
+ *   epub plumbing ............ zipPath (href normalization), cleanMeta
+ *                              (HTML/entity cleanup), strippedTitle/
+ *                              seriesKey/volumeNumber (title heuristics)
+ * ────────────────────────────────────────────────────────────────────────
  */
 object LocalLibraryStore {
 
