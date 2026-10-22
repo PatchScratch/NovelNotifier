@@ -63,31 +63,43 @@ fun EpubPagedView(
         factory = { ctx ->
             FragmentContainerView(ctx).apply {
                 id = View.generateViewId()
-                val fm = (ctx as? FragmentActivity)?.supportFragmentManager
-                    ?: return@apply
-                // Readium's intended path: the factory (its constructor is
-                // internal) builds the fragment with our listener/prefs.
-                val navFactory = EpubNavigatorFactory(
-                    publication,
-                    EpubNavigatorFactory.Configuration(EpubDefaults())
-                )
-                fm.fragmentFactory = navFactory.createFragmentFactory(
-                    initialLocator = locator,
-                    readingOrder = publication.readingOrder,
-                    initialPreferences = readiumPreferences(readerTheme, serif),
-                    listener = object : EpubNavigatorFragment.Listener {
-                        override fun onExternalLinkActivated(url: AbsoluteUrl) {
-                            onExternalLink(url.toString())
+                // The transaction must wait for ATTACH — committing in the
+                // factory means the container isn't in the view tree yet
+                // and the FragmentManager can't resolve its id ("No view
+                // found for id 0x1", live-caught on the rig).
+                addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                    var committed = false
+                    override fun onViewAttachedToWindow(v: View) {
+                        if (committed) return
+                        committed = true
+                        val fm = (v.context as? FragmentActivity)?.supportFragmentManager
+                            ?: return
+                        if (fm.findFragmentById(id) != null) return   // restored
+                        val navFactory = EpubNavigatorFactory(
+                            publication,
+                            EpubNavigatorFactory.Configuration(EpubDefaults())
+                        )
+                        fm.fragmentFactory = navFactory.createFragmentFactory(
+                            initialLocator = locator,
+                            readingOrder = publication.readingOrder,
+                            initialPreferences = readiumPreferences(readerTheme, serif),
+                            listener = object : EpubNavigatorFragment.Listener {
+                                override fun onExternalLinkActivated(url: AbsoluteUrl) {
+                                    onExternalLink(url.toString())
+                                }
+                            },
+                            paginationListener = null,
+                            configuration = EpubNavigatorFragment.Configuration()
+                        )
+                        fm.beginTransaction()
+                            .replace(id, EpubNavigatorFragment::class.java, null)
+                            .commitAllowingStateLoss()
+                        v.post {
+                            fragmentRef[0] = fm.findFragmentById(id) as? EpubNavigatorFragment
                         }
-                    },
-                    paginationListener = null,
-                    configuration = EpubNavigatorFragment.Configuration()
-                )
-                fm.beginTransaction()
-                    .replace(id, EpubNavigatorFragment::class.java, null)
-                    .commitAllowingStateLoss()
-                fm.executePendingTransactions()
-                fragmentRef[0] = fm.findFragmentById(id) as? EpubNavigatorFragment
+                    }
+                    override fun onViewDetachedFromWindow(v: View) {}
+                })
             }
         }
     )
