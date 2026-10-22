@@ -652,7 +652,11 @@ object LocalLibraryStore {
         }
         t = t.replace("&amp;", "&")   // last — avoids double-unescaping
         t = t.replace(Regex("<[^>]+>"), " ")
+        // A comma/colon never meaningfully ENDS a title — it's a separator
+        // artifact ("Bride, Vol. 2" → "Bride,"), so trim the tail (Wayne,
+        // 2026-10-22). Applies to stored fields via the maintenance pass.
         return t.replace(Regex("\\s+"), " ").trim()
+            .trimEnd(',', '，', ':', '：').trim()
     }
 
     /**
