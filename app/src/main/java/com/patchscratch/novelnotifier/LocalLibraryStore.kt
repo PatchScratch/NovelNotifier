@@ -254,9 +254,16 @@ object LocalLibraryStore {
         }
         CoverStore.localFile(context, seriesUrl)?.delete()   // junk — replace it
         if (noCoverMarker(context, bookId).isFile) return null
+        // Fast path first: streamed from the SAF source (no temp copy).
+        // Only when the stream can't answer does the heavy ZipFile route
+        // (full copy + thorough ladder incl. spine-page/largest-image) run.
+        val book = book(context, bookId) ?: return null
+        coverBytesStreaming(context, book)?.let { bytes ->
+            CoverStore.saveGenerated(context, seriesUrl, bytes, "jpg")
+            return CoverStore.localFile(context, seriesUrl)
+        }
         // Lazy extraction from the epub. A dead zip (missing/moved file)
         // must NOT write the marker — transient failures stay retryable.
-        val book = book(context, bookId) ?: return null
         runCatching {
             withZip(context, book) { zip, opfPath ->
                 val opf = zip.getEntry(opfPath)
@@ -290,6 +297,64 @@ object LocalLibraryStore {
     private fun itemHrefById(opf: String, id: String): String? =
         Regex("""<item\s+[^>]*id="$id"[^>]*href="([^"]+)"""").find(opf)?.groupValues?.get(1)
             ?: Regex("""<item\s+[^>]*href="([^"]+)"[^>]*id="$id"""").find(opf)?.groupValues?.get(1)
+
+    /**
+     * Cover bytes streamed straight from the SAF source — no temp copy, no
+     * disk write. Born from the gray-tile backlog (Wayne, 2026-10-22): the
+     * sweep's per-book full-epub copy made a multi-thousand-book pass take
+     * HOURS. Two cheap sequential reads: the OPF (entries sit at the zip's
+     * head — the stream closes the moment it's seen), then one scan for a
+     * declared cover entry. Books the stream can't satisfy fall back to
+     * the thorough ZipFile path.
+     */
+    private fun coverBytesStreaming(context: Context, book: LocalBook): ByteArray? {
+        val entry = bookEntry(context, book.id) ?: return null
+        val uriStr = entry.optString("storedUri").takeIf { it.startsWith("content://") }
+            ?: return null
+        val opfPath = entry.optString("opfPath").takeIf { it.isNotBlank() } ?: return null
+        val uri = Uri.parse(uriStr)
+        val opf: String = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { ins ->
+                java.util.zip.ZipInputStream(java.io.BufferedInputStream(ins, 1 shl 16)).use { zis ->
+                    var e = zis.nextEntry
+                    while (e != null) {
+                        if (e.name == opfPath) return@use String(zis.readBytes(), Charsets.UTF_8)
+                        e = zis.nextEntry
+                    }
+                    null
+                }
+            }
+        }.getOrNull() ?: return null
+        // Candidate entry names, ladder order, resolved against the OPF dir.
+        val base = opfPath.substringBeforeLast("/", "")
+        val names = LinkedHashSet<String>()
+        fun add(href: String?) {
+            if (!href.isNullOrBlank() && !href.startsWith("http")) names.add(zipPath(base, href))
+        }
+        Regex("""<item[^>]+properties="[^"]*cover-image[^"]*"[^>]+href="([^"]+)"""")
+            .find(opf)?.groupValues?.get(1)?.let(::add)
+        Regex("""<item[^>]+href="([^"]+)"[^>]+properties="[^"]*cover-image[^"]*"""")
+            .find(opf)?.groupValues?.get(1)?.let(::add)
+        Regex("""<meta[^>]+name="cover"[^>]+content="([^"]+)"""")
+            .find(opf)?.groupValues?.get(1)?.let { idref -> itemHrefById(opf, idref)?.let(::add) }
+        Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""", RegexOption.IGNORE_CASE)
+            .find(opf)?.groupValues?.get(1)?.let(::add)
+        Regex("""<item[^>]+href="([^"]+)"[^>]+id="[^"]*cover[^"]*"""", RegexOption.IGNORE_CASE)
+            .find(opf)?.groupValues?.get(1)?.let(::add)
+        if (names.isEmpty()) return null
+        return runCatching {
+            context.contentResolver.openInputStream(uri)?.use { ins ->
+                java.util.zip.ZipInputStream(java.io.BufferedInputStream(ins, 1 shl 16)).use { zis ->
+                    var e = zis.nextEntry
+                    while (e != null) {
+                        if (e.name in names) return@use zis.readBytes()
+                        e = zis.nextEntry
+                    }
+                    null
+                }
+            }
+        }.getOrNull()
+    }
 
     /**
      * The cover image bytes from an opened epub, trying every convention
@@ -831,15 +896,21 @@ object LocalLibraryStore {
         backfillScope.launch {
             val core = snapshotCore?.takeIf { it.first == libraryId }?.second
                 ?: buildSnapshotCore(context, libraryId).also { snapshotCore = libraryId to it }
-            core.books.forEach { b ->
+            suspend fun handle(b: LocalBook) {
                 kotlinx.coroutines.yield()
-                if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return@forEach
+                if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return
                 val f = coverFile(context, b.id)
                 File(context.cacheDir, "ll_${b.id}.epub").delete()
                 if (f != null) {
                     core.coverPathOf[b.id] = f.absolutePath
                     coverTick++
                 }
+            }
+            // Two workers: SAF reads are IO-bound; a second lane roughly
+            // halves the wall clock of a multi-thousand-book pass.
+            kotlinx.coroutines.coroutineScope {
+                launch { core.books.filterIndexed { i, _ -> i % 2 == 0 }.forEach { handle(it) } }
+                launch { core.books.filterIndexed { i, _ -> i % 2 == 1 }.forEach { handle(it) } }
             }
         }
     }
