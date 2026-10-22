@@ -612,7 +612,11 @@ fun ReaderScreen(
         val entry = android.net.Uri.parse(chapter.url)
         val isExtNu = (entry.host ?: "").endsWith("novelupdates.com") &&
             (entry.path ?: "").startsWith("/extnu/")
-        if (!isExtNu || viewMode != READER_VIEW_TEXT) return@LaunchedEffect
+        // Runs in BOTH view modes: this is NAVIGATION, not extraction. The
+        // old text-mode-only gate left web-mode readers stranded on the
+        // FoxTeller rss overview forever — nothing resolved the chapter
+        // (Wayne, 2026-10-22: the walker was silent after "loaded …/rss/…").
+        if (!isExtNu) return@LaunchedEffect
         val ordinal = chapterNum(chapter.chapter)
         if (ordinal <= 0) return@LaunchedEffect
         var rssUrl = ""
