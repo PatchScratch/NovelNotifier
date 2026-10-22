@@ -1035,7 +1035,15 @@ object LocalLibraryStore {
      */
     private val backfillScope =
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
-    private val backfillStarted = HashSet<String>()
+    private val backfillStarted = Any()
+    private val sweepAt = HashMap<String, Long>()
+
+    /** Manual "Re-scan folders" (drawer): run the folder rescan now,
+     *  bypassing the cooldown; the library tick reloads the grid. */
+    fun rescanFoldersNow(context: Context, libraryId: String): kotlinx.coroutines.Job =
+        backfillScope.launch {
+            rescanFolders(context, libraryId)
+        }
 
     var coverTick by androidx.compose.runtime.mutableStateOf(0)
         private set
@@ -1153,8 +1161,13 @@ object LocalLibraryStore {
     }
 
     private fun ensureBackfill(context: Context, libraryId: String) {
+        // Sweep + folder rescan run per library OPEN (not once per process —
+        // Wayne's Calibre uploads land after the app opened, 2026-10-22),
+        // cooldown-limited so re-entering the library doesn't re-walk.
         synchronized(backfillStarted) {
-            if (!backfillStarted.add(libraryId)) return
+            val last = sweepAt[libraryId] ?: 0L
+            if (System.currentTimeMillis() - last < 5 * 60 * 1000L) return
+            sweepAt[libraryId] = System.currentTimeMillis()
         }
         backfillScope.launch {
             // Folder rescan FIRST: fresh Calibre uploads join the library

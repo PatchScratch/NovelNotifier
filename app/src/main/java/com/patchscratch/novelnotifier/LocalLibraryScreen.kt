@@ -280,6 +280,26 @@ fun LocalLibraryHome(
                             folderPicker.launch(null)
                         }
                     )
+                    // Manual rescan for the Calibre flow: new uploads in a
+                    // linked folder appear without waiting for a re-entry.
+                    NavigationDrawerItem(
+                        label = { Text(t("Re-scan linked folders", "リンク済みフォルダを再スキャン")) },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            importMsg = t("Scanning folders…", "フォルダをスキャン中…")
+                            scope.launch {
+                                LocalLibraryStore.rescanFoldersNow(context, libraryId).invokeOnCompletion {
+                                    scope.launch {
+                                        reload()
+                                        importMsg = "[${
+                                            java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                                        }] ${t("Folders re-scanned", "再スキャン完了")}"
+                                    }
+                                }
+                            }
+                        }
+                    )
                     NavigationDrawerItem(
                         label = { Text(t("Shelves  ⚙", "棚  ⚙")) },
                         selected = false,
