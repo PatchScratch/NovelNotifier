@@ -272,6 +272,30 @@ object LocalLibraryStore {
         val lib = library(context, libraryId) ?: return null
         val bookId = UUID.randomUUID().toString().take(10)
         val parsed = parseEpub(bytes) ?: return null
+        val title = parsed.title.ifBlank { "book-$bookId" }
+        // Content-signature duplicate check: the same epub can arrive under
+        // a different SAF document URI (folder scan + individual pick of
+        // one file) — URI dedupe alone missed it and every volume doubled
+        // (Wayne, 2026-10-22). Returns the existing book instead of a new
+        // entry; callers' counts stay cosmetic.
+        run {
+            val arr = readIndex(context).optJSONArray("books") ?: JSONArray()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optString("libraryId") != lib.id) continue
+                if (o.optString("title") != title) continue
+                if (o.optInt("chapters", 0) != parsed.chapterTitles.size) continue
+                val knownSize = o.optLong("bytes", -1L)
+                if (knownSize != -1L && knownSize != bytes.size.toLong()) continue
+                if (volumeNumber(title) == Int.MAX_VALUE && knownSize == -1L) continue
+                return LocalBook(
+                    id = o.optString("id"), libraryId = lib.id,
+                    title = o.optString("title"), author = o.optString("author"),
+                    description = o.optString("description"), fileName = o.optString("fileName"),
+                    chapterCount = o.optInt("chapters", 0), addedAt = o.optLong("addedAt", 0)
+                )
+            }
+        }
         val safeTitle = parsed.title.trim().replace(Regex("[^\\w\\-. \\u3040-\\u30ff\\u4e00-\\u9fff]"), "_").take(60)
             .ifBlank { "book-$bookId" }
         val fileName = "$safeTitle.epub"
@@ -332,6 +356,7 @@ object LocalLibraryStore {
                 .put("opfPath", parsed.opfPath).put("chapters", book.chapterCount)
                 .put("addedAt", book.addedAt).put("ref", linkInPlace)
                 .put("seriesId", seriesId)
+                .put("bytes", bytes.size.toLong())
         )
         writeIndex(context, rootNow)
         return book
@@ -414,13 +439,22 @@ object LocalLibraryStore {
      * Idempotent index cleanup: books imported before cleanMeta() carry
      * escaped HTML in title/author/description, and series names/keys
      * inherited it. Keys recompute from volume 1's cleaned title so future
-     * imports still auto-join. Writes only when something changed.
+     * imports still auto-join. Also drops duplicate book entries — the same
+     * physical epub re-linked under a different SAF document URI (folder
+     * scan + individual pick of the same file; URI-string dedupe missed
+     * them — Wayne, 2026-10-22: "duplicates, but not in my files").
+     * Writes only when something changed.
      */
     private fun cleanIndexMeta(context: Context) {
         val root = readIndex(context)
         var dirty = false
         val books = root.optJSONArray("books")
         val titlesBySeries = HashMap<String, MutableList<String>>()
+        // libraryId|||title|||chapters → earliest entry wins; later exact
+        // matches are the same epub linked twice. Sizes, when both entries
+        // carry one, must agree.
+        val bySignature = HashMap<String, JSONObject>()
+        val dupPairs = mutableListOf<Pair<String, String>>()   // dupId → keeperId
         for (i in 0 until (books?.length() ?: 0)) {
             val o = books!!.optJSONObject(i) ?: continue
             listOf("title", "author", "description").forEach { f ->
@@ -430,6 +464,22 @@ object LocalLibraryStore {
             }
             titlesBySeries.getOrPut(o.optString("seriesId")) { mutableListOf() }
                 .add(o.optString("title"))
+            val sig = o.optString("libraryId") + "|||" + o.optString("title") +
+                "|||" + o.optInt("chapters", 0)
+            val kept = bySignature[sig]
+            if (kept == null) {
+                bySignature[sig] = o
+            } else {
+                // Safety: bare-title series (every volume shares ONE exact
+                // title) must not collapse on title+chapters alone — a
+                // volume token in the title or equal byte sizes makes it
+                // certain.
+                val a = o.optLong("bytes", -1L)
+                val b = kept.optLong("bytes", -1L)
+                val sized = a != -1L && a == b
+                val tokened = volumeNumber(o.optString("title")) != Int.MAX_VALUE
+                if (sized || tokened) dupPairs.add(o.optString("id") to kept.optString("id"))
+            }
         }
         val series = root.optJSONArray("series")
         for (i in 0 until (series?.length() ?: 0)) {
@@ -445,6 +495,26 @@ object LocalLibraryStore {
             }
         }
         if (dirty) writeIndex(context, root)
+        if (dupPairs.isNotEmpty()) dedupeBooks(context, dupPairs)
+    }
+
+    /**
+     * Remove duplicate book entries (keeping each signature's earliest,
+     * [dupPairs] maps each dup to its keeper). A duplicate's read position
+     * migrates to the keeper when the keeper's is lower — deleting a read
+     * dup must never lose progress.
+     */
+    private fun dedupeBooks(context: Context, dupPairs: List<Pair<String, String>>) {
+        val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+        dupPairs.forEach { (dupId, keeperId) ->
+            val dupPos = prefs.getInt("local_pos_$dupId", 0)
+            val keepPos = prefs.getInt("local_pos_$keeperId", 0)
+            if (dupPos > keepPos) {
+                prefs.edit().putInt("local_pos_$keeperId", dupPos).apply()
+            }
+            DebugLog.log("LOCALLIB", "dedupe: removing duplicate book $dupId (kept $keeperId)")
+            deleteBook(context, dupId)
+        }
     }
 
     private fun storeBytes(
