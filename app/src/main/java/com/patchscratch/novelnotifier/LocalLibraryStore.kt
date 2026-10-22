@@ -2,6 +2,10 @@ package com.patchscratch.novelnotifier
 
 import android.content.Context
 import android.net.Uri
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -214,7 +218,7 @@ object LocalLibraryStore {
     // too narrow and marked most of a 5K library coverless — the rename
     // invalidates those markers so the full detector retries once.
     private fun noCoverMarker(context: Context, bookId: String): File =
-        File(CoverStore.dir(context), "nolocallib2_$bookId")
+        File(CoverStore.dir(context), "nolocallib3_$bookId")
 
     /** Cache-hit-only cover lookup — one SHA + stat, never opens an epub. */
     fun coverCached(context: Context, bookId: String): File? {
@@ -322,6 +326,13 @@ object LocalLibraryStore {
                     }
             }
         }
+        // 6) Last resort: the largest image in the book — covers are
+        // virtually always the heaviest art (bounded: ignore <50KB scraps).
+        zip.entries().asSequence()
+            .filter { !it.isDirectory && imgExt.containsMatchIn(it.name) && it.size > 50_000L }
+            .maxByOrNull { it.size }?.let { e ->
+                runCatching { zip.getInputStream(e).readBytes() }.getOrNull()?.let { return it }
+            }
         return null
     }
 
@@ -765,6 +776,7 @@ object LocalLibraryStore {
             ?: buildSnapshotCore(context, libraryId).also {
                 snapshotCore = libraryId to it
             }
+        ensureBackfill(context, libraryId)
         val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
         val positions = core.books.associate { it.id to prefs.getInt("local_pos_${it.id}", 0) }
         return LibrarySnapshot(
@@ -775,25 +787,39 @@ object LocalLibraryStore {
     }
 
     /**
-     * Progressive cover backfill: walks books whose cover path is blank and
-     * runs the HEAVY extraction (SAF copy + zip parse) one at a time on the
-     * caller's IO dispatcher, updating the session cache and invoking
-     * [onCover] per find so the grid can light covers in as they land.
-     * The snapshot itself renders instantly with placeholders. Runs as a
-     * cancellable coroutine — leaving the screen resumes where it stopped
-     * on return (blanks are skipped).
+     * Screen-independent cover backfill. Born from a live failure: the
+     * backfill used to ride the library screen's LaunchedEffect and CANCELLED
+     * on navigation — in a 5K library, walking sequentially, any series deep
+     * in the list only got covers if the user sat still (Wayne, 2026-10-22:
+     * "You Were Experienced… has no covers"). Now: a store-level scope runs
+     * it once per library per session, survives navigation, bumps
+     * [coverTick] per find so any open screen recomposes, and DELETES the
+     * temporary zip cache copy per book (a 5K sweep would otherwise flood
+     * cacheDir with full epub copies — interactive opens re-warm on demand).
      */
-    suspend fun backfillCovers(
-        context: Context, libraryId: String, onCover: (bookId: String, path: String) -> Unit
-    ) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val core = snapshotCore?.takeIf { it.first == libraryId }?.second ?: return@withContext
-        core.books.forEach { b ->
-            kotlinx.coroutines.yield()
-            if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return@forEach
-            val f = coverFile(context, b.id)
-            if (f != null) {
-                core.coverPathOf[b.id] = f.absolutePath
-                onCover(b.id, f.absolutePath)
+    private val backfillScope =
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    private val backfillStarted = HashSet<String>()
+
+    var coverTick by androidx.compose.runtime.mutableStateOf(0)
+        private set
+
+    private fun ensureBackfill(context: Context, libraryId: String) {
+        synchronized(backfillStarted) {
+            if (!backfillStarted.add(libraryId)) return
+        }
+        backfillScope.launch {
+            val core = snapshotCore?.takeIf { it.first == libraryId }?.second
+                ?: buildSnapshotCore(context, libraryId).also { snapshotCore = libraryId to it }
+            core.books.forEach { b ->
+                kotlinx.coroutines.yield()
+                if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return@forEach
+                val f = coverFile(context, b.id)
+                File(context.cacheDir, "ll_${b.id}.epub").delete()
+                if (f != null) {
+                    core.coverPathOf[b.id] = f.absolutePath
+                    coverTick++
+                }
             }
         }
     }

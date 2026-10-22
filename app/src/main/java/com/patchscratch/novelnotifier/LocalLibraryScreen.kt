@@ -88,14 +88,6 @@ fun LocalLibraryHome(
         }
     }
     LaunchedEffect(libraryId) { reload() }
-    // Covers stream in AFTER the grid renders — the snapshot answers from
-    // the cover cache only, and this backfill does the heavy extraction
-    // (SAF copy + zip parse) one book at a time. Resumes where it stopped.
-    var coverTick by remember(libraryId) { mutableStateOf(0) }
-    LaunchedEffect(snap) {
-        val s = snap ?: return@LaunchedEffect
-        LocalLibraryStore.backfillCovers(context, libraryId) { _, _ -> coverTick++ }
-    }
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -176,10 +168,10 @@ fun LocalLibraryHome(
     // Rows are SERIES (Wayne, 2026-10-21: "Series = Series") — pure
     // in-memory filtering over the snapshot; zero IO here (search-safe).
     val s = snap
-    // Reads the backfill counter: every streamed cover invalidates the
-    // grid so covers light in as the background pass finds them.
+    // Reads the store's cover tick: the session-long background backfill
+    // bumps it per find, so covers light in wherever they land.
     fun coverFor(bookId: String?): String {
-        coverTick
+        LocalLibraryStore.coverTick
         val p = s?.coverPathOf[bookId].orEmpty()
         return if (p.isNotBlank()) "file://$p" else ""
     }
