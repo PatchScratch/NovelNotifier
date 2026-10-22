@@ -105,8 +105,14 @@ fun CoverThumb(
     fullscreen: Boolean = false
 ) {
     val context = LocalContext.current
+    // A cached "cover" that isn't a real image (the xhtml-cover era) must
+    // NOT render as a gray tile — it counts as absent, so the app's
+    // default no-cover placeholder shows until a real one lands (Wayne,
+    // 2026-10-22: "if a cover genuinely does not exist, use the default").
     val local = remember(seriesUrl, refreshKey) {
-        seriesUrl.takeIf { it.isNotBlank() }?.let { CoverStore.localFile(context, it) }
+        seriesUrl.takeIf { it.isNotBlank() }
+            ?.let { CoverStore.localFile(context, it) }
+            ?.takeIf { LocalLibraryStore.looksLikeImage(it) }
     }
     var openFull by remember { mutableStateOf(false) }
     Surface(
