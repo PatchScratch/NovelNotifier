@@ -633,14 +633,6 @@ object LocalLibraryStore {
         var dirty = false
         val books = root.optJSONArray("books")
         val titlesBySeries = HashMap<String, MutableList<String>>()
-        // Signature 1: libraryId|||title|||chapters. Signature 2 adds the
-        // source FILENAME — bare-title series dedupe safely on it because
-        // each volume's file is named distinctly (Ms. Elf had bare titles
-        // AND double-links; title-only guard refused to merge, Wayne
-        // 2026-10-22).
-        val bySignature = HashMap<String, JSONObject>()
-        val byFileSig = HashMap<String, JSONObject>()
-        val dupPairs = mutableListOf<Pair<String, String>>()   // dupId → keeperId
         for (i in 0 until (books?.length() ?: 0)) {
             val o = books!!.optJSONObject(i) ?: continue
             listOf("title", "author", "description").forEach { f ->
@@ -650,33 +642,6 @@ object LocalLibraryStore {
             }
             titlesBySeries.getOrPut(o.optString("seriesId")) { mutableListOf() }
                 .add(o.optString("title"))
-            val sig = o.optString("libraryId") + "|||" + o.optString("title") +
-                "|||" + o.optInt("chapters", 0)
-            var kept = bySignature[sig]
-            if (kept == null) {
-                bySignature[sig] = o
-            } else {
-                // Safety: bare-title series (every volume shares ONE exact
-                // title) must not collapse on title+chapters alone — a
-                // volume token in the title or equal byte sizes makes it
-                // certain.
-                val a = o.optLong("bytes", -1L)
-                val b = kept.optLong("bytes", -1L)
-                val sized = a != -1L && a == b
-                val tokened = volumeNumber(o.optString("title")) != Int.MAX_VALUE
-                if (sized || tokened) dupPairs.add(o.optString("id") to kept.optString("id"))
-            }
-            val name = sourceName(o)
-            if (name.isNotBlank()) {
-                val fileSig = o.optString("libraryId") + "|||" + name +
-                    "|||" + o.optInt("chapters", 0)
-                val keptFile = byFileSig[fileSig]
-                if (keptFile == null) {
-                    byFileSig[fileSig] = o
-                } else if (keptFile.optString("id") != o.optString("id")) {
-                    dupPairs.add(o.optString("id") to keptFile.optString("id"))
-                }
-            }
         }
         val series = root.optJSONArray("series")
         for (i in 0 until (series?.length() ?: 0)) {
@@ -692,7 +657,56 @@ object LocalLibraryStore {
             }
         }
         if (dirty) writeIndex(context, root)
-        if (dupPairs.isNotEmpty()) dedupeBooks(context, dupPairs)
+        dupScan(context).let { if (it.isNotEmpty()) dedupeBooks(context, it) }
+    }
+
+    /**
+     * Duplicate scan across the whole index. Signature 1: title+chapters,
+     * trusted only with a volume token in the title or equal byte sizes
+     * (bare-title series share one title across volumes). Signature 2:
+     * source FILENAME+chapters — each volume's file is named distinctly.
+     * Byte sizes come from import or the existence pass's provider query.
+     */
+    private fun dupScan(context: Context): List<Pair<String, String>> {
+        val root = readIndex(context)
+        val books = root.optJSONArray("books") ?: return emptyList()
+        val bySignature = HashMap<String, JSONObject>()
+        val byFileSig = HashMap<String, JSONObject>()
+        val dupPairs = mutableListOf<Pair<String, String>>()
+        val marked = HashSet<String>()
+        for (i in 0 until books.length()) {
+            val o = books.optJSONObject(i) ?: continue
+            val id = o.optString("id")
+            if (id in marked) continue
+            val sig = o.optString("libraryId") + "|||" + o.optString("title") +
+                "|||" + o.optInt("chapters", 0)
+            val kept = bySignature[sig]
+            if (kept == null) {
+                bySignature[sig] = o
+            } else {
+                val a = o.optLong("bytes", -1L)
+                val b = kept.optLong("bytes", -1L)
+                val sized = a != -1L && a == b
+                val tokened = volumeNumber(o.optString("title")) != Int.MAX_VALUE
+                if (sized || tokened) {
+                    dupPairs.add(id to kept.optString("id"))
+                    marked.add(id)
+                }
+            }
+            val name = sourceName(o)
+            if (name.isNotBlank() && id !in marked) {
+                val fileSig = o.optString("libraryId") + "|||" + name +
+                    "|||" + o.optInt("chapters", 0)
+                val keptFile = byFileSig[fileSig]
+                if (keptFile == null) {
+                    byFileSig[fileSig] = o
+                } else if (keptFile.optString("id") != id) {
+                    dupPairs.add(id to keptFile.optString("id"))
+                    marked.add(id)
+                }
+            }
+        }
+        return dupPairs
     }
 
     /**
@@ -935,6 +949,25 @@ object LocalLibraryStore {
         }
     }
 
+    /** Source file's byte size via the provider (no read); -1 = unknown.
+     *  Sizes let the title+chapters signature catch content duplicates
+     *  saved under near-identical names ("Ms. Elf! Vol. 1" vs "Ms. Elf!,"
+     *  — 16 real files, 9 books, Wayne 2026-10-22). */
+    private fun sourceSize(context: Context, o: JSONObject): Long {
+        val uri = o.optString("storedUri")
+        if (uri.startsWith("content://")) {
+            return runCatching {
+                context.contentResolver.query(
+                    Uri.parse(uri),
+                    arrayOf(android.provider.DocumentsContract.Document.COLUMN_SIZE),
+                    null, null, null
+                )?.use { c -> if (c.moveToFirst()) c.getLong(0) else -1L } ?: -1L
+            }.getOrDefault(-1L)
+        }
+        val p = o.optString("storedPath")
+        return if (p.isNotBlank()) File(p).length() else -1L
+    }
+
     /** Remove every dead link from the index; returns how many went. */
     fun removeMissing(context: Context): Int {
         val root = readIndex(context)
@@ -957,7 +990,11 @@ object LocalLibraryStore {
             val core = snapshotCore?.takeIf { it.first == libraryId }?.second
                 ?: buildSnapshotCore(context, libraryId).also { snapshotCore = libraryId to it }
             // Existence pass first (cheap IPCs): mark dead links with a
-            // double-strike so a provider blip can't orphan a live book.
+            // double-strike so a provider blip can't orphan a live book,
+            // and stamp byte sizes from the provider — with sizes, the
+            // title signature can catch content duplicates saved under
+            // near-identical names, so re-run the dup scan afterwards.
+            var sized = false
             runCatching {
                 val root = readIndex(context)
                 val arr = root.optJSONArray("books") ?: JSONArray()
@@ -977,9 +1014,18 @@ object LocalLibraryStore {
                         !alive -> missing.add(b.id)
                         alive && was -> { o.put("missing", false); changed = true }
                     }
+                    if (alive) {
+                        val sz = sourceSize(context, o)
+                        if (sz > 0 && o.optLong("bytes", -1L) != sz) {
+                            o.put("bytes", sz); changed = true; sized = true
+                        }
+                    }
                 }
                 if (changed) writeIndex(context, root)
                 missingIds = missing
+            }
+            if (sized) {
+                dupScan(context).let { if (it.isNotEmpty()) dedupeBooks(context, it) }
             }
             suspend fun handle(b: LocalBook) {
                 kotlinx.coroutines.yield()
