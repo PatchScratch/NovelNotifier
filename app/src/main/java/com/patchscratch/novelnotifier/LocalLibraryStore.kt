@@ -1055,11 +1055,53 @@ object LocalLibraryStore {
 
     /** Tree URIs of folders linked into [libraryId]. */
     private fun foldersOf(context: Context, libraryId: String): List<Uri> {
-        val arr = readIndex(context).optJSONArray("folders") ?: return emptyList()
-        return (0 until arr.length()).mapNotNull { i ->
-            arr.optJSONObject(i)?.takeIf { it.optString("libraryId") == libraryId }
-                ?.optString("uri")?.takeIf { it.isNotBlank() }?.let(Uri::parse)
+        val arr = readIndex(context).optJSONArray("folders")
+        val out = mutableListOf<Uri>()
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.takeIf { it.optString("libraryId") == libraryId }
+                    ?.optString("uri")?.takeIf { it.isNotBlank() }?.let { out.add(Uri.parse(it)) }
+            }
         }
+        if (out.isEmpty()) healFolderRecords(context, libraryId)?.let { out.addAll(it) }
+        return out
+    }
+
+    /**
+     * SELF-HEAL for folders linked before the watcher existed (the record
+     * was added to linkFolder later — Wayne's original Light Novels link,
+     * 2026-10-23: rescan reported "0 folders"). Books' stored document URIs
+     * carry their tree: strip the /document/… tail and the tree URI falls
+     * out — record every distinct tree as a watched folder. Returns the
+     * healed set (already written to the index), or null when the library
+     * holds no tree-derived books.
+     */
+    private fun healFolderRecords(context: Context, libraryId: String): List<Uri>? {
+        val books = readIndex(context).optJSONArray("books") ?: return null
+        val trees = linkedSetOf<String>()
+        for (i in 0 until books.length()) {
+            val o = books.optJSONObject(i) ?: continue
+            if (o.optString("libraryId") != libraryId) continue
+            val uri = o.optString("storedUri")
+            val idx = uri.indexOf("/document/")
+            if (uri.startsWith("content://") && idx > 0) trees.add(uri.substring(0, idx))
+        }
+        if (trees.isEmpty()) return null
+        runCatching {
+            val root = readIndex(context)
+            val arr = root.optJSONArray("folders") ?: JSONArray().also { root.put("folders", it) }
+            trees.forEach { tree ->
+                val known = (0 until arr.length()).any { i ->
+                    arr.optJSONObject(i)?.let { it.optString("uri") == tree } == true
+                }
+                if (!known) arr.put(
+                    JSONObject().put("libraryId", libraryId).put("uri", tree)
+                )
+            }
+            writeIndex(context, root)
+        }
+        DebugLog.log("LOCALLIB", "rescan: healed ${trees.size} folder record(s) for lib=$libraryId")
+        return trees.map(Uri::parse)
     }
 
     /**
@@ -1070,13 +1112,16 @@ object LocalLibraryStore {
      */
     private suspend fun rescanFolders(context: Context, libraryId: String) {
         val folders = foldersOf(context, libraryId)
+        DebugLog.log("LOCALLIB", "rescan: ${folders.size} folder(s) for lib=$libraryId")
         if (folders.isEmpty()) return
         var added = 0
         folders.forEach { treeUri ->
             kotlinx.coroutines.yield()
             val tree = runCatching {
                 androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
-            }.getOrNull() ?: return@forEach
+            }.getOrNull() ?: run {
+                DebugLog.log("LOCALLIB", "rescan: tree unreachable $treeUri"); null
+            } ?: return@forEach
             val files = mutableListOf<androidx.documentfile.provider.DocumentFile>()
             fun collect(dir: androidx.documentfile.provider.DocumentFile) {
                 dir.listFiles().forEach { f ->
@@ -1096,6 +1141,8 @@ object LocalLibraryStore {
                 }
                 set
             }
+            DebugLog.log("LOCALLIB", "rescan: ${files.size} epubs on disk, ${known.size} known URIs")
+            files.take(3).forEach { DebugLog.log("LOCALLIB", "rescan sample: ${it.name?.take(40)} -> ${it.uri}") }
             files.forEach { f ->
                 kotlinx.coroutines.yield()
                 if (f.uri.toString() !in known) {
@@ -1106,6 +1153,8 @@ object LocalLibraryStore {
         if (added > 0) {
             DebugLog.log("LOCALLIB", "folder rescan: +$added books")
             libraryTick++
+        } else {
+            DebugLog.log("LOCALLIB", "folder rescan: nothing new")
         }
     }
 
