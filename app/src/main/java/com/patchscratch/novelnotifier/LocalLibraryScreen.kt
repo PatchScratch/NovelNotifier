@@ -5,6 +5,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,6 +24,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -171,6 +174,12 @@ fun LocalLibraryHome(
     // Rows are SERIES (Wayne, 2026-10-21: "Series = Series") — pure
     // in-memory filtering over the snapshot; zero IO here (search-safe).
     val s = snap
+    // Multi-select (Wayne, 2026-10-22): long-press a tile to enter; taps
+    // toggle; the bar carries Move to shelf / Delete for the whole set.
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val rowKeyToSeries = remember { HashMap<String, String>() }
+    var showMoveSelected by remember { mutableStateOf(false) }
+    var showDeleteSelected by remember { mutableStateOf(false) }
     // Reads the store's cover tick: the session-long background backfill
     // bumps it per find, so covers light in wherever they land.
     fun coverFor(bookId: String?): String {
@@ -204,14 +213,23 @@ fun LocalLibraryHome(
                     else vols.firstOrNull()
                 val vol1 = vols.firstOrNull()
                 val unread = vols.sumOf { v -> maxOf(0, v.chapterCount - (s.readPosOf[v.id] ?: 0)) }
+                // Selection mode (Wayne, 2026-10-22): long-press enters it,
+                // taps toggle, the action bar carries the batch operations.
+                // Selected tiles get a ✓ prefix — grid and list both show it.
+                rowKeyToSeries["locallib://${coverVol?.id ?: vol1?.id}"] = sr.id
+                val isSelected = sr.id in selectedIds
                 BookmarkRow(
-                    title = sr.name,
+                    title = (if (isSelected) "✓ " else "") + sr.name,
                     subtitle = vol1?.author.orEmpty(),
                     coverUrl = coverFor(coverVol?.id),
                     // The cover volume's CoverStore key — a chosen-volume
                     // cover hits the store directly, vol 1 otherwise.
                     seriesUrl = "locallib://${coverVol?.id ?: vol1?.id}",
-                    open = { onOpenSeries(sr.id) },
+                    open = {
+                        if (selectedIds.isNotEmpty()) {
+                            selectedIds = if (isSelected) selectedIds - sr.id else selectedIds + sr.id
+                        } else onOpenSeries(sr.id)
+                    },
                     unread = unread,
                     latestLabel = if (vols.size > 1) "${vols.size} ${t("vols", "巻")}"
                     else vol1?.takeIf { it.chapterCount > 0 }?.let { "${it.chapterCount} ${t("ch", "話")}" } ?: ""
@@ -371,6 +389,12 @@ fun LocalLibraryHome(
                     searchQuery = searchQuery,
                     onSearchChange = { searchQuery = it },
                     onOpenDrawer = { scope.launch { drawerState.open() } },
+                    // Long-press (grid tiles and list rows) enters selection.
+                    onManageRow = { row ->
+                        rowKeyToSeries[row.seriesUrl]?.let { sid ->
+                            selectedIds = setOf(sid)
+                        }
+                    },
                     isRefreshing = importing,
                     onRefresh = null,
                 sortControl = {
@@ -382,6 +406,33 @@ fun LocalLibraryHome(
                 sortLabel = sortModeLabel(sortMode),
                 searchHistoryScope = "local:$libraryId"
             )
+            }
+            // Selection action bar — replaces nothing, overlays the top of
+            // the grid while anything is selected.
+            if (selectedIds.isNotEmpty()) {
+                Surface(
+                    tonalElevation = 4.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "${selectedIds.size} ${t("selected", "件選択中")}",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                        TextButton(onClick = { showMoveSelected = true }) {
+                            Text(t("Move to shelf…", "棚に移動…"))
+                        }
+                        TextButton(onClick = { showDeleteSelected = true }) {
+                            Text(t("Delete", "削除"), color = MaterialTheme.colorScheme.error)
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        TextButton(onClick = { selectedIds = emptySet() }) { Text("✕") }
+                    }
+                }
             }
             if (importing) {
                 // Centered, unmissable progress: scrim + card + spinner +
@@ -408,6 +459,81 @@ fun LocalLibraryHome(
                 }
             }
         }
+    }
+
+    // Batch move to shelf (multi-select action bar).
+    if (showMoveSelected) {
+        AlertDialog(
+            onDismissRequest = { showMoveSelected = false },
+            title = { Text(t("Move to shelf", "棚に移動")) },
+            text = {
+                Column {
+                    shelves.cats.forEach { cat ->
+                        TextButton(onClick = {
+                            showMoveSelected = false
+                            val targets = selectedIds
+                            selectedIds = emptySet()
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    var st = shelves
+                                    targets.forEach { sid ->
+                                        st = CategoryStore.move(st, sid, cat.id)
+                                    }
+                                    shelves = st
+                                    CategoryStore.save(context, "local:$libraryId", st)
+                                }
+                            }
+                        }) { Text(cat.name) }
+                    }
+                    TextButton(onClick = {
+                        showMoveSelected = false
+                        val targets = selectedIds
+                        selectedIds = emptySet()
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                var st = shelves
+                                targets.forEach { sid ->
+                                    st = CategoryStore.move(st, sid, null)
+                                }
+                                shelves = st
+                                CategoryStore.save(context, "local:$libraryId", st)
+                            }
+                        }
+                    }) { Text(t("No shelf", "棚なし")) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showMoveSelected = false }) { Text(t("Close", "閉じる")) }
+            }
+        )
+    }
+
+    // Batch delete (multi-select action bar).
+    if (showDeleteSelected) {
+        AlertDialog(
+            onDismissRequest = { showDeleteSelected = false },
+            title = { Text(t("Delete ${selectedIds.size} series?", "${selectedIds.size}件のシリーズを削除？")) },
+            text = { Text(t(
+                "Removes the selected series and all their volumes from this library. Linked files on the device are NOT deleted.",
+                "選択したシリーズと全巻をこのライブラリから削除します。リンク済みの端末内ファイルは削除されません。"
+            )) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteSelected = false
+                    val targets = selectedIds
+                    selectedIds = emptySet()
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            targets.forEach { LocalLibraryStore.deleteSeries(context, it) }
+                        }
+                        reload()
+                    }
+                }) { Text(t("Delete", "削除"), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteSelected = false }) { Text("Cancel") }
+            }
+        )
     }
 
     if (showMissingCleanup) {
