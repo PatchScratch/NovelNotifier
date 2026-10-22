@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipFile
 
 /**
@@ -199,20 +200,34 @@ object LocalLibraryStore {
     }
 
     /**
-     * Cover for a book: cached file, or lazily extracted from the epub zip
-     * (books imported before the base-path fix have no cached cover).
-     */
-    /**
      * Cover for a book, stored in CoverStore (keyed by the locallib:// URL)
      * so the shared CoverThumb component finds it via its standard
-     * CoverStore.localFile() lookup. Books imported before the base-path
-     * fix get their cover lazily extracted from the epub on first access.
+     * CoverStore.localFile() lookup. Books without a cached cover get it
+     * lazily extracted from the epub — HEAVY (full index read + SAF copy +
+     * zip parse); use [coverCached] on hot paths.
      */
+    // Negative-cache marker: epubs with no findable cover would re-run the
+    // heavy extraction on EVERY load (5K library = minutes, Wayne
+    // 2026-10-22). A zero-byte marker answers "no cover" with one stat.
+    private fun noCoverMarker(context: Context, bookId: String): File =
+        File(CoverStore.dir(context), "nolocallib_$bookId")
+
+    /** Cache-hit-only cover lookup — one SHA + stat, never opens an epub. */
+    fun coverCached(context: Context, bookId: String): File? {
+        if (noCoverMarker(context, bookId).isFile) return null
+        return CoverStore.localFile(context, "locallib://$bookId")
+    }
+
     fun coverFile(context: Context, bookId: String): File? {
         val seriesUrl = "locallib://$bookId"
         // CoverStore first — this is what CoverThumb checks.
-        CoverStore.localFile(context, seriesUrl)?.let { return it }
-        // Lazy extraction from the epub.
+        CoverStore.localFile(context, seriesUrl)?.let {
+            noCoverMarker(context, bookId).delete()
+            return it
+        }
+        if (noCoverMarker(context, bookId).isFile) return null
+        // Lazy extraction from the epub. A dead zip (missing/moved file)
+        // must NOT write the marker — transient failures stay retryable.
         val book = book(context, bookId) ?: return null
         runCatching {
             withZip(context, book) { zip, opfPath ->
@@ -231,6 +246,10 @@ object LocalLibraryStore {
                   ?: zip.getEntry("cover.png")?.let { zip.getInputStream(it).readBytes() }
                 coverBytes?.let { bytes ->
                     CoverStore.saveGenerated(context, seriesUrl, bytes, "jpg")
+                }
+                // Remember a truly coverless epub so loads stop re-trying.
+                if (coverBytes == null) runCatching {
+                    noCoverMarker(context, bookId).createNewFile()
                 }
                 null
             }
@@ -274,7 +293,8 @@ object LocalLibraryStore {
             runCatching {
                 CoverStore.saveGenerated(context, "locallib://$bookId", cov, "jpg")
             }
-        }
+            noCoverMarker(context, bookId).delete()
+        } ?: runCatching { noCoverMarker(context, bookId).createNewFile() }
         val book = LocalBook(
             id = bookId, libraryId = lib.id,
             title = parsed.title.ifBlank { fileName.removeSuffix(".epub") },
@@ -480,6 +500,7 @@ object LocalLibraryStore {
             }
             File(context.cacheDir, "ll_$bookId.epub").delete()
             coverFile(context, bookId)?.delete()
+            noCoverMarker(context, bookId).delete()
             // Extracted illustration cache rides with the book.
             File(context.filesDir, "local_lib_media/$bookId").deleteRecursively()
         }
@@ -583,7 +604,9 @@ object LocalLibraryStore {
     private data class SnapshotCore(
         val library: LocalLibrary?, val books: List<LocalBook>,
         val series: List<LocalSeries>, val seriesIdOf: Map<String, String>,
-        val coverPathOf: Map<String, String>
+        // Mutable: the background cover backfill fills it in place so the
+        // session cache warms up without rebuilding anything.
+        val coverPathOf: ConcurrentHashMap<String, String>
     )
 
     // Session cache (Wayne, 2026-10-22: "load on open then stay cached for
@@ -608,6 +631,30 @@ object LocalLibraryStore {
         )
     }
 
+    /**
+     * Progressive cover backfill: walks books whose cover path is blank and
+     * runs the HEAVY extraction (SAF copy + zip parse) one at a time on the
+     * caller's IO dispatcher, updating the session cache and invoking
+     * [onCover] per find so the grid can light covers in as they land.
+     * The snapshot itself renders instantly with placeholders. Runs as a
+     * cancellable coroutine — leaving the screen resumes where it stopped
+     * on return (blanks are skipped).
+     */
+    suspend fun backfillCovers(
+        context: Context, libraryId: String, onCover: (bookId: String, path: String) -> Unit
+    ) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val core = snapshotCore?.takeIf { it.first == libraryId }?.second ?: return@withContext
+        core.books.forEach { b ->
+            kotlinx.coroutines.yield()
+            if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return@forEach
+            val f = coverFile(context, b.id)
+            if (f != null) {
+                core.coverPathOf[b.id] = f.absolutePath
+                onCover(b.id, f.absolutePath)
+            }
+        }
+    }
+
     private fun buildSnapshotCore(context: Context, libraryId: String): SnapshotCore {
         val root = readIndexOnce(context)
         val books = parseBooks(root, libraryId)
@@ -619,9 +666,13 @@ object LocalLibraryStore {
             val sid = o.optString("seriesId").takeIf { it.isNotBlank() } ?: continue
             sidMap[o.optString("id")] = sid
         }
-        val coverPaths = HashMap<String, String>(books.size)
+        // Cache-hit cover lookups ONLY — the heavy lazy extraction used to
+        // run here per coverless book (full index re-parse + epub zip open),
+        // which is what made a 5K library take minutes. The backfill
+        // coroutine owns extraction after the grid renders.
+        val coverPaths = ConcurrentHashMap<String, String>(books.size)
         books.forEach { b ->
-            coverPaths[b.id] = coverFile(context, b.id)?.absolutePath ?: ""
+            coverPaths[b.id] = coverCached(context, b.id)?.absolutePath ?: ""
         }
         return SnapshotCore(
             library = parseLibraries(root).firstOrNull { it.id == libraryId },

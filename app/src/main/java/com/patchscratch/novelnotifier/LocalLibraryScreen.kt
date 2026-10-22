@@ -88,6 +88,14 @@ fun LocalLibraryHome(
         }
     }
     LaunchedEffect(libraryId) { reload() }
+    // Covers stream in AFTER the grid renders — the snapshot answers from
+    // the cover cache only, and this backfill does the heavy extraction
+    // (SAF copy + zip parse) one book at a time. Resumes where it stopped.
+    var coverTick by remember(libraryId) { mutableStateOf(0) }
+    LaunchedEffect(snap) {
+        val s = snap ?: return@LaunchedEffect
+        LocalLibraryStore.backfillCovers(context, libraryId) { _, _ -> coverTick++ }
+    }
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -168,6 +176,13 @@ fun LocalLibraryHome(
     // Rows are SERIES (Wayne, 2026-10-21: "Series = Series") — pure
     // in-memory filtering over the snapshot; zero IO here (search-safe).
     val s = snap
+    // Reads the backfill counter: every streamed cover invalidates the
+    // grid so covers light in as the background pass finds them.
+    fun coverFor(bookId: String?): String {
+        coverTick
+        val p = s?.coverPathOf[bookId].orEmpty()
+        return if (p.isNotBlank()) "file://$p" else ""
+    }
     val rows = if (s == null) emptyList() else {
         val sidMap = s.seriesIdOf
         val hiddenShelfIds = shelves.cats.filter { it.hidden && !nsfwUnlocked }.map { it.id }.toSet()
@@ -192,8 +207,7 @@ fun LocalLibraryHome(
                 BookmarkRow(
                     title = sr.name,
                     subtitle = vol1?.author.orEmpty(),
-                    coverUrl = s.coverPathOf[vol1?.id].orEmpty().takeIf { it.isNotBlank() }
-                        ?.let { "file://$it" } ?: "",
+                    coverUrl = coverFor(vol1?.id),
                     // Volume 1's CoverStore key — the series borrows its cover.
                     seriesUrl = vol1?.let { "locallib://${it.id}" } ?: "",
                     open = { onOpenSeries(sr.id) },
