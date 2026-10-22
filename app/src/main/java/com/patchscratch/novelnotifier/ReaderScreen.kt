@@ -668,16 +668,26 @@ fun ReaderScreen(
         if (isLocalLib) {
             viewMode = READER_VIEW_TEXT
         }
-        // Offline-first applies the same bypass: a stored chapter serves
-        // immediately; an unstored one falls through to the WebView flow
-        // (the gate then waits for its page finish as before).
+        // Offline-first (Wayne, 2026-10-22): a STORED chapter bypasses the
+        // gates too — but ONLY a confirmed stored hit. Checking on the
+        // first run only (extractTick==0): an unstored chapter must wait
+        // for the WebView page finish like before, or the ladder fires
+        // against an unloaded page, fails, flips to web view and strands
+        // extnu chapters (foxteller) on the NU bounce page.
         val offlineFirst = !isLocalLib && sourceOffline && !forceOnlineOnce &&
             chapter.url.startsWith("http")
+        val storedForOffline = if (offlineFirst && extractTick == 0) {
+            withContext(Dispatchers.IO) {
+                EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+            }
+        } else null
         // During an AlphaPolis web-hop the ladder keeps running in WEB mode —
         // the hop exists precisely so the VISIBLE DOM fills #novelBody for
         // tryExtract to read; success flips the reader back to TEXT.
         val alpHop = alpWebHop && viewMode == READER_VIEW_WEB
-        if (!isLocalLib && !offlineFirst && ((viewMode != READER_VIEW_TEXT && !alpHop) || extractTick == 0)) {
+        if (!isLocalLib && storedForOffline == null &&
+            ((viewMode != READER_VIEW_TEXT && !alpHop) || extractTick == 0)
+        ) {
             return@LaunchedEffect
         }
         if (foxRssStage == 1) return@LaunchedEffect
@@ -695,26 +705,21 @@ fun ReaderScreen(
             return@LaunchedEffect
         }
         // Offline-first (Wayne, 2026-10-22): the stored epub copy renders
-        // with zero WebView/network; a miss falls through to the online
-        // ladder below, and "Re-download chapter" refetches on demand.
-        if (offlineFirst) {
-            val stored = withContext(Dispatchers.IO) {
-                EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+        // with zero WebView/network. Only the confirmed first-run hit
+        // serves here — misses already fell through to the gate above.
+        if (storedForOffline != null && storedForOffline.paragraphs.isNotEmpty()) {
+            servingStored = true
+            offlineCopy = true
+            viewMode = READER_VIEW_TEXT
+            extractResult = storedForOffline
+            // Stored translations ride along immediately.
+            translation = withContext(Dispatchers.IO) {
+                EpubStore.readAllStoredDocs(context, target.seriesUrl)
+                    .firstOrNull { it.url == chapter.url }?.translation
             }
-            if (stored != null && stored.paragraphs.isNotEmpty()) {
-                servingStored = true
-                offlineCopy = true
-                viewMode = READER_VIEW_TEXT
-                extractResult = stored
-                // Stored translations ride along immediately.
-                translation = withContext(Dispatchers.IO) {
-                    EpubStore.readAllStoredDocs(context, target.seriesUrl)
-                        .firstOrNull { it.url == chapter.url }?.translation
-                }
-                return@LaunchedEffect
-            }
-            servingStored = false
+            return@LaunchedEffect
         }
+        servingStored = false
         // Local Library (v3.0): locallib://<bookId>/<index> serves straight
         // from the epub zip — zero WebView, zero network; ALL reader
         // features (themes, TTS, translation, position) ride for free.
