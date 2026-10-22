@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
@@ -179,6 +180,7 @@ fun LocalLibraryHome(
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val rowKeyToSeries = remember { HashMap<String, String>() }
     var showMoveSelected by remember { mutableStateOf(false) }
+    var showMergeSelected by remember { mutableStateOf(false) }
     var showDeleteSelected by remember { mutableStateOf(false) }
     // Reads the store's cover tick: the session-long background backfill
     // bumps it per find, so covers light in wherever they land.
@@ -407,12 +409,14 @@ fun LocalLibraryHome(
                 searchHistoryScope = "local:$libraryId"
             )
             }
-            // Selection action bar — replaces nothing, overlays the top of
-            // the grid while anything is selected.
+            // Selection action bar — overlays the grid while anything is
+            // selected; status-bar padding keeps it clear of system UI.
             if (selectedIds.isNotEmpty()) {
                 Surface(
                     tonalElevation = 4.dp,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -424,7 +428,10 @@ fun LocalLibraryHome(
                             modifier = Modifier.padding(horizontal = 8.dp)
                         )
                         TextButton(onClick = { showMoveSelected = true }) {
-                            Text(t("Move to shelf…", "棚に移動…"))
+                            Text(t("Shelf…", "棚…"))
+                        }
+                        TextButton(onClick = { showMergeSelected = true }) {
+                            Text(t("Merge…", "統合…"))
                         }
                         TextButton(onClick = { showDeleteSelected = true }) {
                             Text(t("Delete", "削除"), color = MaterialTheme.colorScheme.error)
@@ -506,6 +513,36 @@ fun LocalLibraryHome(
                 TextButton(onClick = { showMoveSelected = false }) { Text(t("Close", "閉じる")) }
             }
         )
+    }
+
+    // Batch merge (multi-select action bar): every selected series folds
+    // into the chosen target; emptied ones disappear.
+    if (showMergeSelected) {
+        val targets = snap?.series?.filter { it.id !in selectedIds }.orEmpty()
+        if (targets.isEmpty()) {
+            showMergeSelected = false
+        } else {
+            SeriesPickerDialog(
+                title = t("Merge into series", "シリーズに統合"),
+                note = t(
+                    "All volumes of the ${selectedIds.size} selected series move into the series you pick.",
+                    "選択した${selectedIds.size}件のシリーズの全巻が、選んだシリーズに移動します。"
+                ),
+                series = targets,
+                onPick = { target ->
+                    showMergeSelected = false
+                    val sources = selectedIds
+                    selectedIds = emptySet()
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            sources.forEach { LocalLibraryStore.mergeSeries(context, it, target.id) }
+                        }
+                        reload()
+                    }
+                },
+                onDismiss = { showMergeSelected = false }
+            )
+        }
     }
 
     // Batch delete (multi-select action bar).
