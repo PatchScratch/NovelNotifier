@@ -661,43 +661,42 @@ object LocalLibraryStore {
     }
 
     /**
-     * Duplicate scan across the whole index. Signature 1: title+chapters,
-     * trusted only with a volume token in the title or equal byte sizes
-     * (bare-title series share one title across volumes). Signature 2:
-     * source FILENAME+chapters — each volume's file is named distinctly.
-     * Byte sizes come from import or the existence pass's provider query.
+     * Duplicate scan across the whole index. Primary signature: normalized
+     * title (volume markers/punctuation stripped) + chapters + VOLUME
+     * identity (the volume number parsed from the title or the source
+     * filename) — merges same-volume re-rips whose titles differ by a comma
+     * or whose files were re-ripped at different sizes. Unknown-volume
+     * entries (bare title AND bare filename) only merge on equal byte
+     * sizes: bare-title series share one title across volumes. Exact
+     * source-filename matches merge regardless.
      */
     private fun dupScan(context: Context): List<Pair<String, String>> {
         val root = readIndex(context)
         val books = root.optJSONArray("books") ?: return emptyList()
         val bySignature = HashMap<String, JSONObject>()
         val byFileSig = HashMap<String, JSONObject>()
-        val byVolSig = HashMap<String, JSONObject>()
         val dupPairs = mutableListOf<Pair<String, String>>()
         val marked = HashSet<String>()
         for (i in 0 until books.length()) {
             val o = books.optJSONObject(i) ?: continue
             val id = o.optString("id")
             if (id in marked) continue
-            val sig = o.optString("libraryId") + "|||" + o.optString("title") +
-                "|||" + o.optInt("chapters", 0)
-            val kept = bySignature[sig]
-            if (kept == null) {
-                bySignature[sig] = o
-            } else {
-                val a = o.optLong("bytes", -1L)
-                val b = kept.optLong("bytes", -1L)
-                val sized = a != -1L && a == b
-                val tokened = volumeNumber(o.optString("title")) != Int.MAX_VALUE
-                if (sized || tokened) {
-                    dupPairs.add(id to kept.optString("id"))
-                    marked.add(id)
-                }
-            }
+            val title = o.optString("title")
+            val chapters = o.optInt("chapters", 0)
             val name = sourceName(o)
+            val fileVol = volumeNumber(name.substringAfterLast('/'))
+            val vol = volumeNumber(title).takeIf { it != Int.MAX_VALUE }
+                ?: fileVol.takeIf { it != Int.MAX_VALUE } ?: -1
+            val key = libraryKeyOf(o, title, chapters, vol)
+            val kept = bySignature[key]
+            if (kept == null) {
+                bySignature[key] = o
+            } else if (vol != -1 || sizesAgree(o, kept)) {
+                dupPairs.add(id to kept.optString("id"))
+                marked.add(id)
+            }
             if (name.isNotBlank() && id !in marked) {
-                val fileSig = o.optString("libraryId") + "|||" + name +
-                    "|||" + o.optInt("chapters", 0)
+                val fileSig = o.optString("libraryId") + "|||" + name + "|||" + chapters
                 val keptFile = byFileSig[fileSig]
                 if (keptFile == null) {
                     byFileSig[fileSig] = o
@@ -706,27 +705,17 @@ object LocalLibraryStore {
                     marked.add(id)
                 }
             }
-            // Signature 3: the volume number written in the source FILENAME
-            // ("… Vol. 1 ….epub") — catches same-volume re-rips saved under
-            // slightly different names (different bytes defeat signature 1;
-            // bare dc:titles defeat the token guard). Different volumes of
-            // one series never share the file's volume number.
-            if (id !in marked) {
-                val fileVol = volumeNumber(name.substringAfterLast('/'))
-                if (fileVol != Int.MAX_VALUE) {
-                    val volSig = o.optString("libraryId") + "|||" + o.optString("title") +
-                        "|||" + o.optInt("chapters", 0) + "|||vol$fileVol"
-                    val keptVol = byVolSig[volSig]
-                    if (keptVol == null) {
-                        byVolSig[volSig] = o
-                    } else {
-                        dupPairs.add(id to keptVol.optString("id"))
-                        marked.add(id)
-                    }
-                }
-            }
         }
         return dupPairs
+    }
+
+    private fun libraryKeyOf(o: JSONObject, title: String, chapters: Int, vol: Int): String =
+        o.optString("libraryId") + "|||" + seriesKey(title) + "|||" + chapters + "|||v$vol"
+
+    private fun sizesAgree(a: JSONObject, b: JSONObject): Boolean {
+        val x = a.optLong("bytes", -1L)
+        val y = b.optLong("bytes", -1L)
+        return x != -1L && x == y
     }
 
     /**
@@ -1242,7 +1231,9 @@ object LocalLibraryStore {
         // Edition qualifiers that differ across volumes of one work
         // ("… (Light Novel) Vol. 6" vs plain "…") split the auto key.
         t = Regex("""\s*\((?:light novel|novel|ln)\)\s*$""", RegexOption.IGNORE_CASE).replace(t, "")
-        return t.trim()
+        // Punctuation drift between rips ("Ms. Elf!," vs "Ms. Elf!") must
+        // not split keys either.
+        return t.trim().trimEnd(',', ':', '，', '：').trim()
     }
 
     /** Volume ordinal for ordering; MAX_VALUE when absent → addedAt order. */
