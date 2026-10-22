@@ -262,7 +262,6 @@ fun ReaderScreen(
     var sourceOffline by remember {
         mutableStateOf(prefs.getBoolean("chapter_source_offline", true))
     }
-    var servingStored by remember(target) { mutableStateOf(false) } // WebView suppressed
     var sourceTick by remember { mutableIntStateOf(0) }
     val savedUrls = remember(target) { mutableSetOf<String>() } // already appended this session
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
@@ -325,6 +324,11 @@ fun ReaderScreen(
     // Per-chapter escape hatch for the offline default ("Re-download
     // chapter" after a translator update) — resets on the next chapter.
     var forceOnlineOnce by remember(chapter.url) { mutableStateOf(false) }
+    // ALSO per chapter: a stored c1 suppressed the WebView; flipping Next
+    // to an unstored c2 kept the flag — no WebView composed, nothing could
+    // load, and the gate waited forever (foxteller stuck on the loader,
+    // Wayne 2026-10-22). Resets with the chapter.
+    var servingStored by remember(chapter.url) { mutableStateOf(false) }
 
     /**
      * Foxteller /rss/<id> resolution stage per chapter: 0 = not needed,
