@@ -202,14 +202,20 @@ fun LocalLibraryHome(
             .map { sr ->
                 val vols = bySeries[sr.id].orEmpty()
                     .sortedWith(compareBy({ LocalLibraryStore.volumeNumber(it.title) }, { it.addedAt }))
+                // Series cover: the chosen volume when pinned, else vol 1.
+                val coverVol =
+                    if (sr.coverBookId.isNotBlank()) vols.firstOrNull { it.id == sr.coverBookId }
+                        ?: vols.firstOrNull()
+                    else vols.firstOrNull()
                 val vol1 = vols.firstOrNull()
                 val unread = vols.sumOf { v -> maxOf(0, v.chapterCount - (s.readPosOf[v.id] ?: 0)) }
                 BookmarkRow(
                     title = sr.name,
                     subtitle = vol1?.author.orEmpty(),
-                    coverUrl = coverFor(vol1?.id),
-                    // Volume 1's CoverStore key — the series borrows its cover.
-                    seriesUrl = vol1?.let { "locallib://${it.id}" } ?: "",
+                    coverUrl = coverFor(coverVol?.id),
+                    // The cover volume's CoverStore key — a chosen-volume
+                    // cover hits the store directly, vol 1 otherwise.
+                    seriesUrl = "locallib://${coverVol?.id ?: vol1?.id}",
                     open = { onOpenSeries(sr.id) },
                     unread = unread,
                     latestLabel = if (vols.size > 1) "${vols.size} ${t("vols", "巻")}"

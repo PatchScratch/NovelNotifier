@@ -1,6 +1,8 @@
 package com.patchscratch.novelnotifier
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -19,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -46,17 +49,18 @@ fun LocalSeriesScreen(
     var series by remember(seriesId) { mutableStateOf<LocalLibraryStore.LocalSeries?>(null) }
     var volumes by remember(seriesId) { mutableStateOf<List<LocalLibraryStore.LocalBook>>(emptyList()) }
     var shelves by remember(seriesId) { mutableStateOf(CategoryState()) }
-    var coverPath by remember(seriesId) { mutableStateOf("") }
     var readPos by remember(seriesId) { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var nextTitles by remember(seriesId) { mutableStateOf<List<String>>(emptyList()) }
     var showShelfPicker by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
     var showEditMeta by remember { mutableStateOf(false) }
     var showMergePicker by remember { mutableStateOf(false) }
+    var showCoverPicker by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
     var otherSeries by remember(seriesId) {
         mutableStateOf<List<LocalLibraryStore.LocalSeries>>(emptyList())
     }
+    var coverPaths by remember(seriesId) { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     LaunchedEffect(seriesId) {
         withContext(Dispatchers.IO) {
@@ -64,8 +68,11 @@ fun LocalSeriesScreen(
             val vols = LocalLibraryStore.seriesVolumesOf(context, seriesId)
             volumes = vols
             shelves = CategoryStore.load(context, "local:$libraryId")
-            coverPath = vols.firstOrNull()
-                ?.let { LocalLibraryStore.coverFile(context, it.id)?.absolutePath }.orEmpty()
+            // Cover per volume (chosen one resolves the header); the cache
+            // answer first, the heavy extraction fills misses.
+            coverPaths = vols.associate {
+                it.id to (LocalLibraryStore.coverCached(context, it.id)?.absolutePath ?: "")
+            }
             val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
             readPos = vols.associate { it.id to prefs.getInt("local_pos_${it.id}", 0) }
             otherSeries = LocalLibraryStore.seriesList(context, libraryId)
@@ -80,6 +87,10 @@ fun LocalSeriesScreen(
 
     val s = series ?: return
     val vol1 = volumes.firstOrNull()
+    // Series cover: the pinned volume when set, else volume 1.
+    val coverVol =
+        if (s.coverBookId.isNotBlank()) volumes.firstOrNull { it.id == s.coverBookId } ?: vol1
+        else vol1
     val currentShelf = shelves.assign[s.id]?.let { id -> shelves.cats.firstOrNull { it.id == id } }
 
     // Reading position stays per-epub (Wayne: "bookmarking and read tracking
@@ -110,8 +121,9 @@ fun LocalSeriesScreen(
             onBack = onBack,
             // Breadcrumb: the library this series lives in.
             crumbLabel = LocalLibraryStore.library(context, libraryId)?.name.orEmpty(),
-            coverUrl = if (coverPath.isNotBlank()) "file://$coverPath" else "",
-            coverSeriesUrl = vol1?.let { "locallib://${it.id}" } ?: "",
+            coverUrl = coverPaths[coverVol?.id].orEmpty().takeIf { it.isNotBlank() }
+                ?.let { "file://$it" } ?: "",
+            coverSeriesUrl = coverVol?.let { "locallib://${it.id}" } ?: "",
             title = s.name,
             author = vol1?.author.orEmpty(),
             groupBadge = currentShelf?.name ?: "",
@@ -164,6 +176,13 @@ fun LocalSeriesScreen(
                     text = { Text(t("Edit description…", "説明を編集…")) },
                     onClick = { closeMenu(); showEditMeta = true }
                 )
+                // Series cover: pin any volume's cover (or back to vol 1).
+                if (volumes.size > 1) {
+                    DropdownMenuItem(
+                        text = { Text(t("Choose cover…", "カバーを選択…")) },
+                        onClick = { closeMenu(); showCoverPicker = true }
+                    )
+                }
                 // The manual fix for auto-grouping misses: pull a stray
                 // series (with all its volumes) into the right one.
                 if (otherSeries.isNotEmpty()) {
@@ -203,6 +222,67 @@ fun LocalSeriesScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showShelfPicker = false }) { Text(t("Close", "閉じる")) }
+            }
+        )
+    }
+
+    // Series cover picker: any volume's cover, or the vol-1 default.
+    // Volumes with no cached cover can pull theirs from the epub inline.
+    if (showCoverPicker) {
+        AlertDialog(
+            onDismissRequest = { showCoverPicker = false },
+            title = { Text(t("Series cover", "シリーズのカバー")) },
+            text = {
+                Column {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                    ) {
+                        items(volumes, key = { it.id }) { v ->
+                            val vol = LocalLibraryStore.volumeNumber(v.title)
+                            val path = coverPaths[v.id].orEmpty()
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        scope.launch(Dispatchers.IO) {
+                                            LocalLibraryStore.setSeriesCover(context, s.id, v.id)
+                                            series = LocalLibraryStore.seriesById(context, s.id)
+                                        }
+                                        showCoverPicker = false
+                                    }
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                Text(
+                                    (if (s.coverBookId == v.id) "✓ " else "　") +
+                                        (if (vol != Int.MAX_VALUE) "Vol $vol" else "ePub"),
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                                if (path.isBlank()) {
+                                    TextButton(onClick = {
+                                        scope.launch(Dispatchers.IO) {
+                                            val f = LocalLibraryStore.forceCoverExtraction(context, v.id)
+                                            if (f != null) {
+                                                coverPaths = coverPaths + (v.id to f.absolutePath)
+                                            }
+                                        }
+                                    }) { Text(t("From epub", "EPUBから")) }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        LocalLibraryStore.setSeriesCover(context, s.id, "")
+                        series = LocalLibraryStore.seriesById(context, s.id)
+                    }
+                    showCoverPicker = false
+                }) { Text(t("Use volume 1", "1巻を使用")) }
             }
         )
     }

@@ -156,6 +156,19 @@ fun LocalBookDetail(
                     text = { Text(t("Edit volume info…", "巻情報を編集…")) },
                     onClick = { closeMenu(); showEditMeta = true }
                 )
+                DropdownMenuItem(
+                    text = { Text(t("Extract cover from epub", "EPUBからカバー抽出")) },
+                    onClick = {
+                        closeMenu()
+                        scope.launch(Dispatchers.IO) {
+                            val f = LocalLibraryStore.forceCoverExtraction(context, b.id)
+                            DebugLog.log(
+                                "LOCALLIB",
+                                "manual cover extract ${b.id}: ${if (f != null) "ok" else "none found"}"
+                            )
+                        }
+                    }
+                )
             },
             synopsis = b.description,
             typeLine = listOfNotNull(

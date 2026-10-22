@@ -48,13 +48,15 @@ object LocalLibraryStore {
     /** A series: the unit the grid shows and shelves hold (Wayne, 2026-10-21:
      *  "Library = Sites, Shelves = Categories, Series = Series"). [key] is
      *  the auto-match key imports join on; [description] is a display
-     *  override — epub files are never rewritten. */
+     *  override — epub files are never rewritten. [coverBookId] pins the
+     *  series cover to a chosen volume (Wayne, 2026-10-22); blank = vol 1. */
     data class LocalSeries(
         val id: String,
         val libraryId: String,
         val name: String,
         val key: String,
-        val description: String = ""
+        val description: String = "",
+        val coverBookId: String = ""
     )
 
     private const val INDEX = "local_libraries.json"
@@ -206,11 +208,13 @@ object LocalLibraryStore {
      * lazily extracted from the epub — HEAVY (full index read + SAF copy +
      * zip parse); use [coverCached] on hot paths.
      */
-    // Negative-cache marker: epubs with no findable cover would re-run the
-    // heavy extraction on EVERY load (5K library = minutes, Wayne
-    // 2026-10-22). A zero-byte marker answers "no cover" with one stat.
+    // Negative-cache marker (v2): epubs with no findable cover would re-run
+    // the heavy extraction on EVERY load. A zero-byte marker answers "no
+    // cover" with one stat. The v2 name exists because the v1 detector was
+    // too narrow and marked most of a 5K library coverless — the rename
+    // invalidates those markers so the full detector retries once.
     private fun noCoverMarker(context: Context, bookId: String): File =
-        File(CoverStore.dir(context), "nolocallib_$bookId")
+        File(CoverStore.dir(context), "nolocallib2_$bookId")
 
     /** Cache-hit-only cover lookup — one SHA + stat, never opens an epub. */
     fun coverCached(context: Context, bookId: String): File? {
@@ -234,16 +238,7 @@ object LocalLibraryStore {
                 val opf = zip.getEntry(opfPath)
                     ?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
                     ?: return@withZip null
-                val base = opfPath.substringBeforeLast("/", "")
-                val coverHref = Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""")
-                    .find(opf)?.groupValues?.get(1)
-                val coverBytes: ByteArray? = coverHref?.let { ch ->
-                    val full = zipPath(base, ch)
-                    zip.getEntry(full)?.let { zip.getInputStream(it).readBytes() }
-                } ?: zip.getEntry("OEBPS/cover.jpg")?.let { zip.getInputStream(it).readBytes() }
-                  ?: zip.getEntry("OEBPS/cover.png")?.let { zip.getInputStream(it).readBytes() }
-                  ?: zip.getEntry("cover.jpg")?.let { zip.getInputStream(it).readBytes() }
-                  ?: zip.getEntry("cover.png")?.let { zip.getInputStream(it).readBytes() }
+                val coverBytes = coverBytesOf(zip, opf, opfPath)
                 coverBytes?.let { bytes ->
                     CoverStore.saveGenerated(context, seriesUrl, bytes, "jpg")
                 }
@@ -256,6 +251,84 @@ object LocalLibraryStore {
         }
         return CoverStore.localFile(context, seriesUrl)
     }
+
+    /**
+     * Manual "pull the cover out of this epub" (volume ⋮ action): clears
+     * the no-cover marker and any stale cached entry, then re-runs the
+     * extraction with the full detector.
+     */
+    fun forceCoverExtraction(context: Context, bookId: String): File? {
+        noCoverMarker(context, bookId).delete()
+        CoverStore.localFile(context, "locallib://$bookId")?.delete()
+        return coverFile(context, bookId)
+    }
+
+    private fun itemHrefById(opf: String, id: String): String? =
+        Regex("""<item\s+[^>]*id="$id"[^>]*href="([^"]+)"""").find(opf)?.groupValues?.get(1)
+            ?: Regex("""<item\s+[^>]*href="([^"]+)"[^>]*id="$id"""").find(opf)?.groupValues?.get(1)
+
+    /**
+     * The cover image bytes from an opened epub, trying every convention
+     * real books use (Wayne, 2026-10-22: the old id-only detector marked
+     * most of a 5K library coverless): EPUB3 properties="cover-image",
+     * EPUB2 <meta name="cover" content=id> pointer, an id CONTAINING
+     * "cover" in either attribute order, any zip path that names a cover
+     * image, and finally the first image of the first spine page
+     * (cover-page epubs). Null only when the epub truly has no art.
+     */
+    internal fun coverBytesOf(zip: ZipFile, opf: String, opfPath: String): ByteArray? {
+        val base = opfPath.substringBeforeLast("/", "")
+        fun entryBytes(href: String?): ByteArray? = href?.let { h ->
+            runCatching {
+                zip.getEntry(zipPath(base, h))?.let { zip.getInputStream(it).readBytes() }
+            }.getOrNull()
+        }
+        // 1) EPUB3 declaration.
+        Regex("""<item[^>]+properties="[^"]*cover-image[^"]*"[^>]+href="([^"]+)"""")
+            .find(opf)?.groupValues?.get(1)?.let { entryBytes(it)?.let { b -> return b } }
+        Regex("""<item[^>]+href="([^"]+)"[^>]+properties="[^"]*cover-image[^"]*"""")
+            .find(opf)?.groupValues?.get(1)?.let { entryBytes(it)?.let { b -> return b } }
+        // 2) EPUB2 meta pointer.
+        Regex("""<meta[^>]+name="cover"[^>]+content="([^"]+)""")
+            .find(opf)?.groupValues?.get(1)?.let { idref ->
+                itemHrefById(opf, idref)?.let { entryBytes(it)?.let { b -> return b } }
+            }
+        // 3) Any id containing "cover", either attribute order.
+        Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""", RegexOption.IGNORE_CASE)
+            .find(opf)?.groupValues?.get(1)?.let { entryBytes(it)?.let { b -> return b } }
+        Regex("""<item[^>]+href="([^"]+)"[^>]+id="[^"]*cover[^"]*"""", RegexOption.IGNORE_CASE)
+            .find(opf)?.groupValues?.get(1)?.let { entryBytes(it)?.let { b -> return b } }
+        // 4) Any zip image whose FILE names a cover.
+        val imgExt = Regex("""\.(jpe?g|png|webp)$""", RegexOption.IGNORE_CASE)
+        zip.entries().asSequence().filter { !it.isDirectory && imgExt.containsMatchIn(it.name) }
+            .filter { it.name.substringAfterLast('/').lowercase().startsWith("cover") }
+            .firstOrNull()?.let { e ->
+                runCatching { zip.getInputStream(e).readBytes() }.getOrNull()?.let { return it }
+            }
+        // 5) First image on the first spine page (cover-page epubs).
+        val hrefs = spineHrefs(opf, opfPath)
+        hrefs.firstOrNull()?.let { first ->
+            val doc = runCatching {
+                zip.getEntry(first)?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
+            }.getOrNull()
+            doc?.let { d ->
+                Regex("""<img[^>]+src="([^"]+)"|<image[^>]+(?:xlink:)?href="([^"]+)"""")
+                    .find(d)?.let { m ->
+                        val src = m.groupValues[1].ifBlank { m.groupValues[2] }
+                        if (src.isNotBlank() && !src.startsWith("http")) {
+                            val chBase = first.substringBeforeLast("/", "")
+                            entryBytesIn(zip, chBase, src)?.let { return it }
+                        }
+                    }
+            }
+        }
+        return null
+    }
+
+    private fun entryBytesIn(zip: ZipFile, base: String, src: String): ByteArray? =
+        runCatching {
+            zip.getEntry(zipPath(base, src))?.let { zip.getInputStream(it).readBytes() }
+        }.getOrNull()
 
     /**
      * Import an epub. Copy mode stores bytes in the library's storage
@@ -760,7 +833,8 @@ object LocalLibraryStore {
                 if (libraryId != null && o.optString("libraryId") != libraryId) return@mapNotNull null
                 LocalSeries(
                     o.optString("id"), o.optString("libraryId"),
-                    o.optString("name"), o.optString("key"), o.optString("description")
+                    o.optString("name"), o.optString("key"), o.optString("description"),
+                    o.optString("coverBookId")
                 )
             }
         }
@@ -806,6 +880,11 @@ object LocalLibraryStore {
 
     fun setSeriesDescription(context: Context, id: String, description: String) {
         mutateSeries(context, id) { it.put("description", description.trim()) }
+    }
+
+    /** Pin the series cover to a volume; blank [bookId] = volume 1. */
+    fun setSeriesCover(context: Context, id: String, bookId: String) {
+        mutateSeries(context, id) { it.put("coverBookId", bookId) }
     }
 
     private fun mutateSeries(context: Context, id: String, fn: (JSONObject) -> Unit) {
@@ -1082,14 +1161,7 @@ object LocalLibraryStore {
                     Regex("<dc:description[^>]*>([\\s\\S]*?)</dc:description>")
                         .find(opf)?.groupValues?.get(1).orEmpty()
                 )
-                val base = opfPath.substringBeforeLast("/", "")
-                val coverHref = Regex("""<item[^>]+id="[^"]*cover[^"]*"[^>]+href="([^"]+)"""")
-                    .find(opf)?.groupValues?.get(1)
-                val coverBytes: ByteArray? = coverHref?.let { ch ->
-                    val full = zipPath(base, ch)
-                    zip.getEntry(full)?.let { zip.getInputStream(it).readBytes() }
-                } ?: zip.getEntry("OEBPS/cover.jpg")?.let { zip.getInputStream(it).readBytes() }
-                  ?: zip.getEntry("cover.jpg")?.let { zip.getInputStream(it).readBytes() }
+                val coverBytes = coverBytesOf(zip, opf, opfPath)
                 val hrefs = spineHrefs(opf, opfPath)
                 val titles = hrefs.mapIndexedNotNull { i, href ->
                     val doc = zip.getEntry(href)?.let { zip.getInputStream(it).readBytes().toString(Charsets.UTF_8) }
