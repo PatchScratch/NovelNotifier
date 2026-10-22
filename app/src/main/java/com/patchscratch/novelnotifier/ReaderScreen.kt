@@ -649,11 +649,24 @@ fun ReaderScreen(
                         if (foxRssStage == 1) wv.loadUrl(rssUrl)
                     }
                 }
-                // A /novel/<id>/<n>/ page: the chapter itself — done here;
-                // the extraction ladder (re-armed by its page finish) owns it.
+                // A /novel/<id>/<n>/ page: the chapter itself. The URL alone
+                // can't tell rendered content from FoxTeller's SPA
+                // interstitial (SAME url — Wayne, 2026-10-22: "the
+                // interstitial is from foxteller"). Wait for the ladder to
+                // crown it; on a stall, the root first-touch clears the CF
+                // subresource challenge and a reload brings the content.
                 curHost.endsWith("foxteller.com") && Regex("/novel/\\d+/\\d+/").containsMatchIn(cur) -> {
                     if (foxRssStage == 1) foxRssStage = 2
-                    return@LaunchedEffect
+                    if (extractResult != null) return@LaunchedEffect
+                    stalledSteps++
+                    if (!rootTouched && stalledSteps >= 6) {
+                        rootTouched = true
+                        DebugLog.log("READER", "fox interstitial stall — CF first-touch via root")
+                        wv.loadUrl("https://$curHost/")
+                        delay(7000)
+                        wv.loadUrl(cur)
+                        stalledSteps = 0
+                    }
                 }
             }
         }
