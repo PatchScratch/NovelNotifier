@@ -1,0 +1,12 @@
+NovelNotifier 3.1 — paged epub reading and watched folders.
+
+PAGED READING (your own ePubs)
+• A third reader mode for local-library books: ⋮ → Paged view (epub) renders the book through the Readium navigator as real horizontal pages — swipe to turn, your page theme and serif/sans applied, ‹ Prev / Next › still move chapters. Scroll text view remains for translation work.
+
+WATCHED FOLDERS (Calibre workflow)
+• Linked folders are now watched: every time you open the library, new ePubs dropped into a linked folder (Calibre uploads, downloads — anything) are imported automatically, with a 5-minute cooldown per sweep.
+• ☰ → Re-scan linked folders forces a sweep immediately.
+• Moved or reorganized your files? The old dead entries surface under the 🧹 missing-files row for one-tap cleanup, and the new locations import on the next scan.
+
+ALSO
+• Duplicate detection hardened across the board (comma-named re-rips, volume-in-filename matching).
