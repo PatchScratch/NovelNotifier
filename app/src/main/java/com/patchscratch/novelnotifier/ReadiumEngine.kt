@@ -92,6 +92,27 @@ object ReadiumEngine {
     /** Reading-order hrefs — Readium-resolved, always correct. */
     fun readingOrder(pub: Publication): List<Link> = pub.readingOrder
 
+    /**
+     * The book's OWN table of contents (nav/NCX), flattened with nesting
+     * order preserved — (title, href) pairs. Empty when the epub declares
+     * none; callers fall back to the reading order. This is what "the
+     * internal ePub ToC working" means (Wayne, 2026-10-22): the chapter
+     * list shows the titles the BOOK declares, in the book's order.
+     */
+    fun toc(pub: Publication): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        fun walk(links: List<Link>) {
+            links.forEach { link ->
+                val title = link.title?.takeIf { it.isNotBlank() }
+                val href = link.href.toString()
+                if (title != null && href.isNotBlank()) out.add(title to href)
+                walk(link.children)
+            }
+        }
+        walk(pub.tableOfContents)
+        return out
+    }
+
     /** Chapter resource bytes by spine index; null on any failure. */
     suspend fun chapterBytes(pub: Publication, index: Int): ByteArray? {
         val link = pub.readingOrder.getOrNull(index) ?: return null

@@ -466,12 +466,19 @@ object LocalLibraryStore {
             val pub = ReadiumEngine.publicationFromUri(context, source.toString())
             if (pub != null) {
                 val meta = ReadiumEngine.meta(pub)
-                val titles = pub.readingOrder.mapIndexed { i, link ->
-                    link.title?.takeIf { it.isNotBlank() }
-                        ?: ReadiumEngine.chapterBytes(pub, i)?.toString(Charsets.UTF_8)
-                            ?.let { Regex("<title[^>]*>([^<]*)</title>").find(it)?.groupValues?.get(1)?.trim() }
-                            ?.takeIf { !it.isNullOrBlank() }
-                        ?: "Chapter ${i + 1}"
+                // The book's own ToC first; spine titles only as fallback.
+                val titles = ReadiumEngine.toc(pub).map { it.first }.ifEmpty {
+                    pub.readingOrder.mapIndexed { i, link ->
+                        val spineTitle = link.title?.takeIf { it.isNotBlank() }
+                        val docTitle = ReadiumEngine.chapterBytes(pub, i)
+                            ?.toString(Charsets.UTF_8)
+                            ?.let { d ->
+                                Regex("<title[^>]*>([^<]*)</title>").find(d)
+                                    ?.groupValues?.get(1)?.trim()
+                            }
+                            ?.takeIf { t -> !t.isNullOrBlank() }
+                        spineTitle ?: docTitle ?: "Chapter ${i + 1}"
+                    }
                 }
                 parsed = EpubParsed(
                     title = meta.title,
@@ -1335,31 +1342,52 @@ object LocalLibraryStore {
             ReadiumEngine.publication(context, book.id, it.optString("storedUri"), it.optString("storedPath"))
         }
 
-    suspend fun chapterTitlesR(context: Context, book: LocalBook): List<String> {
+    /**
+     * THE chapter list: the epub's own ToC (nav/NCX, flattened in book
+     * order) when it declares one; the reading order otherwise. Titles AND
+     * serving both index into this list — one source of truth.
+     */
+    suspend fun chapterListR(context: Context, book: LocalBook): List<Pair<String, String>> {
         val pub = publicationOf(context, book) ?: return emptyList()
-        return pub.readingOrder.mapIndexed { i, link ->
-            val doc = ReadiumEngine.chapterBytes(pub, i)?.toString(Charsets.UTF_8)
-            val t = doc?.let {
-                Regex("<title[^>]*>([^<]*)</title>").find(it)?.groupValues?.get(1)?.trim()
-            }
-            link.title?.takeIf { it.isNotBlank() }
-                ?: t.takeIf { !it.isNullOrBlank() }
-                ?: "Chapter ${i + 1}"
+        val toc = ReadiumEngine.toc(pub)
+        if (toc.isNotEmpty()) return toc
+        return pub.readingOrder.mapNotNull { link ->
+            val href = link.href.toString()
+            if (href.isBlank()) null
+            else (link.title?.takeIf { it.isNotBlank() } ?: href.substringAfterLast('/')) to href
         }
     }
 
+    suspend fun chapterTitlesR(context: Context, book: LocalBook): List<String> =
+        chapterListR(context, book).map { it.first }
+
     suspend fun chapterTextR(context: Context, book: LocalBook, index: Int): LocalChapter? {
         val pub = publicationOf(context, book) ?: return null
-        if (index !in pub.readingOrder.indices) return null
-        val doc = ReadiumEngine.chapterBytes(pub, index)?.toString(Charsets.UTF_8) ?: return null
+        val list = chapterListR(context, book)
+        if (index !in list.indices) return null
+        val (chapterTitle, href) = list[index]
+        // Resolve the href to a spine resource when it's one (fragments
+        // ignored — a ToC entry anchors inside its document); read the
+        // document directly otherwise.
+        val bare = href.substringBefore("#")
+        val spineIndex = pub.readingOrder.indexOfFirst { it.href.toString() == bare }
+        val docHref: String
+        val doc: String = (
+            if (spineIndex >= 0) {
+                docHref = pub.readingOrder[spineIndex].href.toString()
+                ReadiumEngine.chapterBytes(pub, spineIndex)?.toString(Charsets.UTF_8)
+            } else {
+                docHref = bare
+                ReadiumEngine.bytesByHref(pub, bare)?.toString(Charsets.UTF_8)
+            }
+            ) ?: return null
         val title = Regex("<title[^>]*>([^<]*)</title>").find(doc)
             ?.groupValues?.get(1)?.trim().orEmpty()
         val body = doc.substringAfter("<body", doc).substringAfter(">", doc)
         val paras = extractParagraphs(doc)
-        val href = pub.readingOrder[index].href.toString()
-        val images = extractImagesR(pub, context, book, body, href, paras.size)
+        val images = extractImagesR(pub, context, book, body, docHref, paras.size)
         val finalParas = if (paras.isEmpty() && images.isNotEmpty()) listOf("") else paras
-        return LocalChapter(title, finalParas, images)
+        return LocalChapter(title.ifBlank { chapterTitle }, finalParas, images)
     }
 
     /** Readium cover bytes; null → caller falls back to the zip ladder. */
