@@ -220,19 +220,39 @@ object LocalLibraryStore {
     private fun noCoverMarker(context: Context, bookId: String): File =
         File(CoverStore.dir(context), "nolocallib3_$bookId")
 
+    /** Cover files must carry a real image magic — the v1 detector saved
+     *  cover.XHTML documents as "covers" (id="cover" often points at the
+     *  cover PAGE), which render as gray tiles. */
+    internal fun looksLikeImage(f: File): Boolean {
+        if (!f.isFile || f.length() < 12) return false
+        return runCatching {
+            java.io.RandomAccessFile(f, "r").use { raf ->
+                ByteArray(12).also { raf.readFully(it) }
+            }
+        }.getOrNull()?.let { h ->
+            (h[0] == 0xFF.toByte() && h[1] == 0xD8.toByte()) ||                // JPEG
+                (h[0] == 0x89.toByte() && h[1] == 0x50.toByte()) ||            // PNG
+                (String(h, 0, 4) == "RIFF" && String(h, 8, 4) == "WEBP") ||    // WebP
+                String(h, 0, 3) == "GIF" ||                                    // GIF
+                (h[0] == 0x42.toByte() && h[1] == 0x4D.toByte())               // BMP
+        } ?: false
+    }
+
     /** Cache-hit-only cover lookup — one SHA + stat, never opens an epub. */
     fun coverCached(context: Context, bookId: String): File? {
         if (noCoverMarker(context, bookId).isFile) return null
-        return CoverStore.localFile(context, "locallib://$bookId")
+        return CoverStore.localFile(context, "locallib://$bookId")?.takeIf(::looksLikeImage)
     }
 
     fun coverFile(context: Context, bookId: String): File? {
         val seriesUrl = "locallib://$bookId"
-        // CoverStore first — this is what CoverThumb checks.
-        CoverStore.localFile(context, seriesUrl)?.let {
+        // CoverStore first — this is what CoverThumb checks. A cached file
+        // that isn't a real image (the xhtml-cover era) counts as missing.
+        CoverStore.localFile(context, seriesUrl)?.takeIf(::looksLikeImage)?.let {
             noCoverMarker(context, bookId).delete()
             return it
         }
+        CoverStore.localFile(context, seriesUrl)?.delete()   // junk — replace it
         if (noCoverMarker(context, bookId).isFile) return null
         // Lazy extraction from the epub. A dead zip (missing/moved file)
         // must NOT write the marker — transient failures stay retryable.
