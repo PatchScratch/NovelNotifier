@@ -96,6 +96,7 @@ object LocalLibraryStore {
         librariesCache = null
         migrated = false
         metaCleaned = false
+        snapshotCore = null
     }
 
     fun library(context: Context, id: String): LocalLibrary? =
@@ -579,7 +580,35 @@ object LocalLibraryStore {
         val readPosOf: Map<String, Int>         // bookId → saved reader position
     )
 
+    private data class SnapshotCore(
+        val library: LocalLibrary?, val books: List<LocalBook>,
+        val series: List<LocalSeries>, val seriesIdOf: Map<String, String>,
+        val coverPathOf: Map<String, String>
+    )
+
+    // Session cache (Wayne, 2026-10-22: "load on open then stay cached for
+    // the session"): the router disposes the home screen on every
+    // navigation, so returning rebuilt the whole snapshot — a full index
+    // parse + cover stats each time. The heavy half is cached per library
+    // and dropped by ANY index write (invalidateCaches); read positions
+    // refresh per call because the reader advances them.
+    @Volatile private var snapshotCore: Pair<String, SnapshotCore>? = null
+
     fun snapshot(context: Context, libraryId: String): LibrarySnapshot {
+        val core = snapshotCore?.takeIf { it.first == libraryId }?.second
+            ?: buildSnapshotCore(context, libraryId).also {
+                snapshotCore = libraryId to it
+            }
+        val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+        val positions = core.books.associate { it.id to prefs.getInt("local_pos_${it.id}", 0) }
+        return LibrarySnapshot(
+            library = core.library, books = core.books, series = core.series,
+            seriesIdOf = core.seriesIdOf, coverPathOf = core.coverPathOf,
+            readPosOf = positions
+        )
+    }
+
+    private fun buildSnapshotCore(context: Context, libraryId: String): SnapshotCore {
         val root = readIndexOnce(context)
         val books = parseBooks(root, libraryId)
         val series = parseSeries(root, libraryId)
@@ -594,12 +623,9 @@ object LocalLibraryStore {
         books.forEach { b ->
             coverPaths[b.id] = coverFile(context, b.id)?.absolutePath ?: ""
         }
-        val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
-        val positions = books.associate { it.id to prefs.getInt("local_pos_${it.id}", 0) }
-        return LibrarySnapshot(
+        return SnapshotCore(
             library = parseLibraries(root).firstOrNull { it.id == libraryId },
-            books = books, series = series, seriesIdOf = sidMap,
-            coverPathOf = coverPaths, readPosOf = positions
+            books = books, series = series, seriesIdOf = sidMap, coverPathOf = coverPaths
         )
     }
 
