@@ -596,6 +596,7 @@ fun ReaderScreen(
         var rssUrl = ""
         var rootTouched = false
         var stalledSteps = 0
+        var nuBounces = 0
         for (step in 0 until 44) {          // ~2.5s each -> ~110s ceiling
             delay(2500)
             val wv = webViewRef.value ?: return@LaunchedEffect
@@ -603,8 +604,16 @@ fun ReaderScreen(
             val curHost = android.net.Uri.parse(cur.ifBlank { chapter.url }).host ?: ""
             val onNu = curHost.endsWith("novelupdates.com")
             when {
-                // NU bounced the redirect to its own pages -> retry the entry
+                // NU bounced the redirect to its own pages -> retry the entry.
+                // Capped: a walled NU never answers, and hammering it every
+                // 2.5s is exactly what the politeness law forbids (the rig
+                // wall taught this; Wayne's tablet hit it 2026-10-22).
                 onNu && cur != chapter.url -> {
+                    nuBounces++
+                    if (nuBounces > 6) {
+                        DebugLog.log("READER", "NU not answering extnu ($nuBounces tries) — backing off")
+                        return@LaunchedEffect
+                    }
                     DebugLog.log("READER", "extnu bounced to $curHost — retrying entry")
                     wv.loadUrl(chapter.url)
                 }
@@ -1828,7 +1837,17 @@ fun ReaderScreen(
                             SitePolicy.uaFor(chapter.url, settings.userAgentString)
                         // Local Library: never load the WebView — the
                         // locallib:// branch serves from the epub zip.
-                        if (!prohibited && !chapter.url.startsWith("locallib://")) loadUrl(chapter.url)
+                        // NU-walled tablets (Wayne, 2026-10-22: "foxteller
+                        // stuck on a loading page" = the extnu interstitial
+                        // spinning): when the extnu→permalink bridge knows
+                        // this chapter's real URL, load IT — NU is skipped
+                        // entirely, one resolver touch per unknown chapter.
+                        if (!prohibited && !chapter.url.startsWith("locallib://")) {
+                            val effective = ReaderTocStore.mappedUrl(
+                                target.seriesUrl, chapter.url, context
+                            ) ?: chapter.url
+                            loadUrl(effective)
+                        }
                     }
                 },
                 update = { webView ->
@@ -1837,7 +1856,14 @@ fun ReaderScreen(
                         loadedStamp = stamp
                         webView.settings.javaScriptEnabled = jsOn
                         webView.settings.domStorageEnabled = jsOn
-                        if (!prohibited) webView.loadUrl(chapter.url)
+                        if (!prohibited) {
+                            // Permalink-first here too — a known pair never
+                            // re-enters NU's throttled extnu redirect.
+                            val effective = ReaderTocStore.mappedUrl(
+                                target.seriesUrl, chapter.url, context
+                            ) ?: chapter.url
+                            webView.loadUrl(effective)
+                        }
                     }
                 }
             )
