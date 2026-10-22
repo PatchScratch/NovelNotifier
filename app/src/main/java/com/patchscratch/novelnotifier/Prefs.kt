@@ -218,9 +218,11 @@ fun saveThemeMode(prefs: android.content.SharedPreferences, mode: String) {
     prefs.edit { putString("theme_mode", mode) }
 }
 
-// Reader-mode display prefs (Phase 3.2). view: "text" or "web".
+// Reader-mode display prefs (Phase 3.2). view: "text", "web" or — local
+// library ePubs only, v3.1 — "paged" (the Readium navigator).
 const val READER_VIEW_TEXT = "text"
 const val READER_VIEW_WEB = "web"
+const val READER_VIEW_PAGED = "paged"
 
 fun loadReaderView(prefs: android.content.SharedPreferences): String {
     return prefs.getString("reader_view", READER_VIEW_TEXT) ?: READER_VIEW_TEXT

@@ -1384,6 +1384,10 @@ object LocalLibraryStore {
             ReadiumEngine.publication(context, book.id, it.optString("storedUri"), it.optString("storedPath"))
         }
 
+    /** The open publication for paged-mode rendering (Readium navigator). */
+    suspend fun publicationFor(context: Context, book: LocalBook): org.readium.r2.shared.publication.Publication? =
+        publicationOf(context, book)
+
     /**
      * THE chapter list: the epub's own ToC (nav/NCX, flattened in book
      * order) when it declares one; the reading order otherwise. Titles AND

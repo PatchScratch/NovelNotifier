@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -321,6 +322,30 @@ fun ReaderScreen(
     }
     var wordHit by remember(target) { mutableStateOf<JaDict.WordHit?>(null) }
     val chapter = chapters.getOrNull(index) ?: return
+    // v3.1 paged mode (Readium navigator) — local-library ePubs only.
+    var pagedPub by remember(target) {
+        mutableStateOf<org.readium.r2.shared.publication.Publication?>(null)
+    }
+    var pagedHref by remember(chapter.url) { mutableStateOf<String?>(null) }
+    LaunchedEffect(chapter.url, viewMode) {
+        // "paged" is meaningless for site chapters — coerce.
+        if (viewMode == READER_VIEW_PAGED && !chapter.url.startsWith("locallib://")) {
+            viewMode = READER_VIEW_TEXT
+            return@LaunchedEffect
+        }
+        if (viewMode != READER_VIEW_PAGED || !chapter.url.startsWith("locallib://")) {
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) {
+            val parts = chapter.url.removePrefix("locallib://").split("/")
+            val b = LocalLibraryStore.book(context, parts.getOrNull(0).orEmpty())
+            if (b != null) {
+                pagedPub = LocalLibraryStore.publicationFor(context, b)
+                val idx = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                pagedHref = LocalLibraryStore.chapterListR(context, b).getOrNull(idx)?.second
+            }
+        }
+    }
     // Per-chapter escape hatch for the offline default ("Re-download
     // chapter" after a translator update) — resets on the next chapter.
     var forceOnlineOnce by remember(chapter.url) { mutableStateOf(false) }
@@ -738,7 +763,7 @@ fun ReaderScreen(
         // serving below runs on the first composition, not after a page
         // finish. Bypass the extractTick/viewMode gates entirely.
         val isLocalLib = chapter.url.startsWith("locallib://")
-        if (isLocalLib) {
+        if (isLocalLib && viewMode != READER_VIEW_PAGED) {
             viewMode = READER_VIEW_TEXT
         }
         // Offline-first (Wayne, 2026-10-22): a STORED chapter bypasses the
@@ -1117,6 +1142,20 @@ fun ReaderScreen(
                     },
                     onClick = { showMenu = false; pickView(READER_VIEW_WEB) }
                 )
+                // v3.1: the Readium navigator — real horizontal pages, for
+                // local-library ePubs (clean publication source). Scroll
+                // text view stays available for translation work.
+                if (chapter.url.startsWith("locallib://")) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (viewMode == READER_VIEW_PAGED) "✓ " + t("Paged view (epub)", "ページめき表示（ePub）")
+                                else t("Paged view (epub)", "ページめき表示（ePub）")
+                            )
+                        },
+                        onClick = { showMenu = false; pickView(READER_VIEW_PAGED) }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text(t("Page theme", "ページテーマ") + ": " + t(readerTheme.replaceFirstChar { it.uppercase() }, readerTheme)) },
                     onClick = {
@@ -1999,6 +2038,37 @@ fun ReaderScreen(
                                 Text(t("DISMISS", "閉じる"))
                             }
                         }
+                    }
+                }
+            }
+
+            // v3.1 PAGED (Readium navigator): real horizontal pages for
+            // local-library ePubs. The publication + chapter href load on
+            // IO; the fragment keeps its own session (created once), and
+            // chapter flips navigate it in place.
+            if (viewMode == READER_VIEW_PAGED && isLocalLibChapter) {
+                val pub = pagedPub
+                val href = pagedHref
+                if (pub != null && href != null) {
+                    EpubPagedView(
+                        publication = pub,
+                        initialHref = href,
+                        readerTheme = readerTheme,
+                        serif = serif,
+                        onExternalLink = { url ->
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(url)
+                                    )
+                                )
+                            }
+                        }
+                    )
+                } else {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
                     }
                 }
             }
