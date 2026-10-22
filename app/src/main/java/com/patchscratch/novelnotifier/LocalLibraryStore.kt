@@ -60,7 +60,11 @@ object LocalLibraryStore {
         val name: String,
         val key: String,
         val description: String = "",
-        val coverBookId: String = ""
+        // Series cover pinned to a chosen volume (Wayne, 2026-10-22); blank = vol 1.
+        val coverBookId: String = "",
+        // AI-translated name/description sidecar ("name\ndescription"),
+        // v3.0.1 — displayed dimmed beneath the originals, toggleable.
+        val translatedMeta: String = ""
     )
 
     private const val INDEX = "local_libraries.json"
@@ -844,6 +848,7 @@ object LocalLibraryStore {
             File(context.cacheDir, "ll_$bookId.epub").delete()
             coverFile(context, bookId)?.delete()
             noCoverMarker(context, bookId).delete()
+            LocalTranslationStore.deleteBook(context, bookId)
             ReadiumEngine.forget(bookId)
             // Extracted illustration cache rides with the book.
             File(context.filesDir, "local_lib_media/$bookId").deleteRecursively()
@@ -1145,7 +1150,7 @@ object LocalLibraryStore {
                 LocalSeries(
                     o.optString("id"), o.optString("libraryId"),
                     o.optString("name"), o.optString("key"), o.optString("description"),
-                    o.optString("coverBookId")
+                    o.optString("coverBookId"), o.optString("translatedMeta")
                 )
             }
         }
@@ -1196,6 +1201,11 @@ object LocalLibraryStore {
     /** Pin the series cover to a volume; blank [bookId] = volume 1. */
     fun setSeriesCover(context: Context, id: String, bookId: String) {
         mutateSeries(context, id) { it.put("coverBookId", bookId) }
+    }
+
+    /** AI-translated series name/description ("name\ndescription"). */
+    fun setSeriesTranslatedMeta(context: Context, id: String, meta: String) {
+        mutateSeries(context, id) { it.put("translatedMeta", meta) }
     }
 
     private fun mutateSeries(context: Context, id: String, fn: (JSONObject) -> Unit) {

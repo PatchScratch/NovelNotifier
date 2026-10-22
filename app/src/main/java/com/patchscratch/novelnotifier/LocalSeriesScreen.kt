@@ -45,6 +45,7 @@ fun LocalSeriesScreen(
     onOpenReader: (ReaderTarget) -> Unit
 ) {
     val context = LocalContext.current
+    val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
     var series by remember(seriesId) { mutableStateOf<LocalLibraryStore.LocalSeries?>(null) }
     var volumes by remember(seriesId) { mutableStateOf<List<LocalLibraryStore.LocalBook>>(emptyList()) }
@@ -57,6 +58,10 @@ fun LocalSeriesScreen(
     var showMergePicker by remember { mutableStateOf(false) }
     var showCoverPicker by remember { mutableStateOf(false) }
     var showDelete by remember { mutableStateOf(false) }
+    var showTranslateAll by remember { mutableStateOf(false) }
+    var showTranslatedMeta by remember(seriesId) { mutableStateOf(false) }
+    // v3.0.1 translation job state: live progress in the status line.
+    var xlateStatus by remember(seriesId) { mutableStateOf("") }
     var otherSeries by remember(seriesId) {
         mutableStateOf<List<LocalLibraryStore.LocalSeries>>(emptyList())
     }
@@ -130,6 +135,7 @@ fun LocalSeriesScreen(
             groupBadge = currentShelf?.name ?: "",
             changeGroupLabel = currentShelf?.let { "⚑ ${it.name}" } ?: t("⚑ SHELF", "⚑ 棚"),
             onChangeGroup = { showShelfPicker = true },
+            statusLine = xlateStatus,
             nextChapterLabel = when {
                 volumes.isEmpty() -> ""
                 firstUnfinishedLocal() == null -> t("All volumes read", "全巻読了")
@@ -145,6 +151,26 @@ fun LocalSeriesScreen(
             nextChapterEnabled = volumes.isNotEmpty() && firstUnfinishedLocal() != null,
             onReadNext = { openNext() },
             onMarkRead = null,
+            // v3.0.1: the AI sidecar renders dimmed under the originals and
+            // the ⋮ toggle shows/hides it — same pattern as the sites.
+            translateMeta = showTranslatedMeta,
+            onToggleTranslateMeta = if (s.translatedMeta.isNotBlank()) {
+                { showTranslatedMeta = !showTranslatedMeta }
+            } else null,
+            infoExtra = {
+                Column {
+                    if (showTranslatedMeta && s.translatedMeta.isNotBlank()) {
+                        s.translatedMeta.split("\n").filter { it.isNotBlank() }.forEach { line ->
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
+                    }
+                }
+            },
             synopsis = s.description.ifBlank { vol1?.description.orEmpty() },
             typeLine = listOfNotNull(
                 "${volumes.size} ${t("volumes", "巻")}".takeIf { volumes.isNotEmpty() },
@@ -176,6 +202,38 @@ fun LocalSeriesScreen(
                 DropdownMenuItem(
                     text = { Text(t("Edit description…", "説明を編集…")) },
                     onClick = { closeMenu(); showEditMeta = true }
+                )
+                // v3.0.1 series-menu translation (Wayne's original v3.0
+                // ask): AI-translate the name/description sidecar, and
+                // bulk-translate every stored-less chapter of every volume.
+                DropdownMenuItem(
+                    text = { Text(t("Translate title & description…", "タイトル・説明を翻訳…")) },
+                    onClick = {
+                        closeMenu()
+                        xlateStatus = t("Translating…", "翻訳中…")
+                        scope.launch {
+                            val meta = withContext(Dispatchers.IO) {
+                                translateSeriesMeta(
+                                    context, prefs, s,
+                                    s.description.ifBlank { vol1?.description.orEmpty() }
+                                )
+                            }
+                            if (meta != null) {
+                                withContext(Dispatchers.IO) {
+                                    LocalLibraryStore.setSeriesTranslatedMeta(context, s.id, meta)
+                                    series = LocalLibraryStore.seriesById(context, s.id)
+                                }
+                                showTranslatedMeta = true
+                                xlateStatus = t("Title & description translated", "翻訳しました")
+                            } else {
+                                xlateStatus = t("Translation failed — check your key in Settings", "翻訳失敗 — 設定のキーを確認")
+                            }
+                        }
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(t("Translate all chapters…", "全話を翻訳…")) },
+                    onClick = { closeMenu(); showTranslateAll = true }
                 )
                 // Series cover: pin any volume's cover (or back to vol 1).
                 if (volumes.size > 1) {
@@ -288,6 +346,47 @@ fun LocalSeriesScreen(
         )
     }
 
+    // Bulk chapter translation (v3.0.1): every volume, every chapter,
+    // skipped-when-already-translated so it resumes after interruption.
+    // Scope-bound (leave the page = pause); a foreground service can take
+    // over later if unattended runs matter.
+    if (showTranslateAll) {
+        AlertDialog(
+            onDismissRequest = { showTranslateAll = false },
+            title = { Text(t("Translate all chapters", "全話を翻訳")) },
+            text = { Text(t(
+                "Translates every chapter of every volume through your AI key (${volumes.sumOf { it.chapterCount }} chapters; already-translated chapters are skipped and re-running resumes). Keep this page open — leaving pauses the job at the next chapter.",
+                "AIキーで全巻の全話を翻訳します（${volumes.sumOf { it.chapterCount }}話、翻訳済みはスキップ・再実行で再開）。実行中はこの画面を開いたままにしてください。"
+            )) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showTranslateAll = false
+                    val key = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+                        .getString("xlate_key", "").orEmpty()
+                    if (key.isBlank()) {
+                        xlateStatus = t("Set your translation key in Settings first", "先に設定で翻訳キーを設定してください")
+                        return@TextButton
+                    }
+                    xlateStatus = t("Starting…", "開始中…")
+                    scope.launch {
+                        val done = withContext(Dispatchers.IO) {
+                            bulkTranslateSeries(context, s.id, key) { done, total ->
+                                xlateStatus = "${t("Translating", "翻訳中")} $done/$total"
+                            }
+                        }
+                        xlateStatus = when (done) {
+                            null -> t("Translation stopped — key or endpoint error", "翻訳中断 — キー/エンドポイントを確認")
+                            else -> t("Translated $done chapters", "$done 話を翻訳しました")
+                        }
+                    }
+                }) { Text(t("Translate", "翻訳")) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTranslateAll = false }) { Text("Cancel") }
+            }
+        )
+    }
+
     // Merge picker: this series' volumes fold into the chosen target.
     if (showMergePicker) {
         SeriesPickerDialog(
@@ -380,6 +479,90 @@ private fun firstUnfinished(
     readPos: Map<String, Int>
 ): LocalLibraryStore.LocalBook? =
     volumes.firstOrNull { v -> v.chapterCount > (readPos[v.id] ?: 0) }
+
+/** One series name+description through the translation endpoint; the
+ *  sidecar comes back "name\ndescription". Null = failure. */
+private suspend fun translateSeriesMeta(
+    context: android.content.Context,
+    prefs: android.content.SharedPreferences,
+    s: LocalLibraryStore.LocalSeries,
+    description: String
+): String? {
+    val key = prefs.getString("xlate_key", "").orEmpty()
+    if (key.isBlank()) return null
+    val locks = XlateStack.load(context, "locallib://series/${s.id}")
+    val result = runCatching {
+        TranslationClient.translate(
+            endpointBase = prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
+            apiKey = key,
+            model = prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
+            paragraphs = listOf(s.name, description.ifBlank { " " }),
+            customPrompt = locks.prompt.ifBlank { prefs.getString("xlate_prompt", "").orEmpty() },
+            glossary = locks.glossary,
+            voices = locks.voices,
+            temperature = prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
+        )
+    }.getOrNull() ?: return null
+    return listOfNotNull(
+        result.getOrNull(0)?.takeIf { it.isNotBlank() && it != " " },
+        result.getOrNull(1)?.takeIf { it.isNotBlank() && it != " " }
+    ).joinToString("\n").ifBlank { null }
+}
+
+/**
+ * Every chapter of every volume through the endpoint, sequential chapters
+ * (the client parallelizes chunks internally). Already-translated chapters
+ * skip — safe to interrupt and re-run. Returns translated count, or null
+ * on a key/endpoint failure.
+ */
+private suspend fun bulkTranslateSeries(
+    context: android.content.Context,
+    seriesId: String,
+    key: String,
+    onProgress: (done: Int, total: Int) -> Unit
+): Int? {
+    val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+    val endpointBase = prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty()
+    val model = prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty()
+    val temp = prefs.getString("xlate_temp", "0.3")?.toDoubleOrNull() ?: 0.3
+    val locks = XlateStack.load(context, "locallib://series/$seriesId")
+    val volumes = LocalLibraryStore.seriesVolumesOf(context, seriesId)
+    val total = volumes.sumOf { it.chapterCount }
+    var done = 0
+    var translated = 0
+    volumes.forEach v@{ v ->
+        for (idx in 0 until v.chapterCount) {
+            kotlinx.coroutines.yield()
+            done++
+            if (LocalTranslationStore.has(context, v.id, idx)) {
+                onProgress(done, total)
+                continue
+            }
+            val chapter = LocalLibraryStore.chapterTextR(context, v, idx) ?: continue
+            if (chapter.paragraphs.none { it.isNotBlank() }) {
+                onProgress(done, total)
+                continue
+            }
+            val result = runCatching {
+                TranslationClient.translate(
+                    endpointBase = endpointBase,
+                    apiKey = key,
+                    model = model,
+                    paragraphs = chapter.paragraphs,
+                    customPrompt = locks.prompt.ifBlank { prefs.getString("xlate_prompt", "").orEmpty() },
+                    glossary = locks.glossary,
+                    voices = locks.voices,
+                    temperature = temp
+                )
+            }.getOrNull()
+            if (result == null) return null
+            LocalTranslationStore.put(context, v.id, idx, result)
+            translated++
+            onProgress(done, total)
+        }
+    }
+    return translated
+}
 
 /**
  * Scrollable, searchable series picker for dialogs — a plain Column of

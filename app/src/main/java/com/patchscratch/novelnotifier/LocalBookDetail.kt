@@ -48,6 +48,10 @@ fun LocalBookDetail(
     var showSeriesPicker by remember { mutableStateOf(false) }
     var showEditMeta by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showTranslatedMeta by remember(bookId) { mutableStateOf(false) }
+    var xlateStatus by remember(bookId) { mutableStateOf("") }
+    val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
+    val hasXlateKey = prefs.getString("xlate_key", "").orEmpty().isNotBlank()
     var readPos by remember(bookId) { mutableIntStateOf(0) }
 
     fun currentLibraryId(): String = book?.libraryId ?: "default"
@@ -109,7 +113,7 @@ fun LocalBookDetail(
                 val sid = mySeries?.id
                 if (sid != null) onOpenSeries(sid) else showSeriesPicker = true
             },
-            statusLine = "",
+            statusLine = xlateStatus,
             nextChapterLabel = when {
                 chapters.isNotEmpty() && readPos < chapters.size ->
                     "Chapter ${readPos + 1} of ${chapters.size}" +
@@ -196,10 +200,42 @@ fun LocalBookDetail(
             openOnSiteLabel = "",
             loading = loading && chapters.isEmpty(),
             // Translation (Wayne, 2026-10-21): metadata AI translation with
-            // sidecar persistence + the dimmed display gate.
-            translateMeta = b.translatedMeta.isNotBlank(),
+            // sidecar persistence + the dimmed display gate. v3.0.1: the
+            // toggle is REAL — it translates when no sidecar exists yet.
+            translateMeta = showTranslatedMeta,
             onToggleTranslateMeta = if (b.translatedMeta.isNotBlank()) {
-                { /* sidecar is present → toggle display */ }
+                { showTranslatedMeta = !showTranslatedMeta }
+            } else if (hasXlateKey) {
+                {
+                    xlateStatus = t("Translating…", "翻訳中…")
+                    scope.launch {
+                        val meta = withContext(Dispatchers.IO) {
+                            runCatching {
+                                TranslationClient.translate(
+                                    endpointBase = prefs.getString("xlate_endpoint", "https://openrouter.ai/api/v1").orEmpty(),
+                                    apiKey = prefs.getString("xlate_key", "").orEmpty(),
+                                    model = prefs.getString("xlate_model", "openai/gpt-4.1-mini").orEmpty(),
+                                    paragraphs = listOf(b.title, b.description.ifBlank { " " })
+                                )
+                            }.getOrNull()?.let { r ->
+                                listOfNotNull(
+                                    r.getOrNull(0)?.takeIf { it.isNotBlank() && it != " " },
+                                    r.getOrNull(1)?.takeIf { it.isNotBlank() && it != " " }
+                                ).joinToString("\n").ifBlank { null }
+                            }
+                        }
+                        if (meta != null) {
+                            withContext(Dispatchers.IO) {
+                                LocalLibraryStore.setTranslatedMeta(context, b.id, meta)
+                                book = LocalLibraryStore.book(context, b.id)
+                            }
+                            showTranslatedMeta = true
+                            xlateStatus = t("Translated", "翻訳しました")
+                        } else {
+                            xlateStatus = t("Translation failed — check your key in Settings", "翻訳失敗 — 設定のキーを確認")
+                        }
+                    }
+                }
             } else null,
             infoExtra = {
                 Column {

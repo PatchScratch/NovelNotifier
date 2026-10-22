@@ -403,21 +403,32 @@ fun ReaderScreen(
                 showTranslation = true
                 // Persist alongside the original — store the
                 // original first if it isn't in the book yet.
+                // Local-library chapters save into their own sidecar
+                // store (v3.0.1); epub files are never rewritten.
                 withContext(Dispatchers.IO) {
-                    val stored = EpubStore.setTranslation(
-                        context, target.seriesTitle, target.seriesUrl, chapter.url, result
-                    )
-                    if (!stored) {
-                        EpubStore.appendChapter(
-                            context, target.seriesTitle, target.seriesUrl,
-                            chapter.url, chapter.chapter, extract, target.meta
-                        )
-                        EpubStore.setTranslation(
+                    if (chapter.url.startsWith("locallib://")) {
+                        val parts = chapter.url.removePrefix("locallib://").split("/")
+                        parts.getOrNull(0)?.let { bid ->
+                            parts.getOrNull(1)?.toIntOrNull()?.let { ci ->
+                                LocalTranslationStore.put(context, bid, ci, result)
+                            }
+                        }
+                    } else {
+                        val stored = EpubStore.setTranslation(
                             context, target.seriesTitle, target.seriesUrl, chapter.url, result
                         )
+                        if (!stored) {
+                            EpubStore.appendChapter(
+                                context, target.seriesTitle, target.seriesUrl,
+                                chapter.url, chapter.chapter, extract, target.meta
+                            )
+                            EpubStore.setTranslation(
+                                context, target.seriesTitle, target.seriesUrl, chapter.url, result
+                            )
+                        }
+                        epubCount = EpubStore.storedCount(context, target.seriesUrl)
+                        translatedCount = EpubStore.translatedCount(context, target.seriesUrl)
                     }
-                    epubCount = EpubStore.storedCount(context, target.seriesUrl)
-                    translatedCount = EpubStore.translatedCount(context, target.seriesUrl)
                 }
                 // Auto-refine the series lock files with this
                 // chapter's context (novel-mill's missing piece).
@@ -812,6 +823,10 @@ fun ReaderScreen(
                     paragraphs = result.paragraphs,
                     images = result.images
                 )
+                // v3.0.1: a stored chapter translation rides along — the
+                // interleaved view, TTS and re-translate all work on local
+                // books exactly like site books.
+                translation = LocalTranslationStore.get(context, bookId, idx)
                 // Persist read position for the detail's Next Chapter.
                 prefs.edit { putInt("local_pos_$bookId", idx + 1) }
                 return@LaunchedEffect
