@@ -95,6 +95,11 @@ fun LocalLibraryHome(
         }
     }
     LaunchedEffect(libraryId) { reload() }
+    // A background folder rescan bumped the library's CONTENT — reload the
+    // snapshot so the grid shows the new books (Calibre flow, 2026-10-22).
+    LaunchedEffect(LocalLibraryStore.libraryTick) {
+        if (LocalLibraryStore.libraryTick > 0) reload()
+    }
 
     val importPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()

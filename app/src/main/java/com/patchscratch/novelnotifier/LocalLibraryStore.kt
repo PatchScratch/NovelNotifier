@@ -630,6 +630,19 @@ object LocalLibraryStore {
                 treeUri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
         }
+        // Remember the folder (Wayne's Calibre flow, 2026-10-22: fresh
+        // uploads to the same folder must be picked up automatically —
+        // the session sweep re-scans recorded folders).
+        runCatching {
+            val root = readIndex(context)
+            val arr = root.optJSONArray("folders") ?: JSONArray().also { root.put("folders", it) }
+            val entry = JSONObject().put("libraryId", libraryId).put("uri", treeUri.toString())
+            val known = (0 until arr.length()).any { i ->
+                arr.optJSONObject(i)?.let { it.optString("uri") == treeUri.toString() } == true
+            }
+            if (!known) arr.put(entry)
+            writeIndex(context, root)
+        }
         val tree = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
             ?: return 0 to 0
         val files = mutableListOf<androidx.documentfile.provider.DocumentFile>()
@@ -1027,6 +1040,67 @@ object LocalLibraryStore {
     var coverTick by androidx.compose.runtime.mutableStateOf(0)
         private set
 
+    /** Bumped when a background pass changes the library's CONTENT (a
+     *  folder rescan imported new books) — the grid reloads its snapshot. */
+    var libraryTick by androidx.compose.runtime.mutableStateOf(0)
+        private set
+
+    /** Tree URIs of folders linked into [libraryId]. */
+    private fun foldersOf(context: Context, libraryId: String): List<Uri> {
+        val arr = readIndex(context).optJSONArray("folders") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.takeIf { it.optString("libraryId") == libraryId }
+                ?.optString("uri")?.takeIf { it.isNotBlank() }?.let(Uri::parse)
+        }
+    }
+
+    /**
+     * Session folder rescan (once per library): re-enumerate every linked
+     * folder and import files the index has never seen — Wayne's Calibre
+     * flow (fresh uploads land in the same folder; the library must pick
+     * them up without a manual re-link). Runs inside the background sweep.
+     */
+    private suspend fun rescanFolders(context: Context, libraryId: String) {
+        val folders = foldersOf(context, libraryId)
+        if (folders.isEmpty()) return
+        var added = 0
+        folders.forEach { treeUri ->
+            kotlinx.coroutines.yield()
+            val tree = runCatching {
+                androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
+            }.getOrNull() ?: return@forEach
+            val files = mutableListOf<androidx.documentfile.provider.DocumentFile>()
+            fun collect(dir: androidx.documentfile.provider.DocumentFile) {
+                dir.listFiles().forEach { f ->
+                    when {
+                        f.isDirectory -> collect(f)
+                        f.name?.endsWith(".epub", ignoreCase = true) == true -> files.add(f)
+                    }
+                }
+            }
+            runCatching { collect(tree) }
+            val known = run {
+                val arr = readIndex(context).optJSONArray("books") ?: JSONArray()
+                val set = HashSet<String>()
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.optString("storedUri")?.takeIf { it.isNotBlank() }
+                        ?.let { set.add(it) }
+                }
+                set
+            }
+            files.forEach { f ->
+                kotlinx.coroutines.yield()
+                if (f.uri.toString() !in known) {
+                    if (import(context, libraryId, f.uri, linkInPlace = true) != null) added++
+                }
+            }
+        }
+        if (added > 0) {
+            DebugLog.log("LOCALLIB", "folder rescan: +$added books")
+            libraryTick++
+        }
+    }
+
     // --- garbage collection: dead source links ---------------------------
     /** Book ids whose epub cannot be opened (file moved/deleted on the
      *  device). Surfaced in the drawer; removal is always a user action. */
@@ -1083,6 +1157,10 @@ object LocalLibraryStore {
             if (!backfillStarted.add(libraryId)) return
         }
         backfillScope.launch {
+            // Folder rescan FIRST: fresh Calibre uploads join the library
+            // here, then the snapshot rebuilds with them included and the
+            // same sweep covers their existence + covers.
+            runCatching { rescanFolders(context, libraryId) }
             val core = snapshotCore?.takeIf { it.first == libraryId }?.second
                 ?: buildSnapshotCore(context, libraryId).also { snapshotCore = libraryId to it }
             // Existence pass first (cheap IPCs): mark dead links with a
