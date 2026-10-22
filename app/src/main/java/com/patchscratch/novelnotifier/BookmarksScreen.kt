@@ -145,6 +145,13 @@ fun BookmarkLibraryBody(
                 onValueChange = onSearchChange,
                 label = { Text(t("Search this list", "このリストを検索")) },
                 singleLine = true,
+                // Clear affordance (Wayne, 2026-10-22): an ✕ while text is
+                // present — same glyph style as the selection bar's exit.
+                trailingIcon = if (searchQuery.isNotEmpty()) {
+                    {
+                        TextButton(onClick = { onSearchChange("") }) { Text("✕") }
+                    }
+                } else null,
                 modifier = Modifier
                     .weight(1f)
                     .onFocusChanged { fieldFocused = it.isFocused }
