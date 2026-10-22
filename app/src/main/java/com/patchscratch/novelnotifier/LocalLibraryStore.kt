@@ -672,6 +672,7 @@ object LocalLibraryStore {
         val books = root.optJSONArray("books") ?: return emptyList()
         val bySignature = HashMap<String, JSONObject>()
         val byFileSig = HashMap<String, JSONObject>()
+        val byVolSig = HashMap<String, JSONObject>()
         val dupPairs = mutableListOf<Pair<String, String>>()
         val marked = HashSet<String>()
         for (i in 0 until books.length()) {
@@ -703,6 +704,25 @@ object LocalLibraryStore {
                 } else if (keptFile.optString("id") != id) {
                     dupPairs.add(id to keptFile.optString("id"))
                     marked.add(id)
+                }
+            }
+            // Signature 3: the volume number written in the source FILENAME
+            // ("… Vol. 1 ….epub") — catches same-volume re-rips saved under
+            // slightly different names (different bytes defeat signature 1;
+            // bare dc:titles defeat the token guard). Different volumes of
+            // one series never share the file's volume number.
+            if (id !in marked) {
+                val fileVol = volumeNumber(name.substringAfterLast('/'))
+                if (fileVol != Int.MAX_VALUE) {
+                    val volSig = o.optString("libraryId") + "|||" + o.optString("title") +
+                        "|||" + o.optInt("chapters", 0) + "|||vol$fileVol"
+                    val keptVol = byVolSig[volSig]
+                    if (keptVol == null) {
+                        byVolSig[volSig] = o
+                    } else {
+                        dupPairs.add(id to keptVol.optString("id"))
+                        marked.add(id)
+                    }
                 }
             }
         }
