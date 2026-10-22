@@ -1,0 +1,13 @@
+NovelNotifier 3.0.1 — translation for your own library, plus the user guide.
+
+TRANSLATION (bring your own key)
+• Series page ⋮ → Translate title & description: an AI-translated line sits dimmed beneath the original, toggleable like the sites.
+• Series page ⋮ → Translate all chapters: every chapter of every volume, with live progress ("37/439"). Already-translated chapters skip, so you can stop and resume anytime.
+• The volume page's translate toggle is now real (it was a placeholder) — it translates the volume's title & description on first tap.
+• Local-library chapters load their stored translation automatically in the reader (interleaved view, TTS, re-translate) and the reader's Translate saves into the per-book store. ePub files are never rewritten — translations live as sidecars.
+
+DOCUMENTATION
+• A plain-language user guide (English and Japanese) covering every feature: docs/USERGUIDE.md, linked from the READMEs.
+
+ALSO
+• Collaborator section-map added to the local-library store source.

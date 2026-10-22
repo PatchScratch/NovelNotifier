@@ -1,5 +1,7 @@
 # NovelNotifier — User Guide
 
+[English](USERGUIDE.md) · [日本語](USERGUIDE.ja.md)
+
 A plain-language walkthrough of everything the app does, one task at a time. The [README](../README.md) describes the project; this guide shows you the taps.
 
 ## Contents

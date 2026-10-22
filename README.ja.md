@@ -1,6 +1,6 @@
 # NovelNotifier
 
-[English](README.md) · [日本語](README.ja.md)
+[English](README.md) · [日本語](README.ja.md) · **[ユーザーガイド](docs/USERGUIDE.ja.md)** — 全機能のやさしい操作説明
 
 ウェブ小説のためのAndroidアプリ。[Novel Updates](https://www.novelupdates.com)のリーディングリストをフォローし（表紙・未読数・新刊通知・既読管理）、日本のウェブ小説サイト [小説家になろう](https://syosetu.com) と [カクヨム](https://kakuyomu.jp) ではランキング・検索・アプリ内閲覧・オフラインePub作成まで、3サイトすべてを一つのアプリで。
 
