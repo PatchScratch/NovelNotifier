@@ -661,14 +661,14 @@ object LocalLibraryStore {
     }
 
     /**
-     * Duplicate scan across the whole index. Primary signature: normalized
-     * title (volume markers/punctuation stripped) + chapters + VOLUME
-     * identity (the volume number parsed from the title or the source
-     * filename) — merges same-volume re-rips whose titles differ by a comma
-     * or whose files were re-ripped at different sizes. Unknown-volume
-     * entries (bare title AND bare filename) only merge on equal byte
-     * sizes: bare-title series share one title across volumes. Exact
-     * source-filename matches merge regardless.
+     * Duplicate scan across the whole index. With a known VOLUME identity
+     * (parsed from the title or source filename), the signature is
+     * normalized title + volume — chapter counts differ between rips of
+     * the same book (different chapter splits) and must not block the
+     * merge. Unknown-volume entries (bare title AND bare filename) fall
+     * back to title+chapters with equal byte sizes required: bare-title
+     * series share one title across volumes. Exact source-filename matches
+     * merge regardless.
      */
     private fun dupScan(context: Context): List<Pair<String, String>> {
         val root = readIndex(context)
@@ -687,7 +687,8 @@ object LocalLibraryStore {
             val fileVol = volumeNumber(name.substringAfterLast('/'))
             val vol = volumeNumber(title).takeIf { it != Int.MAX_VALUE }
                 ?: fileVol.takeIf { it != Int.MAX_VALUE } ?: -1
-            val key = libraryKeyOf(o, title, chapters, vol)
+            val norm = o.optString("libraryId") + "|||" + seriesKey(title)
+            val key = if (vol != -1) "$norm|||v$vol" else "$norm|||$chapters|||v-1"
             val kept = bySignature[key]
             if (kept == null) {
                 bySignature[key] = o
@@ -708,9 +709,6 @@ object LocalLibraryStore {
         }
         return dupPairs
     }
-
-    private fun libraryKeyOf(o: JSONObject, title: String, chapters: Int, vol: Int): String =
-        o.optString("libraryId") + "|||" + seriesKey(title) + "|||" + chapters + "|||v$vol"
 
     private fun sizesAgree(a: JSONObject, b: JSONObject): Boolean {
         val x = a.optLong("bytes", -1L)
