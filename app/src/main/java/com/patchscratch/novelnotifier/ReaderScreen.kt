@@ -339,6 +339,28 @@ fun ReaderScreen(
     /** The WebView's actual URL — chapter.url can be NU's /extnu redirect. */
     var loadedUrl by remember(target) { mutableStateOf("") }
 
+    /**
+     * The chapter's REAL address, bypassing NU's extnu redirect when any
+     * source knows it: the reader's learned extnu→permalink pairs first,
+     * then the HARVESTED site ToC (real permalinks, matches by chapter
+     * key — c29 ≡ v2c29). Walled-NU tablets resolve without touching NU
+     * at all (Wayne, 2026-10-22: entry loads stalled dead, zero page
+     * finishes). Falls back to the entry URL.
+     */
+    fun effectiveChapterUrl(): String {
+        ReaderTocStore.mappedUrl(target.seriesUrl, chapter.url, context)?.let { return it }
+        val k = chapterKey(chapter.chapter)
+        if (k != null) {
+            ReaderTocStore.chaptersOf(target.seriesUrl, context)
+                ?.firstOrNull { rel ->
+                    chapterKey(rel.chapter)?.let { (wv, wc) ->
+                        (k.first == 0 || k.first == wv) && k.second == wc
+                    } == true
+                }?.let { return it.url }
+        }
+        return chapter.url
+    }
+
     val xlateKey = prefs.getString("xlate_key", "").orEmpty()
     // Shared by first translation and re-translate: runs the
     // chapter through the endpoint, overwrites the stored one,
@@ -604,6 +626,16 @@ fun ReaderScreen(
             val curHost = android.net.Uri.parse(cur.ifBlank { chapter.url }).host ?: ""
             val onNu = curHost.endsWith("novelupdates.com")
             when {
+                // The entry itself never finishing (walled NU or a stuck
+                // interstitial — cur still == the extnu URL): bounded entry
+                // retries, spaced politely. No infinite hammering.
+                onNu && cur == chapter.url -> {
+                    stalledSteps++
+                    if (stalledSteps in 3..12 && stalledSteps % 3 == 0) {
+                        DebugLog.log("READER", "entry stalled ${stalledSteps}0s — retrying once")
+                        wv.loadUrl(effectiveChapterUrl())
+                    }
+                }
                 // NU bounced the redirect to its own pages -> retry the entry.
                 // Capped: a walled NU never answers, and hammering it every
                 // 2.5s is exactly what the politeness law forbids (the rig
@@ -615,7 +647,7 @@ fun ReaderScreen(
                         return@LaunchedEffect
                     }
                     DebugLog.log("READER", "extnu bounced to $curHost — retrying entry")
-                    wv.loadUrl(chapter.url)
+                    wv.loadUrl(effectiveChapterUrl())
                 }
                 // The rss overview: resolve the real chapter via site links
                 cur.contains("/rss/") -> {
@@ -1856,10 +1888,7 @@ fun ReaderScreen(
                         // this chapter's real URL, load IT — NU is skipped
                         // entirely, one resolver touch per unknown chapter.
                         if (!prohibited && !chapter.url.startsWith("locallib://")) {
-                            val effective = ReaderTocStore.mappedUrl(
-                                target.seriesUrl, chapter.url, context
-                            ) ?: chapter.url
-                            loadUrl(effective)
+                            loadUrl(effectiveChapterUrl())
                         }
                     }
                 },
@@ -1870,12 +1899,9 @@ fun ReaderScreen(
                         webView.settings.javaScriptEnabled = jsOn
                         webView.settings.domStorageEnabled = jsOn
                         if (!prohibited) {
-                            // Permalink-first here too — a known pair never
-                            // re-enters NU's throttled extnu redirect.
-                            val effective = ReaderTocStore.mappedUrl(
-                                target.seriesUrl, chapter.url, context
-                            ) ?: chapter.url
-                            webView.loadUrl(effective)
+                            // Permalink-first here too — a known pair or a
+                            // harvested-ToC match never re-enters NU.
+                            webView.loadUrl(effectiveChapterUrl())
                         }
                     }
                 }
