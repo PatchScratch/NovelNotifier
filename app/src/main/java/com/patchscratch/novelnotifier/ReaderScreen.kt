@@ -254,6 +254,16 @@ fun ReaderScreen(
     }
     var savedOffline by remember(target) { mutableStateOf(false) } // this chapter is in the book
     var offlineCopy by remember(target) { mutableStateOf(false) } // rendered FROM the book
+    // --- Offline-first chapters (Wayne, 2026-10-22) -----------------------
+    // Stored chapters render from the epub store with NO WebView/network;
+    // online fetch happens for unstored chapters; the manual "Re-download
+    // chapter" (translator updated the text) is the escape hatch. OFFLINE
+    // IS THE DEFAULT.
+    var sourceOffline by remember {
+        mutableStateOf(prefs.getBoolean("chapter_source_offline", true))
+    }
+    var servingStored by remember(target) { mutableStateOf(false) } // WebView suppressed
+    var sourceTick by remember { mutableIntStateOf(0) }
     val savedUrls = remember(target) { mutableSetOf<String>() } // already appended this session
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
     val textScroll = rememberScrollState()
@@ -312,6 +322,9 @@ fun ReaderScreen(
     }
     var wordHit by remember(target) { mutableStateOf<JaDict.WordHit?>(null) }
     val chapter = chapters.getOrNull(index) ?: return
+    // Per-chapter escape hatch for the offline default ("Re-download
+    // chapter" after a translator update) — resets on the next chapter.
+    var forceOnlineOnce by remember(chapter.url) { mutableStateOf(false) }
 
     /**
      * Foxteller /rss/<id> resolution stage per chapter: 0 = not needed,
@@ -647,7 +660,7 @@ fun ReaderScreen(
     // Only in text mode — the web view needs no extraction. A successful
     // extraction appends the chapter to the series' offline ePub; total
     // failure falls back to the stored copy when one exists (offline reading).
-    LaunchedEffect(extractTick, retryKey, viewMode, chapter.url) {
+    LaunchedEffect(extractTick, retryKey, viewMode, chapter.url, sourceTick) {
         // Local Library chapters have NO WebView dependency — the zip
         // serving below runs on the first composition, not after a page
         // finish. Bypass the extractTick/viewMode gates entirely.
@@ -655,11 +668,16 @@ fun ReaderScreen(
         if (isLocalLib) {
             viewMode = READER_VIEW_TEXT
         }
+        // Offline-first applies the same bypass: a stored chapter serves
+        // immediately; an unstored one falls through to the WebView flow
+        // (the gate then waits for its page finish as before).
+        val offlineFirst = !isLocalLib && sourceOffline && !forceOnlineOnce &&
+            chapter.url.startsWith("http")
         // During an AlphaPolis web-hop the ladder keeps running in WEB mode —
         // the hop exists precisely so the VISIBLE DOM fills #novelBody for
         // tryExtract to read; success flips the reader back to TEXT.
         val alpHop = alpWebHop && viewMode == READER_VIEW_WEB
-        if (!isLocalLib && ((viewMode != READER_VIEW_TEXT && !alpHop) || extractTick == 0)) {
+        if (!isLocalLib && !offlineFirst && ((viewMode != READER_VIEW_TEXT && !alpHop) || extractTick == 0)) {
             return@LaunchedEffect
         }
         if (foxRssStage == 1) return@LaunchedEffect
@@ -675,6 +693,27 @@ fun ReaderScreen(
         if (prohibited) {
             prohibitedNotice = true
             return@LaunchedEffect
+        }
+        // Offline-first (Wayne, 2026-10-22): the stored epub copy renders
+        // with zero WebView/network; a miss falls through to the online
+        // ladder below, and "Re-download chapter" refetches on demand.
+        if (offlineFirst) {
+            val stored = withContext(Dispatchers.IO) {
+                EpubStore.readChapter(context, target.seriesUrl, chapter.url)
+            }
+            if (stored != null && stored.paragraphs.isNotEmpty()) {
+                servingStored = true
+                offlineCopy = true
+                viewMode = READER_VIEW_TEXT
+                extractResult = stored
+                // Stored translations ride along immediately.
+                translation = withContext(Dispatchers.IO) {
+                    EpubStore.readAllStoredDocs(context, target.seriesUrl)
+                        .firstOrNull { it.url == chapter.url }?.translation
+                }
+                return@LaunchedEffect
+            }
+            servingStored = false
         }
         // Local Library (v3.0): locallib://<bookId>/<index> serves straight
         // from the epub zip — zero WebView, zero network; ALL reader
@@ -952,6 +991,31 @@ fun ReaderScreen(
             }
             TextButton(onClick = { showMenu = true }) { Text("⋮") }
             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                // ---- Chapter source (offline default, Wayne 2026-10-22) ----
+                ToggleMenuItem(
+                    label = t("Offline chapters (default)", "オフライン優先（既定）"),
+                    checked = sourceOffline,
+                    onToggle = {
+                        sourceOffline = !sourceOffline
+                        prefs.edit().putBoolean("chapter_source_offline", sourceOffline).apply()
+                        servingStored = false
+                        sourceTick++
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(t("Re-download chapter", "章を再ダウンロード")) },
+                    onClick = {
+                        showMenu = false
+                        // Translator updated the text: refetch online now and
+                        // overwrite the stored copy (append is upsert-by-URL,
+                        // and the translation carries across).
+                        servingStored = false
+                        offlineCopy = false
+                        forceOnlineOnce = true
+                        extractTick++   // re-run the online ladder
+                        sourceTick++
+                    }
+                )
                 // ---- Display ----------------------------------------------------
                 DropdownMenuItem(
                     text = {
@@ -1626,8 +1690,9 @@ fun ReaderScreen(
         ) {
             // WebView stays composed (keeps its page + session) but moves
             // off-screen while the extracted text is on top. Local Library
-            // chapters skip it entirely — no page to load.
-            if (!isLocalLibChapter) {
+            // chapters AND offline-served stored chapters skip it entirely
+            // — no page to load, no network touched.
+            if (!isLocalLibChapter && !servingStored) {
                 AndroidView(
                     modifier = if (showText) {
                         Modifier
