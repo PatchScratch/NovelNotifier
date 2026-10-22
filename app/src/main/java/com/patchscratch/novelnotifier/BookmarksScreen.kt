@@ -13,22 +13,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -113,10 +117,21 @@ fun BookmarkLibraryBody(
     // B2 NU-parity: sort menu anchor next to the layout toggle; the
     // heading suffix labels the active mode ("" hides it).
     sortControl: @Composable () -> Unit = {},
-    sortLabel: String = ""
+    sortLabel: String = "",
+    // Search history scope (Wayne, 2026-10-22): non-blank enables recent-
+    // query chips under the field and records the query when a result row
+    // opens — that tap is "this search found it".
+    searchHistoryScope: String = ""
 ) {
     val context = LocalContext.current
     var layoutMode by remember { mutableStateOf(loadLayoutMode(context.getSharedPreferences("novel_prefs", 0))) }
+    var fieldFocused by remember { mutableStateOf(false) }
+    var historyTick by remember { mutableIntStateOf(0) }
+    val history = if (searchHistoryScope.isBlank()) emptyList()
+    else SearchHistory.recent(context, searchHistoryScope).also { historyTick }
+    // Row opens record the query (wrapped copies; rows are plain data).
+    val histRows = if (searchHistoryScope.isBlank() || searchQuery.isBlank()) rows
+    else rows.map { r -> r.copy(open = { SearchHistory.push(context, searchHistoryScope, searchQuery); r.open() }) }
     Column(modifier = Modifier.fillMaxSize().screenInsets()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -130,13 +145,45 @@ fun BookmarkLibraryBody(
                 onValueChange = onSearchChange,
                 label = { Text(t("Search this list", "このリストを検索")) },
                 singleLine = true,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { fieldFocused = it.isFocused }
             )
             sortControl()
             LayoutToggle(layoutMode = layoutMode, onFlip = {
                 layoutMode = if (layoutMode == LAYOUT_GRID) LAYOUT_LIST else LAYOUT_GRID
                 saveLayoutMode(context.getSharedPreferences("novel_prefs", 0), layoutMode)
             })
+        }
+        // Recent queries: tap to reuse, long-press to forget.
+        if (fieldFocused && history.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                modifier = Modifier.padding(vertical = 2.dp)
+            ) {
+                items(history.size) { i ->
+                    val q = history[i]
+                    Surface(
+                        shape = MaterialTheme.shapes.large,
+                        tonalElevation = 1.dp,
+                        modifier = Modifier.combinedClickable(
+                            onClick = { onSearchChange(q) },
+                            onLongClick = {
+                                SearchHistory.remove(context, searchHistoryScope, q)
+                                historyTick++
+                            }
+                        )
+                    ) {
+                        Text(
+                            q,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
         }
         Text(
             heading + if (sortLabel.isNotBlank()) "  ·  $sortLabel" else "",
@@ -150,10 +197,10 @@ fun BookmarkLibraryBody(
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize()
             ) {
-                BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+                BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode)
             }
         } else {
-            BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+            BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode)
         }
     }
 }

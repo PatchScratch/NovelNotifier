@@ -360,14 +360,15 @@ fun LocalLibraryHome(
                     onOpenDrawer = { scope.launch { drawerState.open() } },
                     isRefreshing = importing,
                     onRefresh = null,
-                    sortControl = {
-                        SortMenu(sortMode = sortMode, onSort = {
-                            sortMode = it
-                            saveSortMode(prefs, it)
-                        })
-                    },
-                    sortLabel = sortModeLabel(sortMode)
-                )
+                sortControl = {
+                    SortMenu(sortMode = sortMode, onSort = {
+                        sortMode = it
+                        saveSortMode(prefs, it)
+                    })
+                },
+                sortLabel = sortModeLabel(sortMode),
+                searchHistoryScope = "local:$libraryId"
+            )
             }
             if (importing) {
                 // Centered, unmissable progress: scrim + card + spinner +
