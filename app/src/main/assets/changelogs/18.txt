@@ -1,0 +1,4 @@
+NovelNotifier 3.1.1 — watched folders for libraries linked before v3.1.
+
+• Self-healing folder records: a library whose folder was linked before the watcher existed (so the rescan reported nothing to watch) now derives its folder from its own books' storage URIs and registers it automatically — new ePubs in that folder import on the next scan with no re-linking.
+• Rescan progress is logged per pass (folder count, files on disk vs known).
