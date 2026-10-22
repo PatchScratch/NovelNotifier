@@ -286,11 +286,31 @@ object LocalLibraryStore {
     /**
      * Manual "pull the cover out of this epub" (volume ⋮ action): clears
      * the no-cover marker and any stale cached entry, then re-runs the
-     * extraction with the full detector.
+     * Readium-first resolution.
      */
-    fun forceCoverExtraction(context: Context, bookId: String): File? {
+    suspend fun forceCoverExtraction(context: Context, bookId: String): File? {
         noCoverMarker(context, bookId).delete()
         CoverStore.localFile(context, "locallib://$bookId")?.delete()
+        return coverFileR(context, bookId)
+    }
+
+    /**
+     * Readium-first cover resolution: a valid cache hit returns fast;
+     * otherwise the streamer's cover service (every EPUB convention);
+     * otherwise the zip ladder as fallback.
+     */
+    suspend fun coverFileR(context: Context, bookId: String): File? {
+        val seriesUrl = "locallib://$bookId"
+        CoverStore.localFile(context, seriesUrl)?.takeIf(::looksLikeImage)?.let {
+            noCoverMarker(context, bookId).delete()
+            return it
+        }
+        val bytes = coverBytesR(context, bookId)
+        if (bytes != null) {
+            CoverStore.saveGenerated(context, seriesUrl, bytes, "png")
+            noCoverMarker(context, bookId).delete()
+            return CoverStore.localFile(context, seriesUrl)
+        }
         return coverFile(context, bookId)
     }
 
@@ -429,10 +449,10 @@ object LocalLibraryStore {
     /**
      * Import an epub. Copy mode stores bytes in the library's storage
      * (SAF tree or app-private dir); [linkInPlace] leaves the file where
-     * it is and reads it through a persistable URI grant — the parse
-     * bytes double as withZip's cache copy so the first open is warm.
+     * it is. Parsing runs through READIUM first (correct spine/cover/metadata
+     * for every epub shape); the zip parser is the fallback.
      */
-    fun import(
+    suspend fun import(
         context: Context, libraryId: String, source: Uri, linkInPlace: Boolean = false
     ): LocalBook? {
         val bytes = runCatching {
@@ -440,8 +460,32 @@ object LocalLibraryStore {
         }.getOrNull() ?: return null
         val lib = library(context, libraryId) ?: return null
         val bookId = UUID.randomUUID().toString().take(10)
-        val parsed = parseEpub(bytes) ?: return null
-        val title = parsed.title.ifBlank { "book-$bookId" }
+        // Readium parse: metadata, spine titles, cover — no temp file.
+        var parsed: EpubParsed? = null
+        runCatching {
+            val pub = ReadiumEngine.publicationFromUri(context, source.toString())
+            if (pub != null) {
+                val meta = ReadiumEngine.meta(pub)
+                val titles = pub.readingOrder.mapIndexed { i, link ->
+                    link.title?.takeIf { it.isNotBlank() }
+                        ?: ReadiumEngine.chapterBytes(pub, i)?.toString(Charsets.UTF_8)
+                            ?.let { Regex("<title[^>]*>([^<]*)</title>").find(it)?.groupValues?.get(1)?.trim() }
+                            ?.takeIf { !it.isNullOrBlank() }
+                        ?: "Chapter ${i + 1}"
+                }
+                parsed = EpubParsed(
+                    title = meta.title,
+                    author = meta.author,
+                    description = meta.description,
+                    opfPath = "",   // unused on the Readium path
+                    chapterTitles = titles,
+                    coverBytes = ReadiumEngine.coverPng(context, pub)
+                )
+            }
+        }
+        if (parsed == null) parsed = parseEpub(bytes)
+        val parsedFinal = parsed ?: return null
+        val title = parsedFinal.title.ifBlank { "book-$bookId" }
         // Content-signature duplicate check: the same epub can arrive under
         // a different SAF document URI (folder scan + individual pick of
         // one file) — URI dedupe alone missed it and every volume doubled
@@ -453,7 +497,7 @@ object LocalLibraryStore {
                 val o = arr.optJSONObject(i) ?: continue
                 if (o.optString("libraryId") != lib.id) continue
                 if (o.optString("title") != title) continue
-                if (o.optInt("chapters", 0) != parsed.chapterTitles.size) continue
+                if (o.optInt("chapters", 0) != parsedFinal.chapterTitles.size) continue
                 val knownSize = o.optLong("bytes", -1L)
                 if (knownSize != -1L && knownSize != bytes.size.toLong()) continue
                 if (volumeNumber(title) == Int.MAX_VALUE && knownSize == -1L) continue
@@ -465,7 +509,7 @@ object LocalLibraryStore {
                 )
             }
         }
-        val safeTitle = parsed.title.trim().replace(Regex("[^\\w\\-. \\u3040-\\u30ff\\u4e00-\\u9fff]"), "_").take(60)
+        val safeTitle = parsedFinal.title.trim().replace(Regex("[^\\w\\-. \\u3040-\\u30ff\\u4e00-\\u9fff]"), "_").take(60)
             .ifBlank { "book-$bookId" }
         val fileName = "$safeTitle.epub"
         val stored: Pair<String, String> = if (linkInPlace) {
@@ -482,7 +526,7 @@ object LocalLibraryStore {
         } else {
             storeBytes(context, lib, fileName, bytes, bookId)
         }
-        parsed.coverBytes?.let { cov ->
+        parsedFinal.coverBytes?.let { cov ->
             runCatching {
                 CoverStore.saveGenerated(context, "locallib://$bookId", cov, "jpg")
             }
@@ -490,9 +534,9 @@ object LocalLibraryStore {
         } ?: runCatching { noCoverMarker(context, bookId).createNewFile() }
         val book = LocalBook(
             id = bookId, libraryId = lib.id,
-            title = parsed.title.ifBlank { fileName.removeSuffix(".epub") },
-            author = parsed.author, description = parsed.description,
-            fileName = fileName, chapterCount = parsed.chapterTitles.size,
+            title = parsedFinal.title.ifBlank { fileName.removeSuffix(".epub") },
+            author = parsedFinal.author, description = parsedFinal.description,
+            fileName = fileName, chapterCount = parsedFinal.chapterTitles.size,
             addedAt = System.currentTimeMillis(), linked = linkInPlace
         )
         ensureSeriesMigration(context)
@@ -522,7 +566,7 @@ object LocalLibraryStore {
                 .put("title", book.title).put("author", book.author)
                 .put("description", book.description).put("fileName", book.fileName)
                 .put("storedUri", stored.first).put("storedPath", stored.second)
-                .put("opfPath", parsed.opfPath).put("chapters", book.chapterCount)
+                .put("opfPath", parsedFinal.opfPath).put("chapters", book.chapterCount)
                 .put("addedAt", book.addedAt).put("ref", linkInPlace)
                 .put("seriesId", seriesId)
                 .put("bytes", bytes.size.toLong())
@@ -538,7 +582,7 @@ object LocalLibraryStore {
      * already linked are skipped so the folder can be re-run safely.
      * Returns (linked, skipped). Runs on the caller's IO dispatcher.
      */
-    fun linkFolder(
+    suspend fun linkFolder(
         context: Context, libraryId: String, treeUri: Uri,
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> }
     ): Pair<Int, Int> {
@@ -789,6 +833,7 @@ object LocalLibraryStore {
             File(context.cacheDir, "ll_$bookId.epub").delete()
             coverFile(context, bookId)?.delete()
             noCoverMarker(context, bookId).delete()
+            ReadiumEngine.forget(bookId)
             // Extracted illustration cache rides with the book.
             File(context.filesDir, "local_lib_media/$bookId").deleteRecursively()
         }
@@ -1037,7 +1082,7 @@ object LocalLibraryStore {
             suspend fun handle(b: LocalBook) {
                 kotlinx.coroutines.yield()
                 if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return
-                val f = coverFile(context, b.id)
+                val f = coverFileR(context, b.id)
                 File(context.cacheDir, "ll_${b.id}.epub").delete()
                 if (f != null) {
                     core.coverPathOf[b.id] = f.absolutePath
@@ -1278,6 +1323,54 @@ object LocalLibraryStore {
         return result ?: emptyList()
     }
 
+    // --- Readium-backed serving (primary) + zip fallback -------------------
+    // The streamer resolves spine hrefs correctly for every epub shape the
+    // hand parser missed, keeps the Publication OPEN for the session (no
+    // per-chapter temp copies), and its cover service handles all
+    // conventions (Wayne, 2026-10-22: "missing covers, won't read some
+    // pages, loads slow").
+
+    private suspend fun publicationOf(context: Context, book: LocalBook) =
+        bookEntry(context, book.id)?.let {
+            ReadiumEngine.publication(context, book.id, it.optString("storedUri"), it.optString("storedPath"))
+        }
+
+    suspend fun chapterTitlesR(context: Context, book: LocalBook): List<String> {
+        val pub = publicationOf(context, book) ?: return emptyList()
+        return pub.readingOrder.mapIndexed { i, link ->
+            val doc = ReadiumEngine.chapterBytes(pub, i)?.toString(Charsets.UTF_8)
+            val t = doc?.let {
+                Regex("<title[^>]*>([^<]*)</title>").find(it)?.groupValues?.get(1)?.trim()
+            }
+            link.title?.takeIf { it.isNotBlank() }
+                ?: t.takeIf { !it.isNullOrBlank() }
+                ?: "Chapter ${i + 1}"
+        }
+    }
+
+    suspend fun chapterTextR(context: Context, book: LocalBook, index: Int): LocalChapter? {
+        val pub = publicationOf(context, book) ?: return null
+        if (index !in pub.readingOrder.indices) return null
+        val doc = ReadiumEngine.chapterBytes(pub, index)?.toString(Charsets.UTF_8) ?: return null
+        val title = Regex("<title[^>]*>([^<]*)</title>").find(doc)
+            ?.groupValues?.get(1)?.trim().orEmpty()
+        val body = doc.substringAfter("<body", doc).substringAfter(">", doc)
+        val paras = extractParagraphs(doc)
+        val href = pub.readingOrder[index].href.toString()
+        val images = extractImagesR(pub, context, book, body, href, paras.size)
+        val finalParas = if (paras.isEmpty() && images.isNotEmpty()) listOf("") else paras
+        return LocalChapter(title, finalParas, images)
+    }
+
+    /** Readium cover bytes; null → caller falls back to the zip ladder. */
+    suspend fun coverBytesR(context: Context, bookId: String): ByteArray? {
+        val entry = bookEntry(context, bookId) ?: return null
+        val pub = ReadiumEngine.publication(
+            context, bookId, entry.optString("storedUri"), entry.optString("storedPath")
+        ) ?: return null
+        return ReadiumEngine.coverPng(context, pub)
+    }
+
     /**
      * Chapter body for the reader (locallib:// serving).
      *
@@ -1367,6 +1460,40 @@ object LocalLibraryStore {
             if (f.isFile && f.length() > 0) {
                 // Canonical three-slash file URI — File.toURI()'s single
                 // slash form is legal but some loaders balk.
+                out.add(minOf(pOpens.count { it < m.range.first }, lastIdx) to ("file://" + f.absolutePath))
+            }
+        }
+        return out
+    }
+
+    /**
+     * Readium variant of [extractImages]: identical anchoring and caching,
+     * but bytes load through the OPEN Publication (in-memory after first
+     * read) instead of a zip handle.
+     */
+    private suspend fun extractImagesR(
+        pub: org.readium.r2.shared.publication.Publication,
+        context: Context,
+        book: LocalBook, body: String, chapterHref: String, paragraphCount: Int
+    ): List<Pair<Int, String>> {
+        val base = chapterHref.substringBeforeLast("/", "")
+        val pOpens = Regex("<p\\b").findAll(body).map { it.range.first }.toList()
+        val lastIdx = maxOf(paragraphCount - 1, 0)
+        val out = mutableListOf<Pair<Int, String>>()
+        val imgTag = Regex("""<img[^>]+src="([^"]+)"|<image[^>]+(?:xlink:)?href="([^"]+)"""")
+        imgTag.findAll(body).forEach { m ->
+            val src = (m.groupValues[1].ifBlank { m.groupValues[2] }).substringBefore("?")
+            if (src.isBlank() || src.startsWith("http")) return@forEach
+            val full = zipPath(base, src)
+            val bytes = ReadiumEngine.bytesByHref(pub, full) ?: return@forEach
+            val ext = full.substringAfterLast('.', "jpg").lowercase()
+                .takeIf { it.length in 2..4 && it.all { c -> c.isLetterOrDigit() } } ?: "jpg"
+            val dir = File(context.filesDir, "local_lib_media/${book.id}").apply { mkdirs() }
+            val f = File(dir, "${full.hashCode()}.$ext")
+            if (!f.isFile || f.length() == 0L) {
+                runCatching { f.writeBytes(bytes) }
+            }
+            if (f.isFile && f.length() > 0) {
                 out.add(minOf(pOpens.count { it < m.range.first }, lastIdx) to ("file://" + f.absolutePath))
             }
         }

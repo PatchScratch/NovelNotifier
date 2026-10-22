@@ -56,7 +56,8 @@ fun LocalBookDetail(
         withContext(Dispatchers.IO) {
             book = LocalLibraryStore.book(context, bookId)
             book?.let { b ->
-                chapters = LocalLibraryStore.chapterTitles(context, b)
+                chapters = LocalLibraryStore.chapterTitlesR(context, b)
+                    .ifEmpty { LocalLibraryStore.chapterTitles(context, b) }
                 val sid = LocalLibraryStore.seriesIdMap(context)[b.id]
                 mySeries = sid?.let { LocalLibraryStore.seriesById(context, it) }
                 otherSeries = LocalLibraryStore.seriesList(context, b.libraryId)

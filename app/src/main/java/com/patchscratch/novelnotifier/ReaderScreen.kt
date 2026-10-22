@@ -690,7 +690,8 @@ fun ReaderScreen(
                     DebugLog.log("LOCALLIB", "book not found: $bookId")
                     null
                 } else {
-                    val r = LocalLibraryStore.chapterText(context, b, idx)
+                    val r = LocalLibraryStore.chapterTextR(context, b, idx)
+                        ?: LocalLibraryStore.chapterText(context, b, idx)
                     if (r == null) DebugLog.log("LOCALLIB", "chapterText null for idx=$idx")
                     else DebugLog.log(
                         "LOCALLIB",

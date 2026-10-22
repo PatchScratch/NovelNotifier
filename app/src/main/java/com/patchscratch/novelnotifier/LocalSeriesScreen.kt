@@ -80,7 +80,8 @@ fun LocalSeriesScreen(
             // Reader-target titles for the Next Chapter volume only —
             // opening rides the preloaded list, no zip IO on the tap.
             firstUnfinished(vols, readPos)?.let { v ->
-                nextTitles = LocalLibraryStore.chapterTitles(context, v)
+                nextTitles = LocalLibraryStore.chapterTitlesR(context, v)
+                    .ifEmpty { LocalLibraryStore.chapterTitles(context, v) }
             }
         }
     }
