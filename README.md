@@ -38,9 +38,20 @@ Each site is its own workspace (hamburger → site chips), served by official/op
 
 ### Reading & offline
 - **In-app reader** — ‹ Prev / Next › through the book, sepia/dark/light themes, serif/sans, adjustable font size, per-novel JavaScript toggle, ad/tracker blocking, open-in-browser escape hatch. Extraction filters NU's hidden decoy content by computed styles and falls back to the full-page web view when a host defeats it.
+- **Offline-first reading** — the reader serves the stored copy of a chapter by default: instant opens, zero network, no site contact. Chapters not yet stored fetch once and save themselves; a ⋮ toggle switches the whole reader to always-online, and **Re-download chapter** refreshes a stored chapter in place (a translator's update) without losing its translation. Chapters route to their translator's page directly whenever the real address is known — the redirect chain through Novel Updates is skipped entirely.
 - **Offline library as standard ePubs** — every chapter you read is stored automatically and opens instantly with no network (cached tables of contents keep the chapter lists reachable offline too). Want the whole series up front? Opt in per series and bulk-download it (survives screen-off; the queue survives reboots). Books export/share to any e-reader. Storage stays yours — nothing bulk-downloads without your say-so.
 - **Read aloud** — three engines (Android system TTS, zero download, reads Japanese natively; Kokoro offline neural English; or a cloud TTS through your own key) with a Voice Aloud-style control bar: play/pause, paragraph skip, tap-a-paragraph to jump, a live speed slider (0.5–2.5×), a sleep timer that pauses at the deadline, and a media-style notification with lockscreen controls.
 - **Long-press Japanese dictionary** — tap-and-hold any word in the reader for its reading, part of speech and JMdict senses. Fully offline (built-in Kuromoji tokenizer + a 499k-entry JMdict; ~80MB unpacked once on first enable).
+
+### Local Library — your own ePubs (v3.0)
+A whole offline library that sits beside the sites with the same design language, powered by the Readium epub engine.
+
+- **Libraries ≈ sites, shelves ≈ categories, series ≈ series.** Create any number of libraries (Fiction, Light Novels, Non-fiction…); each has its own grid, search history, and user-editable shelves. Multi-volume epubs group into series automatically (title matching) with a manual merge/move for anything the matcher misses; the series page uses the same INFO/RELEASES template as every site.
+- **Read in place, or copy** — import ePubs the usual way, or **link files where they already live on the device** (no copy, no move; your originals are never modified or deleted), including **whole folders in one go** through a single storage grant.
+- **The epub's own table of contents** drives the chapter list — real titles in the book's declared order — and chapters stream from an open publication: fast opens, inline illustrations, cover pages.
+- **Covers and metadata under your control** — covers extract through Readium's cover service with a manual per-book override; series names, descriptions and volume metadata are editable in place; a series cover can be pinned to any volume.
+- **Self-maintaining** — a background pass finds duplicate entries (same file linked twice, re-rips under slightly different names) and dead links (moved/deleted files) and offers one-tap cleanup; shelf assignments and the whole library index ride backups.
+- **Multi-select** — long-press a series to start a selection; batch move to a shelf, merge into another series, or delete.
 
 ### AI translation & covers (bring your own key)
 - **Chapter translation** through any OpenAI-compatible endpoint (OpenRouter, OpenAI, a local server): English renders under each Japanese paragraph and is stored inside the offline ePub. Translate one chapter, or **Translate all stored** for the whole book.

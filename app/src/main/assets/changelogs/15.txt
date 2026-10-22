@@ -1,0 +1,22 @@
+NovelNotifier 3.0 — the Local Library major: your own ePubs, read offline through the Readium engine, beside your sites with the same design language.
+
+LOCAL LIBRARY (new)
+• Libraries sit beside sites (create as many as you like — Fiction, Light Novels…), each with its own grid, search and shelves.
+• Import ePubs by copying, or LINK files where they already live on the device — no copy, no move, originals never touched — including whole folders in one pass.
+• Multi-volume epubs group into Series automatically; merge/move/rename, editable metadata, a series cover pickable from any volume, all through the same series page the sites use.
+• The epub's own table of contents drives the chapter list (real titles, book order); chapters stream from an open Readium publication — fast, with inline illustrations and cover pages.
+• Shelves hold series, are biometrically hideable, and the whole library index rides backups.
+• Self-maintaining: duplicate detection (same file linked twice, re-rips under near-identical names) and dead-link cleanup run in the background with one-tap removal.
+• Long-press the grid for multi-select: batch move to shelf, merge into a series, or delete.
+
+READING
+• Offline-first: the reader serves the stored copy of a chapter by default — instant, zero network. Unstored chapters fetch once and save themselves.
+• New ⋮ controls: an Offline-chapters toggle and Re-download chapter (refresh a translator's update without losing its translation).
+• Chapters load their translator's page directly whenever the real address is known — Novel Updates' redirect is skipped, so NU throttling can't stall your reading.
+• The Foxteller/redirect walker now runs in web view mode too, clears Cloudflare interstitials with a root first-touch, and retries politely instead of hammering.
+
+LIBRARY & SITES
+• Series-first local model with stable ids; shelf filters in the drawer; search history chips (tap to reuse, long-press to forget) and a clear ✕ in the search field.
+• Cover overhaul: Readium's cover service, junk-cover detection, background backfill that survives navigation, and the no-cover placeholder whenever art is genuinely absent.
+• Next Chapter resolves in reading order — volume-restart numbering (v3c1 after c20) no longer wedges the card.
+• Performance: 5,000-book libraries load from a cached snapshot; search and scroll are pure in-memory.
