@@ -614,15 +614,32 @@ object LocalLibraryStore {
      * them — Wayne, 2026-10-22: "duplicates, but not in my files").
      * Writes only when something changed.
      */
+    /** The source file's display name — SAF document IDs and plain paths
+     *  both end in it. Volume files are named distinctly even when dc:title
+     *  is bare ("Welcome to Japan, Ms. Elf!" ×4), so filename+chapters is a
+     *  duplicate-proof signature the title ladder can't provide. */
+    internal fun sourceName(o: JSONObject): String {
+        val uri = o.optString("storedUri")
+        if (uri.startsWith("content://")) {
+            val last = uri.substringAfterLast('/').substringAfter("%3A", "")
+            return runCatching { android.net.Uri.decode(last) }.getOrDefault(last)
+        }
+        val p = o.optString("storedPath")
+        return if (p.isNotBlank()) p.substringAfterLast('/') else ""
+    }
+
     private fun cleanIndexMeta(context: Context) {
         val root = readIndex(context)
         var dirty = false
         val books = root.optJSONArray("books")
         val titlesBySeries = HashMap<String, MutableList<String>>()
-        // libraryId|||title|||chapters → earliest entry wins; later exact
-        // matches are the same epub linked twice. Sizes, when both entries
-        // carry one, must agree.
+        // Signature 1: libraryId|||title|||chapters. Signature 2 adds the
+        // source FILENAME — bare-title series dedupe safely on it because
+        // each volume's file is named distinctly (Ms. Elf had bare titles
+        // AND double-links; title-only guard refused to merge, Wayne
+        // 2026-10-22).
         val bySignature = HashMap<String, JSONObject>()
+        val byFileSig = HashMap<String, JSONObject>()
         val dupPairs = mutableListOf<Pair<String, String>>()   // dupId → keeperId
         for (i in 0 until (books?.length() ?: 0)) {
             val o = books!!.optJSONObject(i) ?: continue
@@ -635,7 +652,7 @@ object LocalLibraryStore {
                 .add(o.optString("title"))
             val sig = o.optString("libraryId") + "|||" + o.optString("title") +
                 "|||" + o.optInt("chapters", 0)
-            val kept = bySignature[sig]
+            var kept = bySignature[sig]
             if (kept == null) {
                 bySignature[sig] = o
             } else {
@@ -648,6 +665,17 @@ object LocalLibraryStore {
                 val sized = a != -1L && a == b
                 val tokened = volumeNumber(o.optString("title")) != Int.MAX_VALUE
                 if (sized || tokened) dupPairs.add(o.optString("id") to kept.optString("id"))
+            }
+            val name = sourceName(o)
+            if (name.isNotBlank()) {
+                val fileSig = o.optString("libraryId") + "|||" + name +
+                    "|||" + o.optInt("chapters", 0)
+                val keptFile = byFileSig[fileSig]
+                if (keptFile == null) {
+                    byFileSig[fileSig] = o
+                } else if (keptFile.optString("id") != o.optString("id")) {
+                    dupPairs.add(o.optString("id") to keptFile.optString("id"))
+                }
             }
         }
         val series = root.optJSONArray("series")
@@ -889,6 +917,38 @@ object LocalLibraryStore {
     var coverTick by androidx.compose.runtime.mutableStateOf(0)
         private set
 
+    // --- garbage collection: dead source links ---------------------------
+    /** Book ids whose epub cannot be opened (file moved/deleted on the
+     *  device). Surfaced in the drawer; removal is always a user action. */
+    var missingIds by androidx.compose.runtime.mutableStateOf<Set<String>>(emptySet())
+        private set
+
+    private fun sourceAlive(context: Context, o: JSONObject): Boolean {
+        val uri = o.optString("storedUri")
+        return when {
+            uri.startsWith("content://") -> runCatching {
+                context.contentResolver.openInputStream(Uri.parse(uri))?.close()
+                true
+            }.getOrDefault(false)
+            o.optString("storedPath").isNotBlank() -> File(o.optString("storedPath")).isFile
+            else -> false
+        }
+    }
+
+    /** Remove every dead link from the index; returns how many went. */
+    fun removeMissing(context: Context): Int {
+        val root = readIndex(context)
+        val arr = root.optJSONArray("books") ?: return 0
+        val ids = HashSet<String>()
+        for (i in 0 until arr.length()) {
+            arr.optJSONObject(i)?.takeIf { it.optBoolean("missing", false) }
+                ?.let { ids.add(it.optString("id")) }
+        }
+        ids.forEach { deleteBook(context, it) }
+        missingIds = emptySet()
+        return ids.size
+    }
+
     private fun ensureBackfill(context: Context, libraryId: String) {
         synchronized(backfillStarted) {
             if (!backfillStarted.add(libraryId)) return
@@ -896,6 +956,31 @@ object LocalLibraryStore {
         backfillScope.launch {
             val core = snapshotCore?.takeIf { it.first == libraryId }?.second
                 ?: buildSnapshotCore(context, libraryId).also { snapshotCore = libraryId to it }
+            // Existence pass first (cheap IPCs): mark dead links with a
+            // double-strike so a provider blip can't orphan a live book.
+            runCatching {
+                val root = readIndex(context)
+                val arr = root.optJSONArray("books") ?: JSONArray()
+                val byId = HashMap<String, JSONObject>(arr.length())
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.let { byId[it.optString("id")] = it }
+                }
+                val missing = HashSet<String>()
+                var changed = false
+                core.books.forEach { b ->
+                    kotlinx.coroutines.yield()
+                    val o = byId[b.id] ?: return@forEach
+                    val alive = sourceAlive(context, o) || sourceAlive(context, o)
+                    val was = o.optBoolean("missing", false)
+                    when {
+                        !alive && !was -> { o.put("missing", true); changed = true; missing.add(b.id) }
+                        !alive -> missing.add(b.id)
+                        alive && was -> { o.put("missing", false); changed = true }
+                    }
+                }
+                if (changed) writeIndex(context, root)
+                missingIds = missing
+            }
             suspend fun handle(b: LocalBook) {
                 kotlinx.coroutines.yield()
                 if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return

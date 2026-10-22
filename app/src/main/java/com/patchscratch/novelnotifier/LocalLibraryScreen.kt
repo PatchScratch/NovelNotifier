@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.ui.Alignment
@@ -74,6 +76,7 @@ fun LocalLibraryHome(
     var importMsg by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var showRename by remember { mutableStateOf(false) }
+    var showMissingCleanup by remember { mutableStateOf(false) }
     // B3: drawer-shelf filter; null = all books.
     var shelfFilter by remember { mutableStateOf<String?>(null) }
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
@@ -276,6 +279,24 @@ fun LocalLibraryHome(
                             showRename = true
                         }
                     )
+                    // Garbage collection surface: dead links found by the
+                    // background sweep; removal is explicit, never silent.
+                    val missingCount = LocalLibraryStore.missingIds.size
+                    if (missingCount > 0) {
+                        NavigationDrawerItem(
+                            label = {
+                                Text(
+                                    t("🧹 $missingCount missing files — clean up…", "🧹 行方不明 $missingCount 件 — 整理…"),
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            selected = false,
+                            onClick = {
+                                scope.launch { drawerState.close() }
+                                showMissingCleanup = true
+                            }
+                        )
+                    }
 
                     if (shelves.cats.isNotEmpty()) {
                         Text(
@@ -387,6 +408,58 @@ fun LocalLibraryHome(
                 }
             }
         }
+    }
+
+    if (showMissingCleanup) {
+        val missing = snap?.books?.filter { it.id in LocalLibraryStore.missingIds }.orEmpty()
+        AlertDialog(
+            onDismissRequest = { showMissingCleanup = false },
+            title = { Text(t("Missing files", "行方不明のファイル")) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        t(
+                            "These epubs can't be opened — moved, renamed, or deleted on the device. Removing them never touches your files; re-link the folder afterwards to re-add any that return.",
+                            "これらのEPUBは端末上で移動・名称変更・削除されたため開けません。削除してもファイルには触れません。戻ったファイルはフォルダ再リンクで再度追加できます。"
+                        ),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    missing.take(30).forEach { b ->
+                        Text(
+                            "• " + b.title,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                    if (missing.size > 30) {
+                        Text(
+                            t("…and ${missing.size - 30} more", "…他 ${missing.size - 30} 件"),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showMissingCleanup = false
+                    scope.launch {
+                        val n = withContext(Dispatchers.IO) {
+                            LocalLibraryStore.removeMissing(context)
+                        }
+                        importMsg = "[${
+                            java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                        }] ${t("Removed", "削除")} $n"
+                        reload()
+                    }
+                }) { Text(t("Remove all", "すべて削除"), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMissingCleanup = false }) { Text(t("Close", "閉じる")) }
+            }
+        )
     }
 
     if (showRename) {
