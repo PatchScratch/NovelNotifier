@@ -128,17 +128,28 @@ object ReadiumEngine {
         return runCatching { res.read().getOrNull() }.getOrNull()
     }
 
-    /** Cover PNG bytes via Readium's cover service (handles every EPUB
-     *  convention); null when the book truly has none. */
-    suspend fun coverPng(context: Context, pub: Publication): ByteArray? {
-        val bmp: Bitmap = runCatching { pub.cover() }.getOrNull() ?: return null
+    /**
+     * Cover bytes via Readium's cover service, stored as a DOWNSAMPLED
+     * JPEG — the first cut wrote 2-5MB PNGs, and ~5,000 of them filled the
+     * tablet's disk and broke the index mid-write (Wayne, 2026-10-23:
+     * the 9-series loss). ~800px wide, quality 85 ≈ 200-400KB a cover.
+     */
+    suspend fun coverJpeg(context: Context, pub: Publication, maxW: Int = 800): ByteArray? {
+        val src: Bitmap = runCatching { pub.cover() }.getOrNull() ?: return null
         return runCatching {
+            val scale = if (src.width > maxW) maxW.toFloat() / src.width else 1f
+            val bmp = if (scale < 1f) {
+                Bitmap.createScaledBitmap(src, (src.width * scale).toInt(), (src.height * scale).toInt(), true)
+            } else src
             ByteArrayOutputStream().use { out ->
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
                 out.toByteArray()
             }
         }.getOrNull()
     }
+
+    /** Legacy PNG path kept only for the compile surface; prefer [coverJpeg]. */
+    suspend fun coverPng(context: Context, pub: Publication): ByteArray? = coverJpeg(context, pub)
 
     // --- metadata shape used at import ------------------------------------
 

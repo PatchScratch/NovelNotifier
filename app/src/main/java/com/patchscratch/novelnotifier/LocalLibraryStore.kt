@@ -357,7 +357,9 @@ object LocalLibraryStore {
         }
         val bytes = coverBytesR(context, bookId)
         if (bytes != null) {
-            CoverStore.saveGenerated(context, seriesUrl, bytes, "png")
+            // JPEG (downsampled in ReadiumEngine) — never the multi-MB
+            // PNGs that filled the disk (2026-10-23).
+            CoverStore.saveGenerated(context, seriesUrl, bytes, "jpg")
             noCoverMarker(context, bookId).delete()
             return CoverStore.localFile(context, seriesUrl)
         }
@@ -536,7 +538,7 @@ object LocalLibraryStore {
                     description = meta.description,
                     opfPath = "",   // unused on the Readium path
                     chapterTitles = titles,
-                    coverBytes = ReadiumEngine.coverPng(context, pub)
+                    coverBytes = ReadiumEngine.coverJpeg(context, pub)
                 )
             }
         }
@@ -1189,6 +1191,38 @@ object LocalLibraryStore {
     var missingIds by androidx.compose.runtime.mutableStateOf<Set<String>>(emptySet())
         private set
 
+    /**
+     * Re-encode any stored cover over 1MB to a ~800px JPEG (quality 85).
+     * The Readium switch initially stored PNG covers at 2-5MB; a few
+     * thousand of those filled internal storage and the full disk broke
+     * index writes (2026-10-23). Idempotent — compacted files fall under
+     * the threshold and are never touched again.
+     */
+    private fun compactCovers(context: Context) {
+        val dir = CoverStore.dir(context)
+        var compacted = 0
+        dir.listFiles()?.forEach { f ->
+            if (!f.isFile || f.length() <= 1_000_000) return@forEach
+            runCatching {
+                val bmp = android.graphics.BitmapFactory.decodeFile(f.absolutePath) ?: return@runCatching
+                val scale = if (bmp.width > 800) 800f / bmp.width else 1f
+                val small = if (scale < 1f) android.graphics.Bitmap.createScaledBitmap(
+                    bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true
+                ) else bmp
+                val tmp = File(f.parentFile, f.name + ".tmp")
+                java.io.FileOutputStream(tmp).use { out ->
+                    small.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                }
+                if (tmp.length() in 1..f.length()) {
+                    f.delete()
+                    tmp.renameTo(File(f.parentFile, f.name.substringBeforeLast('.') + ".jpg"))
+                    compacted++
+                } else tmp.delete()
+            }
+        }
+        if (compacted > 0) DebugLog.log("LOCALLIB", "compacted $compacted oversized cover(s)")
+    }
+
     private fun sourceAlive(context: Context, o: JSONObject): Boolean {
         val uri = o.optString("storedUri")
         return when {
@@ -1288,6 +1322,10 @@ object LocalLibraryStore {
             if (sized) {
                 dupScan(context).let { if (it.isNotEmpty()) dedupeBooks(context, it) }
             }
+            // Compact oversized stored covers (the PNG era): anything over
+            // 1MB re-encodes to a ~800px JPEG in place — a full disk is
+            // what broke the index in the first place (2026-10-23).
+            runCatching { compactCovers(context) }
             suspend fun handle(b: LocalBook) {
                 kotlinx.coroutines.yield()
                 if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return
@@ -1607,7 +1645,7 @@ object LocalLibraryStore {
         val pub = ReadiumEngine.publication(
             context, bookId, entry.optString("storedUri"), entry.optString("storedPath")
         ) ?: return null
-        return ReadiumEngine.coverPng(context, pub)
+        return ReadiumEngine.coverJpeg(context, pub)
     }
 
     /**
