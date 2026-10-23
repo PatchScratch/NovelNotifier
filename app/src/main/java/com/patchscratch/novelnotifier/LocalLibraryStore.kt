@@ -107,10 +107,28 @@ object LocalLibraryStore {
     }.getOrDefault(JSONObject())
 
     private fun writeIndex(context: Context, root: JSONObject) {
-        runCatching { indexFile(context).writeText(root.toString()) }
+        // ATOMIC + SERIALIZED (Wayne's index loss, 2026-10-23: a thousand
+        // imports ran concurrent read-modify-write cycles — the sweep,
+        // dedupe and dialogs each parse their own tree and race the write,
+        // so interleaves lost whole arrays and a torn read could cascade
+        // into an empty index being flushed back). One writer at a time,
+        // temp file + rename so no reader ever sees a partial file.
+        synchronized(writeLock) {
+            runCatching {
+                val f = indexFile(context)
+                val tmp = File(f.parentFile, f.name + ".tmp")
+                tmp.writeText(root.toString())
+                if (!tmp.renameTo(f)) {
+                    f.delete()
+                    tmp.renameTo(f)
+                }
+            }
+        }
         // Any write can change what the caches vouch for — drop them all.
         invalidateCaches()
     }
+
+    private val writeLock = Any()
 
     // libraries() runs on every drawer open (SiteSwitcherChips) — cached
     // in-process; library mutations invalidate.
@@ -579,39 +597,46 @@ object LocalLibraryStore {
             addedAt = System.currentTimeMillis(), linked = linkInPlace
         )
         ensureSeriesMigration(context)
-        val rootNow = readIndex(context)
-        // Join the series whose key matches (auto-grouping); otherwise this
-        // import founds a new one. Solo pins are gone — membership is direct.
-        val key = seriesKey(book.title)
-        val seriesArr = rootNow.optJSONArray("series") ?: JSONArray().also { rootNow.put("series", it) }
-        var seriesId: String? = null
-        for (i in 0 until seriesArr.length()) {
-            val o = seriesArr.optJSONObject(i) ?: continue
-            if (o.optString("libraryId") == lib.id && o.optString("key") == key) {
-                seriesId = o.optString("id"); break
+        // The whole join-series + append-book + write cycle holds the write
+        // lock: during the 1,000-book reorg import, concurrent imports each
+        // parsed their OWN tree and raced the write — the last writer
+        // erased every other import's book (Wayne's index loss, 10-23).
+        return synchronized(writeLock) {
+            val rootNow = readIndex(context)
+            // Join the series whose key matches (auto-grouping); otherwise
+            // this import founds a new one. Solo pins are gone — membership
+            // is direct.
+            val key = seriesKey(book.title)
+            val seriesArr = rootNow.optJSONArray("series") ?: JSONArray().also { rootNow.put("series", it) }
+            var seriesId: String? = null
+            for (i in 0 until seriesArr.length()) {
+                val o = seriesArr.optJSONObject(i) ?: continue
+                if (o.optString("libraryId") == lib.id && o.optString("key") == key) {
+                    seriesId = o.optString("id"); break
+                }
             }
-        }
-        if (seriesId == null) {
-            seriesId = "s" + UUID.randomUUID().toString().take(8)
-            seriesArr.put(
-                JSONObject().put("id", seriesId).put("libraryId", lib.id)
-                    .put("name", strippedTitle(book.title).ifBlank { book.title })
-                    .put("key", key)
+            if (seriesId == null) {
+                seriesId = "s" + UUID.randomUUID().toString().take(8)
+                seriesArr.put(
+                    JSONObject().put("id", seriesId).put("libraryId", lib.id)
+                        .put("name", strippedTitle(book.title).ifBlank { book.title })
+                        .put("key", key)
+                )
+            }
+            val arr = rootNow.optJSONArray("books") ?: JSONArray().also { rootNow.put("books", it) }
+            arr.put(
+                JSONObject().put("id", book.id).put("libraryId", book.libraryId)
+                    .put("title", book.title).put("author", book.author)
+                    .put("description", book.description).put("fileName", book.fileName)
+                    .put("storedUri", stored.first).put("storedPath", stored.second)
+                    .put("opfPath", parsedFinal.opfPath).put("chapters", book.chapterCount)
+                    .put("addedAt", book.addedAt).put("ref", linkInPlace)
+                    .put("seriesId", seriesId)
+                    .put("bytes", bytes.size.toLong())
             )
+            writeIndex(context, rootNow)
+            book
         }
-        val arr = rootNow.optJSONArray("books") ?: JSONArray().also { rootNow.put("books", it) }
-        arr.put(
-            JSONObject().put("id", book.id).put("libraryId", book.libraryId)
-                .put("title", book.title).put("author", book.author)
-                .put("description", book.description).put("fileName", book.fileName)
-                .put("storedUri", stored.first).put("storedPath", stored.second)
-                .put("opfPath", parsedFinal.opfPath).put("chapters", book.chapterCount)
-                .put("addedAt", book.addedAt).put("ref", linkInPlace)
-                .put("seriesId", seriesId)
-                .put("bytes", bytes.size.toLong())
-        )
-        writeIndex(context, rootNow)
-        return book
     }
 
     /**
