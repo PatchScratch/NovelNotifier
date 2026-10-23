@@ -2052,11 +2052,20 @@ fun ReaderScreen(
                 val pub = pagedPub
                 val href = pagedHref
                 if (pub != null && href != null) {
+                    val bookIdOf = chapter.url.removePrefix("locallib://").substringBefore("/")
                     EpubPagedView(
                         publication = pub,
                         initialHref = href,
                         readerTheme = readerTheme,
                         serif = serif,
+                        fontSizeSp = fontSize,
+                        // Page-accurate resume: the saved locator restores
+                        // position inside the chapter; every page turn
+                        // persists the current one.
+                        initialLocatorJson = prefs.getString("local_locator_$bookIdOf", null),
+                        onLocator = { json ->
+                            prefs.edit { putString("local_locator_$bookIdOf", json) }
+                        },
                         onExternalLink = { url ->
                             runCatching {
                                 context.startActivity(

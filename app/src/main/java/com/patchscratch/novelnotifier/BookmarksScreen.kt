@@ -121,7 +121,11 @@ fun BookmarkLibraryBody(
     // Search history scope (Wayne, 2026-10-22): non-blank enables recent-
     // query chips under the field and records the query when a result row
     // opens — that tap is "this search found it".
-    searchHistoryScope: String = ""
+    searchHistoryScope: String = "",
+    // v3.2a: per-tile cover refresh (local libraries) — the backfill's
+    // cover tick lands HERE, at tile render time, so covers stream in
+    // without invalidating the caller's row build. Sites never pass it.
+    coverRefresh: Int = 0
 ) {
     val context = LocalContext.current
     var layoutMode by remember { mutableStateOf(loadLayoutMode(context.getSharedPreferences("novel_prefs", 0))) }
@@ -204,10 +208,10 @@ fun BookmarkLibraryBody(
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize()
             ) {
-                BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode)
+                BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode, coverRefresh)
             }
         } else {
-            BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode)
+            BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode, coverRefresh)
         }
     }
 }
@@ -254,7 +258,8 @@ private fun BookmarkRowsLayout(
     rows: List<BookmarkRow>,
     emptyMessage: String,
     onManageRow: ((BookmarkRow) -> Unit)?,
-    layoutMode: String
+    layoutMode: String,
+    coverRefresh: Int = 0
 ) {
     if (rows.isEmpty()) {
         EmptyState(message = emptyMessage)
@@ -285,6 +290,7 @@ private fun BookmarkRowsLayout(
                         CoverThumb(
                             url = row.coverUrl,
                             seriesUrl = row.seriesUrl,
+                            refreshKey = coverRefresh,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(3f / 4f)
@@ -342,6 +348,7 @@ private fun BookmarkRowsLayout(
                             CoverThumb(
                                 url = row.coverUrl,
                                 seriesUrl = row.seriesUrl,
+                                refreshKey = coverRefresh,
                                 modifier = Modifier.size(56.dp)
                             )
                             if (row.unread > 0) {

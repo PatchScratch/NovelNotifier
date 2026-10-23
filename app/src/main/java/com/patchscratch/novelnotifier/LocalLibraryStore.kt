@@ -1313,6 +1313,7 @@ object LocalLibraryStore {
             // 1MB re-encodes to a ~800px JPEG in place — a full disk is
             // what broke the index in the first place (2026-10-23).
             runCatching { compactCovers(context) }
+            var lastCoverBump = 0L
             suspend fun handle(b: LocalBook) {
                 kotlinx.coroutines.yield()
                 if (core.coverPathOf[b.id].orEmpty().isNotBlank()) return
@@ -1320,7 +1321,15 @@ object LocalLibraryStore {
                 File(context.cacheDir, "ll_${b.id}.epub").delete()
                 if (f != null) {
                     core.coverPathOf[b.id] = f.absolutePath
-                    coverTick++
+                    // Throttled (v3.2a): each bump recomposes the visible
+                    // tiles — per-cover bumps during a 5K backfill machine-
+                    // gunned the grid. 500ms cadence streams covers in
+                    // without a stutter.
+                    val now = System.currentTimeMillis()
+                    if (now - lastCoverBump >= 500) {
+                        lastCoverBump = now
+                        coverTick++
+                    }
                 }
             }
             // Two workers: SAF reads are IO-bound; a second lane roughly

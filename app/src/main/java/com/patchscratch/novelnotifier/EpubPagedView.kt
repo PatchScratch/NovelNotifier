@@ -33,12 +33,21 @@ fun EpubPagedView(
     initialHref: String,
     readerTheme: String,
     serif: Boolean,
+    fontSizeSp: Int = 17,
+    // Page-accurate resume (v3.2b): the last saved locator for this book
+    // (JSON); used when its href matches the chapter being opened.
+    initialLocatorJson: String? = null,
+    // Fires with the current locator JSON as the reader moves — the caller
+    // persists it per book.
+    onLocator: (String) -> Unit = {},
     onExternalLink: (String) -> Unit
 ) {
     val fragmentRef = remember { arrayOf<EpubNavigatorFragment?>(null) }
-    // Non-null locator for the chapter — the composition's anchor.
-    val locator = remember(initialHref) {
-        locatorOf(publication, initialHref)
+    // Non-null locator for the chapter — the composition's anchor. A saved
+    // locator for THIS chapter restores page-accurate position.
+    val locator = remember(initialHref, initialLocatorJson) {
+        savedLocatorOf(initialLocatorJson, initialHref)
+            ?: locatorOf(publication, initialHref)
             ?: publication.readingOrder.firstOrNull()?.let { link ->
                 org.readium.r2.shared.util.Url(link.href.toString())?.let { url ->
                     Locator(
@@ -51,11 +60,31 @@ fun EpubPagedView(
             }
     } ?: return   // no locator resolvable — nothing to render
 
+    // Position reporting: the navigator's locator flow is collected and
+    // forwarded as JSON for the caller to persist.
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(1500)   // let the fragment attach first
+        val frag = fragmentRef[0] ?: return@LaunchedEffect
+        runCatching {
+            frag.currentLocator.collect { loc ->
+                runCatching { loc.toJSON().toString() }.getOrNull()?.let(onLocator)
+            }
+        }
+    }
+
     // Chapter navigation after the first composition.
     LaunchedEffect(initialHref) {
         fragmentRef[0]?.let { frag ->
             locatorOf(publication, initialHref)?.let { frag.go(it, false) }
         }
+    }
+
+    // v3.2b: live preference updates — theme/font/size changes while the
+    // paged view is up submit straight to the navigator, no rebuild.
+    LaunchedEffect(readerTheme, serif, fontSizeSp) {
+        fragmentRef[0]?.submitPreferences(
+            readiumPreferences(readerTheme, serif, fontSizeSp)
+        )
     }
 
     AndroidView(
@@ -82,7 +111,7 @@ fun EpubPagedView(
                         fm.fragmentFactory = navFactory.createFragmentFactory(
                             initialLocator = locator,
                             readingOrder = publication.readingOrder,
-                            initialPreferences = readiumPreferences(readerTheme, serif),
+                            initialPreferences = readiumPreferences(readerTheme, serif, fontSizeSp),
                             listener = object : EpubNavigatorFragment.Listener {
                                 override fun onExternalLinkActivated(url: AbsoluteUrl) {
                                     onExternalLink(url.toString())
@@ -105,6 +134,16 @@ fun EpubPagedView(
     )
 }
 
+/** The saved locator when it points at THIS chapter; null otherwise. */
+private fun savedLocatorOf(json: String?, href: String): Locator? {
+    if (json.isNullOrBlank()) return null
+    return runCatching {
+        val loc = Locator.fromJSON(org.json.JSONObject(json)) ?: return null
+        if (loc.href.toString() != href && loc.href.toString() != href.substringBefore("#")) null
+        else loc
+    }.getOrNull()
+}
+
 /** The chapter's Locator from its href (first spine/ToC match). */
 private fun locatorOf(publication: Publication, href: String): Locator? {
     val link = publication.readingOrder.firstOrNull { it.href.toString() == href }
@@ -118,8 +157,12 @@ private fun locatorOf(publication: Publication, href: String): Locator? {
     )
 }
 
-/** Map the app's reader settings onto Readium's preference set. */
-private fun readiumPreferences(readerTheme: String, serif: Boolean): EpubPreferences =
+/**
+ * Map the app's reader settings onto Readium's preference set. Font size:
+ * the app's sp (12..28, default 17) becomes Readium's relative scale
+ * (1.0 = publisher default) — 17sp maps to 1.0, each step ±~6%.
+ */
+private fun readiumPreferences(readerTheme: String, serif: Boolean, fontSizeSp: Int): EpubPreferences =
     EpubPreferences(
         theme = when (readerTheme) {
             "dark" -> Theme.DARK
@@ -128,5 +171,6 @@ private fun readiumPreferences(readerTheme: String, serif: Boolean): EpubPrefere
         },
         fontFamily = if (serif) org.readium.r2.navigator.preferences.FontFamily("serif")
         else org.readium.r2.navigator.preferences.FontFamily("sans-serif"),
+        fontSize = fontSizeSp / 17.0,
         scroll = false   // paged — the whole point
     )

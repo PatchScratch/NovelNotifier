@@ -187,61 +187,78 @@ fun LocalLibraryHome(
     var showMoveSelected by remember { mutableStateOf(false) }
     var showMergeSelected by remember { mutableStateOf(false) }
     var showDeleteSelected by remember { mutableStateOf(false) }
-    // Reads the store's cover tick: the session-long background backfill
-    // bumps it per find, so covers light in wherever they land.
-    fun coverFor(bookId: String?): String {
-        LocalLibraryStore.coverTick
-        val p = s?.coverPathOf[bookId].orEmpty()
-        return if (p.isNotBlank()) "file://$p" else ""
-    }
-    val rows = if (s == null) emptyList() else {
-        val sidMap = s.seriesIdOf
-        val hiddenShelfIds = shelves.cats.filter { it.hidden && !nsfwUnlocked }.map { it.id }.toSet()
-        val bySeries = s.books.groupBy { sidMap[it.id] ?: it.id }
-        val allSeries = s.series
-        allSeries
-            .filter { sr -> (shelves.assign[sr.id]?.let { it !in hiddenShelfIds } ?: true) }
-            .filter { sr -> shelfFilter == null || shelves.assign[sr.id] == shelfFilter }
-            .filter { sr -> bySeries[sr.id].orEmpty().isNotEmpty() }
-            .filter { sr -> sr.name.contains(searchQuery, ignoreCase = true) }
-            .sortedWith(
-                when (sortMode) {
-                    SORT_ALPHA -> compareBy { it.name.lowercase() }
-                    else -> compareByDescending { sr -> bySeries[sr.id].orEmpty().maxOfOrNull { it.addedAt } ?: 0 }
-                }
-            )
-            .map { sr ->
-                val vols = bySeries[sr.id].orEmpty()
-                    .sortedWith(compareBy({ LocalLibraryStore.volumeNumber(it.title) }, { it.addedAt }))
-                // Series cover: the chosen volume when pinned, else vol 1.
-                val coverVol =
-                    if (sr.coverBookId.isNotBlank()) vols.firstOrNull { it.id == sr.coverBookId }
-                        ?: vols.firstOrNull()
-                    else vols.firstOrNull()
-                val vol1 = vols.firstOrNull()
-                val unread = vols.sumOf { v -> maxOf(0, v.chapterCount - (s.readPosOf[v.id] ?: 0)) }
-                // Selection mode (Wayne, 2026-10-22): long-press enters it,
-                // taps toggle, the action bar carries the batch operations.
-                // Selected tiles get a ✓ prefix — grid and list both show it.
-                rowKeyToSeries["locallib://${coverVol?.id ?: vol1?.id}"] = sr.id
-                val isSelected = sr.id in selectedIds
-                BookmarkRow(
-                    title = (if (isSelected) "✓ " else "") + sr.name,
-                    subtitle = vol1?.author.orEmpty(),
-                    coverUrl = coverFor(coverVol?.id),
-                    // The cover volume's CoverStore key — a chosen-volume
-                    // cover hits the store directly, vol 1 otherwise.
-                    seriesUrl = "locallib://${coverVol?.id ?: vol1?.id}",
-                    open = {
-                        if (selectedIds.isNotEmpty()) {
-                            selectedIds = if (isSelected) selectedIds - sr.id else selectedIds + sr.id
-                        } else onOpenSeries(sr.id)
-                    },
-                    unread = unread,
-                    latestLabel = if (vols.size > 1) "${vols.size} ${t("vols", "巻")}"
-                    else vol1?.takeIf { it.chapterCount > 0 }?.let { "${it.chapterCount} ${t("ch", "話")}" } ?: ""
+
+    // HEAVY half (v3.2a stutter fix): grouping 5.7K books into series,
+    // volume ordering, filtering and sorting. Remembered on its REAL
+    // inputs — recomputed only when the library data, filter or query
+    // changes. The cover tick is deliberately NOT read here: before, every
+    // cover the backfill found invalidated this whole build on the main
+    // thread, thousands of times per sweep (Wayne, 2026-10-23: "a few
+    // stutters" on the 5.7K library).
+    data class BuiltRow(
+        val seriesId: String, val title: String, val subtitle: String,
+        val coverKey: String, val unread: Int, val label: String
+    )
+    val built = remember(
+        s, shelves, shelfFilter, searchQuery, sortMode, nsfwUnlocked
+    ) {
+        if (s == null) emptyList() else {
+            val sidMap = s.seriesIdOf
+            val hiddenShelfIds = shelves.cats.filter { it.hidden && !nsfwUnlocked }.map { it.id }.toSet()
+            val bySeries = s.books.groupBy { sidMap[it.id] ?: it.id }
+            s.series
+                .filter { sr -> (shelves.assign[sr.id]?.let { it !in hiddenShelfIds } ?: true) }
+                .filter { sr -> shelfFilter == null || shelves.assign[sr.id] == shelfFilter }
+                .filter { sr -> bySeries[sr.id].orEmpty().isNotEmpty() }
+                .filter { sr -> sr.name.contains(searchQuery, ignoreCase = true) }
+                .sortedWith(
+                    when (sortMode) {
+                        SORT_ALPHA -> compareBy { it.name.lowercase() }
+                        else -> compareByDescending { sr -> bySeries[sr.id].orEmpty().maxOfOrNull { it.addedAt } ?: 0 }
+                    }
                 )
-            }
+                .map { sr ->
+                    val vols = bySeries[sr.id].orEmpty()
+                        .sortedWith(compareBy({ LocalLibraryStore.volumeNumber(it.title) }, { it.addedAt }))
+                    val coverVol =
+                        if (sr.coverBookId.isNotBlank()) vols.firstOrNull { it.id == sr.coverBookId }
+                        ?: vols.firstOrNull()
+                        else vols.firstOrNull()
+                    val vol1 = vols.firstOrNull()
+                    BuiltRow(
+                        seriesId = sr.id,
+                        title = sr.name,
+                        subtitle = vol1?.author.orEmpty(),
+                        // The cover volume's CoverStore key — CoverThumb
+                        // resolves it at TILE render time (that's where the
+                        // streaming refresh lives now).
+                        coverKey = "locallib://${coverVol?.id ?: vol1?.id}",
+                        unread = vols.sumOf { v -> maxOf(0, v.chapterCount - (s.readPosOf[v.id] ?: 0)) },
+                        label = if (vols.size > 1) "${vols.size} ${t("vols", "巻")}"
+                        else vol1?.takeIf { it.chapterCount > 0 }?.let { "${it.chapterCount} ${t("ch", "話")}" } ?: ""
+                    )
+                }
+        }
+    }
+
+    // LIGHT half: pure mapping per recomposition (selection ticks, cover
+    // ticks) — O(n) object creation, no grouping or sorting.
+    val rows = built.map { b ->
+        rowKeyToSeries[b.coverKey] = b.seriesId
+        val isSelected = b.seriesId in selectedIds
+        BookmarkRow(
+            title = (if (isSelected) "✓ " else "") + b.title,
+            subtitle = b.subtitle,
+            coverUrl = "",
+            seriesUrl = b.coverKey,
+            open = {
+                if (selectedIds.isNotEmpty()) {
+                    selectedIds = if (isSelected) selectedIds - b.seriesId else selectedIds + b.seriesId
+                } else onOpenSeries(b.seriesId)
+            },
+            unread = b.unread,
+            latestLabel = b.label
+        )
     }
 
     ModalNavigationDrawer(
@@ -437,7 +454,11 @@ fun LocalLibraryHome(
                     })
                 },
                 sortLabel = sortModeLabel(sortMode),
-                searchHistoryScope = "local:$libraryId"
+                searchHistoryScope = "local:$libraryId",
+                // v3.2a: the tick lands at TILE level — visible covers
+                // refresh as the backfill streams them in, the row build
+                // above never sees it.
+                coverRefresh = LocalLibraryStore.coverTick
             )
             }
             // Selection action bar — overlays the grid while anything is
