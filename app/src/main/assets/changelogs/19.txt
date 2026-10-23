@@ -1,0 +1,13 @@
+NovelNotifier 3.1.2 — reliability hardening under the hood, paged reading by default for your ePubs.
+
+RELIBILITY (proven under a 5,772-book library)
+• Index writes are atomic and imports serialize their read-modify-write cycles — a full disk or racing imports can no longer corrupt or erase the library index.
+• Bulk imports close each publication when done (an OOM at ~60 books into a large import is fixed).
+• Covers store as downsampled JPEGs (~300KB, not multi-MB PNGs) and the background sweep compacts any oversized stored covers in place.
+• Automatic duplicate deletion is REMOVED — at scale its title-matching merged different series and cascaded. Import-time checks still catch real duplicates; bulk deletion is never automatic.
+• Large-heap allowance for very large libraries (grid rendering exhausted the default heap at ~5,000 series).
+• Folder rescan self-heals: a library linked before the watcher existed derives its folder from its own books and registers it.
+• A filtered-to-zero search says "No matches" instead of the empty-library message.
+
+PAGED READING
+• Paged view (epub) is now the DEFAULT for local-library books — real horizontal pages through the Readium navigator, with your theme and font. The scroll text view is one ⋮ tap away for translation work.

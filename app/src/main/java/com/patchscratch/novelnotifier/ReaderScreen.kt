@@ -194,7 +194,7 @@ fun ReaderScreen(
     var loadedStamp by remember(target) { mutableStateOf(Triple("", -1, true)) }
 
     // --- reader-mode state (3.2) ---
-    var viewMode by remember { mutableStateOf(loadReaderView(prefs)) } // text | web
+    var viewMode by remember { mutableStateOf(loadReaderView(prefs)) } // text | web | paged
     var readerTheme by remember { mutableStateOf(loadReaderTheme(prefs)) } // light|sepia|dark
     var serif by remember { mutableStateOf(loadReaderSerif(prefs)) }
     var fontSize by remember { mutableIntStateOf(loadReaderFontSize(prefs)) }
@@ -762,9 +762,11 @@ fun ReaderScreen(
         // Local Library chapters have NO WebView dependency — the zip
         // serving below runs on the first composition, not after a page
         // finish. Bypass the extractTick/viewMode gates entirely.
+        // PAGED is the local-library default (Wayne, 2026-10-23): real
+        // epub pages; the scroll text view stays one ⋮ tap away.
         val isLocalLib = chapter.url.startsWith("locallib://")
-        if (isLocalLib && viewMode != READER_VIEW_PAGED) {
-            viewMode = READER_VIEW_TEXT
+        if (isLocalLib && viewMode == READER_VIEW_WEB) {
+            viewMode = READER_VIEW_PAGED
         }
         // Offline-first (Wayne, 2026-10-22): a STORED chapter bypasses the
         // gates too — but ONLY a confirmed stored hit. Checking on the
