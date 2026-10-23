@@ -1,13 +1,19 @@
 package com.patchscratch.novelnotifier
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -272,7 +278,10 @@ private fun BookmarkRowsLayout(
             widthDp >= 600 -> 4
             else -> 3
         }
+        val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+        Box(modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
+            state = gridState,
             columns = GridCells.Fixed(columns),
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(8.dp),
@@ -327,8 +336,31 @@ private fun BookmarkRowsLayout(
                 }
             }
         }
+        // Indicative scrollbar (Wayne, 2026-10-23): a thin thumb on the
+        // right edge shows where you are in a 5.7K-book grid.
+        ScrollbarIndicator(
+            progress = {
+                val info = gridState.layoutInfo
+                val vis = info.visibleItemsInfo
+                if (info.totalItemsCount > 1 && vis.isNotEmpty()) {
+                    val first = vis.first()
+                    val perItem = (vis.last().index - first.index).coerceAtLeast(1)
+                    (first.index.toFloat() / (info.totalItemsCount - perItem)).coerceIn(0f, 1f)
+                } else 0f
+            },
+            fraction = {
+                val info = gridState.layoutInfo
+                if (info.totalItemsCount > 0)
+                    info.visibleItemsInfo.size.toFloat() / info.totalItemsCount
+                else 1f
+            }
+        )
+        }
     } else {
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -376,6 +408,54 @@ private fun BookmarkRowsLayout(
                 }
             }
         }
+        ScrollbarIndicator(
+            progress = {
+                val info = listState.layoutInfo
+                if (info.totalItemsCount > 1 && info.visibleItemsInfo.isNotEmpty()) {
+                    val first = info.visibleItemsInfo.first()
+                    (first.index.toFloat() / (info.totalItemsCount - info.visibleItemsInfo.size))
+                        .coerceIn(0f, 1f)
+                } else 0f
+            },
+            fraction = {
+                val info = listState.layoutInfo
+                if (info.totalItemsCount > 0)
+                    info.visibleItemsInfo.size.toFloat() / info.totalItemsCount
+                else 1f
+            }
+        )
+        }
+    }
+}
+
+/**
+ * Indicative scrollbar: a thin rounded thumb riding the right edge. Not
+ * draggable — it answers "where am I in 5,700 books" at a glance (Wayne,
+ * 2026-10-23). [progress] 0..1 = top position; [fraction] = visible share.
+ */
+@Composable
+private fun ScrollbarIndicator(
+    progress: () -> Float,
+    fraction: () -> Float
+) {
+    val p = progress()
+    val f = fraction()
+    if (f >= 1f) return   // everything visible — no bar
+    BoxWithConstraints(modifier = Modifier.fillMaxHeight()) {
+        val trackH = maxHeight
+        val thumbH = (trackH * f).coerceIn(androidx.compose.ui.unit.Dp(28f), trackH * 0.6f)
+        val y = trackH * p * (1f - f)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(y = y)
+                .width(3.dp)
+                .height(thumbH)
+                .background(
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                    androidx.compose.foundation.shape.RoundedCornerShape(2.dp)
+                )
+        )
     }
 }
 
