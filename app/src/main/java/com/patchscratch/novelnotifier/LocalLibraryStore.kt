@@ -512,33 +512,19 @@ object LocalLibraryStore {
         }.getOrNull() ?: return null
         val lib = library(context, libraryId) ?: return null
         val bookId = UUID.randomUUID().toString().take(10)
-        // Readium parse: metadata, spine titles, cover — no temp file.
+        // Readium parse: metadata, spine titles, cover — open, extract,
+        // CLOSE (unclosed publications OOM'd the bulk link, 2026-10-23).
         var parsed: EpubParsed? = null
         runCatching {
-            val pub = ReadiumEngine.publicationFromUri(context, source.toString())
-            if (pub != null) {
-                val meta = ReadiumEngine.meta(pub)
-                // The book's own ToC first; spine titles only as fallback.
-                val titles = ReadiumEngine.toc(pub).map { it.first }.ifEmpty {
-                    pub.readingOrder.mapIndexed { i, link ->
-                        val spineTitle = link.title?.takeIf { it.isNotBlank() }
-                        val docTitle = ReadiumEngine.chapterBytes(pub, i)
-                            ?.toString(Charsets.UTF_8)
-                            ?.let { d ->
-                                Regex("<title[^>]*>([^<]*)</title>").find(d)
-                                    ?.groupValues?.get(1)?.trim()
-                            }
-                            ?.takeIf { t -> !t.isNullOrBlank() }
-                        spineTitle ?: docTitle ?: "Chapter ${i + 1}"
-                    }
-                }
+            val scan = ReadiumEngine.scanFromUri(context, source.toString())
+            if (scan != null) {
                 parsed = EpubParsed(
-                    title = meta.title,
-                    author = meta.author,
-                    description = meta.description,
+                    title = scan.meta.title,
+                    author = scan.meta.author,
+                    description = scan.meta.description,
                     opfPath = "",   // unused on the Readium path
-                    chapterTitles = titles,
-                    coverBytes = ReadiumEngine.coverJpeg(context, pub)
+                    chapterTitles = scan.titles,
+                    coverBytes = scan.cover
                 )
             }
         }

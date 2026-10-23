@@ -78,7 +78,9 @@ object ReadiumEngine {
     }
 
     /** Open a publication directly from a source URI (the import path —
-     *  parses without any temp copy). */
+     *  parses without any temp copy). CLOSED by the caller when done —
+     *  the bulk link OOM'd at ~60 books because 5,800 unclosed
+     *  publications accumulated (Wayne, 2026-10-23 rebuild). */
     suspend fun publicationFromUri(context: Context, uriString: String): Publication? {
         val (retriever, opener) = ensureEngine(context)
         val asset = runCatching {
@@ -88,6 +90,35 @@ object ReadiumEngine {
             opener.open(asset, allowUserInteraction = false).getOrNull()
         }.getOrNull()
     }
+
+    /** Open-parse-close in one: metadata, ToC titles, cover bytes. */
+    suspend fun scanFromUri(
+        context: Context,
+        uriString: String,
+        withCover: Boolean = true
+    ): ScanResult? {
+        val pub = publicationFromUri(context, uriString) ?: return null
+        return try {
+            val meta = Meta(
+                title = pub.metadata.title.orEmpty(),
+                author = pub.metadata.authors.mapNotNull { it.name }.joinToString(", "),
+                description = pub.metadata.description.orEmpty()
+            )
+            // Titles: the book's own ToC first; spine titles as fallback.
+            val toc = toc(pub)
+            val titles = if (toc.isNotEmpty()) toc.map { it.first } else {
+                pub.readingOrder.mapIndexed { i, link ->
+                    link.title?.takeIf { it.isNotBlank() } ?: "Chapter ${i + 1}"
+                }
+            }
+            val cover = if (withCover) coverJpeg(context, pub) else null
+            ScanResult(meta, titles, cover)
+        } finally {
+            runCatching { pub.close() }
+        }
+    }
+
+    data class ScanResult(val meta: Meta, val titles: List<String>, val cover: ByteArray?)
 
     /** Reading-order hrefs — Readium-resolved, always correct. */
     fun readingOrder(pub: Publication): List<Link> = pub.readingOrder
