@@ -770,7 +770,11 @@ object LocalLibraryStore {
             }
         }
         if (dirty) writeIndex(context, root)
-        dupScan(context).let { if (it.isNotEmpty()) dedupeBooks(context, it) }
+        // AUTOMATIC DUPLICATE DELETION IS REMOVED (Wayne, 2026-10-23): the
+        // title-normalizing signature collided across DIFFERENT series at
+        // 5.5K scale and the sweep re-ran it every pass — 21,638 deletions
+        // on a 5,536-book library. Import-time signature checks and the
+        // URI skip handle real duplicates; bulk deletion is never automatic.
     }
 
     /**
@@ -1304,9 +1308,6 @@ object LocalLibraryStore {
                 }
                 if (changed) writeIndex(context, root)
                 missingIds = missing
-            }
-            if (sized) {
-                dupScan(context).let { if (it.isNotEmpty()) dedupeBooks(context, it) }
             }
             // Compact oversized stored covers (the PNG era): anything over
             // 1MB re-encodes to a ~800px JPEG in place — a full disk is
