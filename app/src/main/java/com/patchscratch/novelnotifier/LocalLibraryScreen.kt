@@ -408,11 +408,17 @@ fun LocalLibraryHome(
                         shelves.cats.firstOrNull { it.id == id }?.name
                     } ?: snap?.library?.name ?: "Library",
                     rows = rows,
-                    emptyMessage = if (snap == null) t("Loading library…", "ライブラリ読み込み中…")
-                    else t(
+                emptyMessage = when {
+                    snap == null -> t("Loading library…", "ライブラリ読み込み中…")
+                    // A filtered-to-zero SEARCH is not an empty library —
+                    // say what actually happened (the old message sent
+                    // Wayne hunting for his books mid-import, 2026-10-23).
+                    searchQuery.isNotBlank() -> t("No matches", "一致なし")
+                    else -> t(
                         "No books yet — ☰ → Import epubs… to add your first",
                         "本がまだありません — ☰ → EPUBをインポート…"
-                    ),
+                    )
+                },
                     searchQuery = searchQuery,
                     onSearchChange = { searchQuery = it },
                     onOpenDrawer = { scope.launch { drawerState.open() } },
