@@ -143,4 +143,25 @@ fun `translator page is not a landing`() {
 fun `non-extnu chapters never gate`() {
     assertFalse(isNuLanding("https://example.com/c1", nuHome))
 }
+
+// ---- 6. rss-overview + bridge poisoning (2026-10-25, live-proven) ------
+
+@Test
+fun `foxteller rss overview is detected and never extracts`() {
+    assertTrue(isRssOverview("https://www.foxteller.com/rss/37883"))
+    assertFalse(isRssOverview("https://www.foxteller.com/novel/724/234/some-chapter"))
+}
+
+@Test
+fun `bridge never records an rss overview as a permalink`() {
+    assertFalse(ReaderTocStore.isValidPermalink("https://www.foxteller.com/rss/37883"))
+    assertTrue(ReaderTocStore.isValidPermalink("https://www.foxteller.com/novel/724/234/chapter"))
+    assertFalse(ReaderTocStore.isValidPermalink("not-a-url"))
+}
+
+@Test
+fun `redirect stub on NU mid-chain is detected`() {
+    assertTrue(isRedirectStub(extnu, nuHome))
+    assertFalse(isRedirectStub(extnu, "https://stabbingwithasyringe.home.blog/2026/10/02/v12c6/"))
+}
 }

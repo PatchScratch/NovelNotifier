@@ -141,6 +141,17 @@ private val ReaderSepia = ReaderPalette(Color(0xFFF4E8D0), Color(0xFF4A3B28))
 private val ReaderDark = ReaderPalette(Color(0xFF101418), Color(0xFFD8DBE2))
 
 /**
+ * TRUE when the loaded page is a translator's SERIES-OVERVIEW page (the
+ * foxteller /rss/<id> shape) rather than a chapter. Live-proven in-browser
+ * (Wayne, 2026-10-24): NU's extnu redirect lands here first — ads (the
+ * colored "junk text"), one preview paragraph, a continue link. This page
+ * must NEVER be extracted as a chapter: the resolver walker owns the hop
+ * to the real chapter.
+ */
+internal fun isRssOverview(loadedUrl: String): Boolean =
+    loadedUrl.contains("/rss/")
+
+/**
  * TRUE when NU served its own landing page instead of redirecting an
  * /extnu/ chapter to the translator (the redirect wall, Wayne's
  * "keeps pulling the landing page" 2026-10-24). The extractor must
@@ -152,6 +163,16 @@ internal fun isNuLanding(chapterUrl: String, loadedUrl: String): Boolean {
     if (!loadedUrl.contains("novelupdates.com")) return false
     return !loadedUrl.contains("/extnu/")
 }
+
+/**
+ * TRUE while an extnu redirect chain is still ON NU mid-hop (the
+ * interstitial CF/NU stub that shows during >10s redirects — live-measured
+ * on Failure to Transition v12c6, 2026-10-25: extraction of this stub is
+ * the colored "junk text" Wayne reported). Identical rule to [isNuLanding]
+ * — named separately because it guards the same state from the ladder.
+ */
+internal fun isRedirectStub(chapterUrl: String, loadedUrl: String): Boolean =
+    isNuLanding(chapterUrl, loadedUrl)
 
 
 @Composable
@@ -805,6 +826,18 @@ fun ReaderScreen(
             return@LaunchedEffect
         }
         if (foxRssStage == 1) return@LaunchedEffect
+        // RSS-OVERVIEW GATE (live-proven, 2026-10-24): extnu lands on the
+        // translator's /rss/ overview BEFORE the real chapter; the resolver
+        // walker owns that hop. The extractor used to race the walker
+        // (~1.2s vs ~2.5s) and on a lost race extracted the overview page
+        // — ads-as-junk-text, poisoned saves, poisoned permalink bridge.
+        // Extraction here is now unconditional REFUSAL; the walker navigates.
+        if (isRssOverview(loadedUrl)) {
+            DebugLog.log("READER", "rss overview page — extraction refused, resolver owns navigation")
+            extractResult = null
+            extractFailed = false
+            return@LaunchedEffect
+        }
         // NU landing-page gate: when the redirect wall serves NU itself
         // instead of the translator's chapter, extraction is REFUSED —
         // junk-colored landing text must never reach the reader, the

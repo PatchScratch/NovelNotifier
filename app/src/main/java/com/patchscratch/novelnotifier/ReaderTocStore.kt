@@ -16,6 +16,16 @@ import java.io.File
  * so the choice survives reader sessions.
  */
 object ReaderTocStore {
+
+    /**
+     * A permalink the bridge may record (2026-10-24 poisoning fix): an
+     * absolute URL that is NOT an intermediate page. The foxteller /rss/
+     * overview once won the extraction race, got recorded as a chapter's
+     * address, and every later open loaded the overview directly.
+     */
+    internal fun isValidPermalink(url: String): Boolean =
+        url.startsWith("http") && !url.contains("/rss/")
+
     private const val FILE = "reader_toc.json"
 
     private fun file(context: Context) = File(context.filesDir, FILE)
@@ -80,6 +90,7 @@ object ReaderTocStore {
      */
     fun mapUrl(context: Context, seriesUrl: String, fromExtNu: String, toPermalink: String) {
         if (!fromExtNu.contains("novelupdates.com") || toPermalink.contains("novelupdates.com")) return
+        if (!isValidPermalink(toPermalink)) return   // never record overview pages
         val root = read(context)
         val o = root.optJSONObject(seriesUrl) ?: JSONObject().also { root.put(seriesUrl, it) }
         val map = o.optJSONObject("map") ?: JSONObject().also { o.put("map", it) }
@@ -90,7 +101,7 @@ object ReaderTocStore {
 
     fun mappedUrl(seriesUrl: String, fromExtNu: String, context: Context): String? =
         read(context).optJSONObject(seriesUrl)?.optJSONObject("map")?.optString(fromExtNu)
-            ?.takeIf { it.startsWith("http") }
+            ?.takeIf { isValidPermalink(it) }   // polluted entries self-heal to null
 
     fun clear(context: Context, seriesUrl: String) {
         val root = read(context)
