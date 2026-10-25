@@ -894,7 +894,11 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
     function keyMatches(want, k) {
       if (want === k) return true;
       // bare "c29" wanted matches the site's vol'd "v2c29" key
-      return want.charAt(0) === ':' && k.charAt(0) !== ':' && k.endsWith(want);
+      if (want.charAt(0) === ':' && k.charAt(0) !== ':' && k.endsWith(want)) return true;
+      // Reverse (live case 2026-10-26): vol'd WANTED "2:1" matches the
+      // marker post's bare "Chapter 1" -> ":1" link — wanted.endsWith(k)
+      // with a bare anchor key.
+      return k.charAt(0) === ':' && want.charAt(0) !== ':' && want.endsWith(k);
     }
     var links = document.querySelectorAll('a[href]');
     var chapAnchors = [];
