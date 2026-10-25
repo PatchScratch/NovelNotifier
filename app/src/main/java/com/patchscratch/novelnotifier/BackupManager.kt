@@ -198,7 +198,7 @@ object BackupManager {
                             org.json.JSONObject(String(zip.readBytes()))
                                 .optJSONArray("books")?.length() ?: 0
                         }.getOrDefault(0)
-                        if (currentBooks == 0 || currentBooks <= incomingBooks) {
+                        if (shouldApplyLocalIndex(currentBooks, incomingBooks)) {
                             val f = context.filesDir.resolve("local_libraries.json")
                             f.writeBytes(zip.readBytes())
                             pruneDeadLocalBooks(f)
@@ -347,3 +347,13 @@ object BackupManager {
         }
     }
 }
+
+/**
+ * Pure decision rule for restoring a backup's local-library index (unit-
+ * tested): the incoming index replaces this device's only when the device
+ * holds FEWER books — a stocked device keeps its own index (the phone-
+ * backup-on-tablet erase, Wayne 2026-10-24). Equal-or-more on the backup
+ * side wins so merging across devices still works upward.
+ */
+fun shouldApplyLocalIndex(currentBooks: Int, incomingBooks: Int): Boolean =
+    currentBooks <= incomingBooks

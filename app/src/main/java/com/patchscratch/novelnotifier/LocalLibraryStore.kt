@@ -159,8 +159,9 @@ object LocalLibraryStore {
             return out
         }
         val def = LocalLibrary(DEFAULT_ID, DEFAULT_NAME)
-        root.put("libraries", JSONArray().put(JSONObject().put("id", def.id).put("name", def.name)))
-        writeIndex(context, root)
+        mutateIndex(context) { r ->
+            r.put("libraries", JSONArray().put(JSONObject().put("id", def.id).put("name", def.name)))
+        }
         librariesCache = listOf(def)
         return listOf(def)
     }
@@ -663,14 +664,14 @@ object LocalLibraryStore {
         // uploads to the same folder must be picked up automatically —
         // the session sweep re-scans recorded folders).
         runCatching {
-            val root = readIndex(context)
-            val arr = root.optJSONArray("folders") ?: JSONArray().also { root.put("folders", it) }
-            val entry = JSONObject().put("libraryId", libraryId).put("uri", treeUri.toString())
-            val known = (0 until arr.length()).any { i ->
-                arr.optJSONObject(i)?.let { it.optString("uri") == treeUri.toString() } == true
+            mutateIndex(context) { root ->
+                val arr = root.optJSONArray("folders") ?: JSONArray().also { root.put("folders", it) }
+                val entry = JSONObject().put("libraryId", libraryId).put("uri", treeUri.toString())
+                val known = (0 until arr.length()).any { i ->
+                    arr.optJSONObject(i)?.let { it.optString("uri") == treeUri.toString() } == true
+                }
+                if (!known) arr.put(entry)
             }
-            if (!known) arr.put(entry)
-            writeIndex(context, root)
         }
         val tree = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
             ?: return 0 to 0
@@ -751,7 +752,7 @@ object LocalLibraryStore {
         val uri = o.optString("storedUri")
         if (uri.startsWith("content://")) {
             val last = uri.substringAfterLast('/').substringAfter("%3A", "")
-            return runCatching { android.net.Uri.decode(last) }.getOrDefault(last)
+            return runCatching { android.net.Uri.decode(last) }.getOrNull() ?: last
         }
         val p = o.optString("storedPath")
         return if (p.isNotBlank()) p.substringAfterLast('/') else ""
@@ -800,8 +801,13 @@ object LocalLibraryStore {
      * series share one title across volumes. Exact source-filename matches
      * merge regardless.
      */
-    private fun dupScan(context: Context): List<Pair<String, String>> {
-        val root = readIndex(context)
+    internal fun dupScanForTest(root: JSONObject): List<Pair<String, String>> =
+        dupScanOn(root)
+
+    private fun dupScan(context: Context): List<Pair<String, String>> =
+        dupScanOn(readIndex(context))
+
+    private fun dupScanOn(root: JSONObject): List<Pair<String, String>> {
         val books = root.optJSONArray("books") ?: return emptyList()
         val bySignature = HashMap<String, JSONObject>()
         val byFileSig = HashMap<String, JSONObject>()
@@ -964,35 +970,42 @@ object LocalLibraryStore {
      * already shelved falls off. Detected by the absence of "series".
      */
     private fun ensureSeriesMigration(context: Context) {
-        val root = readIndex(context)
-        if (root.has("series")) return
-        val booksArr = root.optJSONArray("books") ?: JSONArray().also { root.put("books", it) }
-        val bookObjs = (0 until booksArr.length()).mapNotNull { booksArr.optJSONObject(it) }
-        if (bookObjs.isEmpty()) { root.put("series", JSONArray()); writeIndex(context, root); return }
-        val byKey = bookObjs.groupBy { o ->
-            val override = o.optString("seriesOverride")
-            when {
-                override.startsWith("solo:") -> "solo:" + o.optString("id")
-                override.isNotBlank() -> override
-                else -> o.optString("libraryId") + "|||" + seriesKey(o.optString("title"))
+        // Fast path unlocked; the migrating write runs as one locked cycle.
+        if (readIndex(context).has("series")) return
+        val bookToSeries = mutateIndex(context) { root ->
+            if (root.has("series")) return@mutateIndex emptyMap<String, String>()
+            val booksArr = root.optJSONArray("books") ?: JSONArray().also { root.put("books", it) }
+            val bookObjs = (0 until booksArr.length()).mapNotNull { booksArr.optJSONObject(it) }
+            if (bookObjs.isEmpty()) {
+                root.put("series", JSONArray())
+                return@mutateIndex emptyMap<String, String>()
             }
+            val byKey = bookObjs.groupBy { o ->
+                val override = o.optString("seriesOverride")
+                when {
+                    override.startsWith("solo:") -> "solo:" + o.optString("id")
+                    override.isNotBlank() -> override
+                    else -> o.optString("libraryId") + "|||" + seriesKey(o.optString("title"))
+                }
+            }
+            val seriesArr = JSONArray()
+            val map = HashMap<String, String>()
+            byKey.values.forEach { group ->
+                val first = group.first()
+                val sid = "s" + UUID.randomUUID().toString().take(8)
+                seriesArr.put(
+                    JSONObject().put("id", sid).put("libraryId", first.optString("libraryId"))
+                        .put("name", strippedTitle(first.optString("title")).ifBlank { first.optString("title") })
+                        .put("key", seriesKey(first.optString("title")))
+                )
+                group.forEach { it.put("seriesId", sid); map[it.optString("id")] = sid }
+            }
+            root.put("series", seriesArr)
+            map
         }
-        val seriesArr = JSONArray()
-        val bookToSeries = HashMap<String, String>()
-        byKey.values.forEach { group ->
-            val first = group.first()
-            val sid = "s" + UUID.randomUUID().toString().take(8)
-            seriesArr.put(
-                JSONObject().put("id", sid).put("libraryId", first.optString("libraryId"))
-                    .put("name", strippedTitle(first.optString("title")).ifBlank { first.optString("title") })
-                    .put("key", seriesKey(first.optString("title")))
-            )
-            group.forEach { it.put("seriesId", sid); bookToSeries[it.optString("id")] = sid }
-        }
-        root.put("series", seriesArr)
-        writeIndex(context, root)
         // Re-key shelf assignments to series ids.
-        val libs = root.optJSONArray("libraries") ?: JSONArray()
+        if (bookToSeries.isEmpty()) return
+        val libs = readIndex(context).optJSONArray("libraries") ?: return
         for (i in 0 until libs.length()) {
             val libId = libs.optJSONObject(i)?.optString("id") ?: continue
             val st = CategoryStore.load(context, "local:$libId")
@@ -1117,17 +1130,17 @@ object LocalLibraryStore {
         }
         if (trees.isEmpty()) return null
         runCatching {
-            val root = readIndex(context)
-            val arr = root.optJSONArray("folders") ?: JSONArray().also { root.put("folders", it) }
-            trees.forEach { tree ->
-                val known = (0 until arr.length()).any { i ->
-                    arr.optJSONObject(i)?.let { it.optString("uri") == tree } == true
+            mutateIndex(context) { root ->
+                val arr = root.optJSONArray("folders") ?: JSONArray().also { root.put("folders", it) }
+                trees.forEach { tree ->
+                    val known = (0 until arr.length()).any { i ->
+                        arr.optJSONObject(i)?.let { it.optString("uri") == tree } == true
+                    }
+                    if (!known) arr.put(
+                        JSONObject().put("libraryId", libraryId).put("uri", tree)
+                    )
                 }
-                if (!known) arr.put(
-                    JSONObject().put("libraryId", libraryId).put("uri", tree)
-                )
             }
-            writeIndex(context, root)
         }
         DebugLog.log("LOCALLIB", "rescan: healed ${trees.size} folder record(s) for lib=$libraryId")
         return trees.map(Uri::parse)
@@ -1491,15 +1504,15 @@ object LocalLibraryStore {
     /** Deletes the series AND every volume in it (epub files only when copied). */
     fun deleteSeries(context: Context, id: String) {
         seriesVolumesOf(context, id).forEach { deleteBook(context, it.id) }
-        val root = readIndex(context)
-        val arr = root.optJSONArray("series") ?: return
-        val keep = JSONArray()
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("id") != id) keep.put(o)
+        mutateIndex(context) { root ->
+            val arr = root.optJSONArray("series") ?: return@mutateIndex
+            val keep = JSONArray()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optString("id") != id) keep.put(o)
+            }
+            root.put("series", keep)
         }
-        root.put("series", keep)
-        writeIndex(context, root)
     }
 
     /**
@@ -1507,14 +1520,14 @@ object LocalLibraryStore {
      * this replaces the old override/solo machinery with direct membership.
      */
     fun moveBookToSeries(context: Context, bookId: String, seriesId: String?) {
-        val root = readIndex(context)
+        mutateIndex(context) { root ->
         val books = root.optJSONArray("books")
         var book: JSONObject? = null
         for (i in 0 until (books?.length() ?: 0)) {
             val o = books!!.optJSONObject(i) ?: continue
             if (o.optString("id") == bookId) { book = o; break }
         }
-        if (book == null) return
+        if (book == null) return@mutateIndex
         val target = seriesId ?: run {
             val sid = "s" + UUID.randomUUID().toString().take(8)
             val seriesArr = root.optJSONArray("series") ?: JSONArray().also { root.put("series", it) }
@@ -1528,7 +1541,7 @@ object LocalLibraryStore {
         }
         book.put("seriesId", target)
         book.put("seriesOverride", "")
-        writeIndex(context, root)
+        }
     }
 
     /**
