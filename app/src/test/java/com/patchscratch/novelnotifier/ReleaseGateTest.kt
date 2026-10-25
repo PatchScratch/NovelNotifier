@@ -160,6 +160,13 @@ fun `bridge never records an rss overview as a permalink`() {
 }
 
 @Test
+fun `split-word aggregate watermark is caught by signature`() {
+    val live = "If yo u a re abl e to re ad th is me s sage, yo u are re a ing fro m an una uthor ized agg regat e sit e."
+    assertTrue(isSplitWordWatermark(live))
+    assertFalse(isSplitWordWatermark("The sword sang as the hero readied his stance."))
+}
+
+@Test
 fun `redirect stub on NU mid-chain is detected`() {
     assertTrue(isRedirectStub(extnu, nuHome))
     assertFalse(isRedirectStub(extnu, "https://stabbingwithasyringe.home.blog/2026/10/02/v12c6/"))

@@ -17,6 +17,14 @@ import org.xmlpull.v1.XmlPullParserFactory
  */
 
 /**
+ * Split-word aggregate-bait watermark signature (mirror of the cleanText
+ * check in chapterExtractJs — live-proven on stabbingwithasyringe.home.blog,
+ * 2026-10-25). The space-broken-word shape is unique to these messages.
+ */
+fun isSplitWordWatermark(text: String): Boolean =
+    Regex("re a ing|agg regat|una uthor|me s sage|Wo rdPr ess|syri nge").containsMatchIn(text)
+
+/**
  * Best chapter-like number in [text], or -1 if none.
  * Prefers chapter over volume: "v12c34" → 34, "Chapter 12" → 12, "c45" → 45.
  */

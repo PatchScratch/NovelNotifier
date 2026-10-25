@@ -862,6 +862,14 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       // Foxteller (verified 2026-10-15) injects its anti-piracy line INTO
       // every content paragraph — strip the sentence, keep the prose.
       cleaned = cleaned.replace(/Please contact us at [\w.@-]+ if you see this on (another|any other) site\.?\s*\d+(\.\d+)?/gi, ' ');
+      // Split-word aggregate-bait watermark (live-proven on
+      // stabbingwithasyringe.home.blog 2026-10-25: same-color-as-bg span
+      // mid-chapter — "If yo u a re abl e to re ad th is me s sage…").
+      // Style stripping catches it when styles compute; this signature
+      // catches it even when a host defeats the style checks.
+      if (/re a ing|agg regat|una uthor|me s sage|Wo rdPr ess|syri nge/.test(cleaned)) {
+        return '';
+      }
       cleaned = cleaned.replace(/\s+/g, ' ').trim();
       return decodeSubstituted(cleaned);
     }
