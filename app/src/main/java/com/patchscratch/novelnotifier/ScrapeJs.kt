@@ -964,9 +964,12 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       try { return /\/20\d{2}\/\d{1,2}\/\d{1,2}\//.test(new URL(u).pathname); }
       catch (e) { return false; }
     }
-          var wantedRaw = wantedText.toLowerCase().replace(/\s+/g, ' ').trim();
 function landingHop() {
       if (!best) return 'FAIL';
+      // From the always-in-scope `wanted` param — wantedText only exists
+      // when the cover branch above ran (its absence crashed the whole
+      // script: "reading 'length' of undefined", live-caught 2026-10-26).
+      var wantedRaw = (wanted || '').toLowerCase().replace(/\s+/g, ' ').trim();
       var ps = best.querySelectorAll('p'), chars = 0, longs = 0;
       for (var lh = 0; lh < ps.length; lh++) {
         if (!nodeVisible(ps[lh])) continue;
