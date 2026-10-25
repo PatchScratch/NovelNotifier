@@ -929,7 +929,6 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       }
       var wantedText = '${wanted.replace("\\", "\\\\").replace("'", "\\'")}';
       var wantedKey = parseKey(wantedText);
-      var wantedRaw = wantedText.toLowerCase().replace(/\s+/g, ' ').trim();
       for (var wi = 0; wi < chapAnchors.length; wi++) {
         var ca = chapAnchors[wi];
         if (ca.href === location.href) continue;
@@ -944,12 +943,11 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       }
       // No wanted match here (or it's this page's own ToC self-link):
       // without real body volume this is a pure index — resolve via ToC.
-      var idxP = document.querySelectorAll('p'), idxChars = 0;
-      for (var ip = 0; ip < idxP.length; ip++) {
-        if (!nodeVisible(idxP[ip])) continue;
-        var ipt = (idxP[ip].innerText || '').trim();
-        if (ipt.length > 1) idxChars += ipt.length;
-      }
+      // Prose check (live-fixed 2026-10-25): count the CONTENT container's
+      // innerText — the Syringe theme packs chapter prose in divs, so a
+      // <p>-tag-only count undercounted a 22K-char chapter as 832 and the
+      // real-chapter page was misread as a pure index.
+      var idxChars = (best ? (best.innerText || '') : '').trim().length;
       if (idxChars < 1200) {
         if (tocLink && tocLink !== location.href) return 'COVER-TOC:' + tocLink;
         return 'COVER';
@@ -966,7 +964,8 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       try { return /\/20\d{2}\/\d{1,2}\/\d{1,2}\//.test(new URL(u).pathname); }
       catch (e) { return false; }
     }
-    function landingHop() {
+          var wantedRaw = wantedText.toLowerCase().replace(/\s+/g, ' ').trim();
+function landingHop() {
       if (!best) return 'FAIL';
       var ps = best.querySelectorAll('p'), chars = 0, longs = 0;
       for (var lh = 0; lh < ps.length; lh++) {
@@ -986,9 +985,15 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
         if (!nodeVisible(la)) continue;
         if (la.origin !== location.origin) continue;
         var lText = (la.innerText || '').trim();
-        // Strong candidate: a chapter-pattern label, or a dated-post page
-        // pointing at an undated permalink.
-        var strong = parseKey(lText) || (hereDated && !isDatedPost(la.href));
+        // Strong candidate: a chapter-pattern label, a dated-post page
+        // pointing at an undated permalink, or the wanted label verbatim
+        // (live case 2026-10-25: Syringe marker posts link "Volume 2
+        // Chapter 1 of Transition Failure!?" — worded, undated, but the
+        // wanted text sits inside the link label).
+        var lKey = parseKey(lText);
+        var wantHit = wantedRaw.length > 2 &&
+          lText.toLowerCase().replace(/\s+/g, ' ').indexOf(wantedRaw) >= 0;
+        var strong = lKey || wantHit || (hereDated && !isDatedPost(la.href));
         if (strong && (chars < 1500 || announcePath || announceText)) {
           return 'COVER-DIRECT:' + la.href;
         }
