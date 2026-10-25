@@ -186,10 +186,29 @@ object BackupManager {
                         restoredFiles++
                     }
                     name == "data/local_libraries.json" -> {
-                        val f = context.filesDir.resolve("local_libraries.json")
-                        f.writeBytes(zip.readBytes())
-                        pruneDeadLocalBooks(f)
-                        restoredFiles++
+                        // NEVER clobber a device's own epub library (Wayne,
+                        // 2026-10-24: restoring the phone's backup on the
+                        // tablet erased its 5,772-book index — the backup's
+                        // index only applies when THIS device has no books).
+                        val current = context.filesDir.resolve("local_libraries.json")
+                        val currentBooks = runCatching {
+                            org.json.JSONObject(current.readText()).optJSONArray("books")?.length() ?: 0
+                        }.getOrDefault(0)
+                        val incomingBooks = runCatching {
+                            org.json.JSONObject(String(zip.readBytes()))
+                                .optJSONArray("books")?.length() ?: 0
+                        }.getOrDefault(0)
+                        if (currentBooks == 0 || currentBooks <= incomingBooks) {
+                            val f = context.filesDir.resolve("local_libraries.json")
+                            f.writeBytes(zip.readBytes())
+                            pruneDeadLocalBooks(f)
+                            restoredFiles++
+                        } else {
+                            DebugLog.log(
+                                "BACKUP",
+                                "skipped local_libraries.json (device has $currentBooks books > backup's $incomingBooks)"
+                            )
+                        }
                     }
                     name.startsWith("data/series_cache/") -> {
                         val target = context.filesDir.resolve("series_cache").apply { mkdirs() }

@@ -106,6 +106,22 @@ object LocalLibraryStore {
         if (f.isFile) JSONObject(f.readText()) else JSONObject()
     }.getOrDefault(JSONObject())
 
+    /**
+     * THE ONLY sanctioned mutation path (Wayne, 2026-10-24: "won't save
+     * change of name" / "library disappeared multiple times"): the whole
+     * read-modify-write cycle holds [writeLock], so a background sweep can
+     * never write its stale root over a fresher user action — the exact
+     * race that survived the atomic-write fix (which only made single
+     * writes non-torn, not cycles non-interleaved).
+     */
+    fun <T> mutateIndex(context: Context, block: (JSONObject) -> T): T =
+        synchronized(writeLock) {
+            val root = readIndex(context)
+            val result = block(root)
+            writeIndex(context, root)
+            result
+        }
+
     private fun writeIndex(context: Context, root: JSONObject) {
         // ATOMIC + SERIALIZED (Wayne's index loss, 2026-10-23: a thousand
         // imports ran concurrent read-modify-write cycles — the sweep,
@@ -160,11 +176,11 @@ object LocalLibraryStore {
         libraries(context).firstOrNull { it.id == id }
 
     fun addLibrary(context: Context, name: String): LocalLibrary {
-        val root = readIndex(context)
-        val arr = root.optJSONArray("libraries") ?: JSONArray().also { root.put("libraries", it) }
         val lib = LocalLibrary(UUID.randomUUID().toString().take(8), name.trim())
-        arr.put(JSONObject().put("id", lib.id).put("name", lib.name))
-        writeIndex(context, root)
+        mutateIndex(context) { root ->
+            val arr = root.optJSONArray("libraries") ?: JSONArray().also { root.put("libraries", it) }
+            arr.put(JSONObject().put("id", lib.id).put("name", lib.name))
+        }
         return lib
     }
 
@@ -184,8 +200,8 @@ object LocalLibraryStore {
 
     fun deleteLibrary(context: Context, id: String) {
         if (id == DEFAULT_ID) return
-        val root = readIndex(context)
-        val arr = root.optJSONArray("libraries") ?: return
+        mutateIndex(context) { root ->
+        val arr = root.optJSONArray("libraries") ?: return@mutateIndex
         val keep = JSONArray()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
@@ -197,17 +213,17 @@ object LocalLibraryStore {
             books.optJSONObject(i)?.takeIf { it.optString("libraryId") == id }
                 ?.put("libraryId", DEFAULT_ID)
         }
-        writeIndex(context, root)
+        }
     }
 
     private fun mutateLibrary(context: Context, id: String, fn: (JSONObject) -> Unit) {
-        val root = readIndex(context)
-        val arr = root.optJSONArray("libraries") ?: return
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("id") == id) { fn(o); break }
+        mutateIndex(context) { root ->
+            val arr = root.optJSONArray("libraries") ?: return@mutateIndex
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optString("id") == id) { fn(o); break }
+            }
         }
-        writeIndex(context, root)
     }
 
     // Structural one-shots (migration, metadata cleanup) re-scan the whole
@@ -741,9 +757,7 @@ object LocalLibraryStore {
         return if (p.isNotBlank()) p.substringAfterLast('/') else ""
     }
 
-    private fun cleanIndexMeta(context: Context) {
-        val root = readIndex(context)
-        var dirty = false
+    private fun cleanIndexMeta(context: Context) = mutateIndex(context) { root ->
         val books = root.optJSONArray("books")
         val titlesBySeries = HashMap<String, MutableList<String>>()
         for (i in 0 until (books?.length() ?: 0)) {
@@ -751,7 +765,7 @@ object LocalLibraryStore {
             listOf("title", "author", "description").forEach { f ->
                 val v = o.optString(f)
                 val c = cleanMeta(v)
-                if (c != v) { o.put(f, c); dirty = true }
+                if (c != v) { o.put(f, c) }
             }
             titlesBySeries.getOrPut(o.optString("seriesId")) { mutableListOf() }
                 .add(o.optString("title"))
@@ -761,15 +775,14 @@ object LocalLibraryStore {
             val o = series!!.optJSONObject(i) ?: continue
             val name = o.optString("name")
             val cleaned = cleanMeta(name)
-            if (cleaned != name) { o.put("name", cleaned); dirty = true }
+            if (cleaned != name) { o.put("name", cleaned) }
             val vol1 = titlesBySeries[o.optString("id")]
                 ?.sortedWith(compareBy({ volumeNumber(it) }, { it }))?.firstOrNull()
             if (vol1 != null) {
                 val k = seriesKey(vol1)
-                if (k != o.optString("key")) { o.put("key", k); dirty = true }
+                if (k != o.optString("key")) { o.put("key", k) }
             }
         }
-        if (dirty) writeIndex(context, root)
         // AUTOMATIC DUPLICATE DELETION IS REMOVED (Wayne, 2026-10-23): the
         // title-normalizing signature collided across DIFFERENT series at
         // 5.5K scale and the sweep re-ran it every pass — 21,638 deletions
@@ -872,9 +885,8 @@ object LocalLibraryStore {
         return "" to f.absolutePath
     }
 
-    fun deleteBook(context: Context, bookId: String) {
-        val root = readIndex(context)
-        val arr = root.optJSONArray("books") ?: return
+    fun deleteBook(context: Context, bookId: String) = mutateIndex(context) { root ->
+        val arr = root.optJSONArray("books") ?: return@mutateIndex
         val keep = JSONArray()
         var deleted: JSONObject? = null
         for (i in 0 until arr.length()) {
@@ -882,7 +894,7 @@ object LocalLibraryStore {
             if (o.optString("id") == bookId) deleted = o else keep.put(o)
         }
         root.put("books", keep)
-        writeIndex(context, root)
+        Unit
         deleted?.let { d ->
             // LINKED books: the epub is the user's own file somewhere on the
             // device — delete only OUR cache and release the read grant.
@@ -917,13 +929,13 @@ object LocalLibraryStore {
     // — re-reading inside writeIndex() would parse a fresh tree and drop
     // the mutation (shipped silently: translatedMeta never persisted).
     fun setTranslatedMeta(context: Context, bookId: String, meta: String) {
-        val root = readIndex(context)
-        val arr = root.optJSONArray("books") ?: return
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("id") == bookId) { o.put("translatedMeta", meta); break }
+        mutateIndex(context) { root ->
+            val arr = root.optJSONArray("books") ?: return@mutateIndex
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optString("id") == bookId) { o.put("translatedMeta", meta); break }
+            }
         }
-        writeIndex(context, root)
     }
 
     /** Volume metadata edit (index-level — epubs on disk never change). */
@@ -931,18 +943,18 @@ object LocalLibraryStore {
         context: Context, bookId: String,
         title: String? = null, author: String? = null, description: String? = null
     ) {
-        val root = readIndex(context)
-        val arr = root.optJSONArray("books") ?: return
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("id") == bookId) {
-                title?.takeIf { it.isNotBlank() }?.let { o.put("title", cleanMeta(it)) }
-                author?.let { o.put("author", cleanMeta(it)) }
-                description?.let { o.put("description", cleanMeta(it)) }
-                break
+        mutateIndex(context) { root ->
+            val arr = root.optJSONArray("books") ?: return@mutateIndex
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optString("id") == bookId) {
+                    title?.takeIf { it.isNotBlank() }?.let { o.put("title", cleanMeta(it)) }
+                    author?.let { o.put("author", cleanMeta(it)) }
+                    description?.let { o.put("description", cleanMeta(it)) }
+                    break
+                }
             }
         }
-        writeIndex(context, root)
     }
 
     /**
@@ -1281,33 +1293,52 @@ object LocalLibraryStore {
             // near-identical names, so re-run the dup scan afterwards.
             var sized = false
             runCatching {
-                val root = readIndex(context)
-                val arr = root.optJSONArray("books") ?: JSONArray()
-                val byId = HashMap<String, JSONObject>(arr.length())
-                for (i in 0 until arr.length()) {
-                    arr.optJSONObject(i)?.let { byId[it.optString("id")] = it }
-                }
-                val missing = HashSet<String>()
-                var changed = false
-                core.books.forEach { b ->
-                    kotlinx.coroutines.yield()
-                    val o = byId[b.id] ?: return@forEach
-                    val alive = sourceAlive(context, o) || sourceAlive(context, o)
-                    val was = o.optBoolean("missing", false)
-                    when {
-                        !alive && !was -> { o.put("missing", true); changed = true; missing.add(b.id) }
-                        !alive -> missing.add(b.id)
-                        alive && was -> { o.put("missing", false); changed = true }
+                // The mutate-cycle runs under the write lock; the SLOW part
+                // (provider probes per book) happens OUTSIDE it first, on a
+                // throwaway read — only the (missing/bytes) results then
+                // apply in a short locked pass. A lock held across ~5,700
+                // SAF queries would freeze every user action for minutes.
+                data class Stamp(val id: String, val missing: Boolean, val bytes: Long?)
+                val probes = mutableListOf<Stamp>()
+                run {
+                    val root = readIndex(context)
+                    val arr = root.optJSONArray("books") ?: JSONArray()
+                    val byId = HashMap<String, JSONObject>(arr.length())
+                    for (i in 0 until arr.length()) {
+                        arr.optJSONObject(i)?.let { byId[it.optString("id")] = it }
                     }
-                    if (alive) {
-                        val sz = sourceSize(context, o)
-                        if (sz > 0 && o.optLong("bytes", -1L) != sz) {
-                            o.put("bytes", sz); changed = true; sized = true
+                    core.books.forEach { b ->
+                        kotlinx.coroutines.yield()
+                        val o = byId[b.id] ?: return@forEach
+                        val alive = sourceAlive(context, o) || sourceAlive(context, o)
+                        val sz = if (alive) sourceSize(context, o) else -1L
+                        probes.add(Stamp(b.id, !alive, if (sz > 0) sz else null))
+                    }
+                }
+                mutateIndex(context) { root ->
+                    val arr = root.optJSONArray("books") ?: JSONArray()
+                    val byId = HashMap<String, JSONObject>(arr.length())
+                    for (i in 0 until arr.length()) {
+                        arr.optJSONObject(i)?.let { byId[it.optString("id")] = it }
+                    }
+                    val missing = HashSet<String>()
+                    core.books.forEach { b ->
+                        val p = probes.firstOrNull { it.id == b.id } ?: return@forEach
+                        val o = byId[b.id] ?: return@forEach
+                        val was = o.optBoolean("missing", false)
+                        when {
+                            p.missing && !was -> { o.put("missing", true); missing.add(b.id) }
+                            p.missing -> missing.add(b.id)
+                            !p.missing && was -> o.put("missing", false)
+                        }
+                        p.bytes?.let { sz ->
+                            if (o.optLong("bytes", -1L) != sz) {
+                                o.put("bytes", sz); sized = true
+                            }
                         }
                     }
+                    missingIds = missing
                 }
-                if (changed) writeIndex(context, root)
-                missingIds = missing
             }
             // Compact oversized stored covers (the PNG era): anything over
             // 1MB re-encodes to a ~800px JPEG in place — a full disk is
@@ -1436,13 +1467,13 @@ object LocalLibraryStore {
     }
 
     private fun mutateSeries(context: Context, id: String, fn: (JSONObject) -> Unit) {
-        val root = readIndex(context)
-        val arr = root.optJSONArray("series") ?: return
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            if (o.optString("id") == id) { fn(o); break }
+        mutateIndex(context) { root ->
+            val arr = root.optJSONArray("series") ?: return@mutateIndex
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                if (o.optString("id") == id) { fn(o); break }
+            }
         }
-        writeIndex(context, root)
     }
 
     /**
