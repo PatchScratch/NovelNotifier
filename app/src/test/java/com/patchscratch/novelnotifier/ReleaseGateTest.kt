@@ -116,4 +116,31 @@ class ReleaseGateTest {
 
     private fun indexWithBooks(vararg books: JSONObject): JSONObject =
         JSONObject().put("books", JSONArray().apply { books.forEach { put(it) } })
+
+// ---- 5. NU landing-page gate (2026-10-24) -------------------------------
+
+private val extnu = "https://www.novelupdates.com/extnu/20567431/"
+    private val nuHome = "https://www.novelupdates.com/"
+
+@Test
+fun `NU landing page is detected for an extnu chapter`() {
+    assertTrue(isNuLanding(extnu, nuHome))
+}
+
+@Test
+fun `the extnu page itself is not a landing`() {
+    assertFalse(isNuLanding(extnu, extnu))
+}
+
+@Test
+fun `translator page is not a landing`() {
+    assertFalse(
+        isNuLanding(extnu, "https://www.shmtranslations.com/2020/12/06/chapter-2-gift/")
+    )
+}
+
+@Test
+fun `non-extnu chapters never gate`() {
+    assertFalse(isNuLanding("https://example.com/c1", nuHome))
+}
 }

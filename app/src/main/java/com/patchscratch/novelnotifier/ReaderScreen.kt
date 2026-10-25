@@ -140,6 +140,20 @@ private val ReaderLight = ReaderPalette(Color(0xFFFFFFFF), Color(0xFF1A1C1E))
 private val ReaderSepia = ReaderPalette(Color(0xFFF4E8D0), Color(0xFF4A3B28))
 private val ReaderDark = ReaderPalette(Color(0xFF101418), Color(0xFFD8DBE2))
 
+/**
+ * TRUE when NU served its own landing page instead of redirecting an
+ * /extnu/ chapter to the translator (the redirect wall, Wayne's
+ * "keeps pulling the landing page" 2026-10-24). The extractor must
+ * REFUSE such pages — extracting them produced junk-colored text,
+ * poisoned saves, and blocked ToC harvest, all from this one root.
+ */
+internal fun isNuLanding(chapterUrl: String, loadedUrl: String): Boolean {
+    if (!chapterUrl.contains("/extnu/")) return false
+    if (!loadedUrl.contains("novelupdates.com")) return false
+    return !loadedUrl.contains("/extnu/")
+}
+
+
 @Composable
 fun ReaderScreen(
     target: ReaderTarget,
@@ -791,6 +805,18 @@ fun ReaderScreen(
             return@LaunchedEffect
         }
         if (foxRssStage == 1) return@LaunchedEffect
+        // NU landing-page gate: when the redirect wall serves NU itself
+        // instead of the translator's chapter, extraction is REFUSED —
+        // junk-colored landing text must never reach the reader, the
+        // epub store, or the ToC harvester (Wayne, 2026-10-24: one root
+        // cause behind junk text, zero saves, no ToC, no volume split).
+        if (isNuLanding(chapter.url, loadedUrl)) {
+            DebugLog.log("READER", "NU landing page instead of chapter — extraction refused")
+            extractResult = null
+            extractFailed = true
+            cfChecking = true
+            return@LaunchedEffect
+        }
         extractResult = null
         extractFailed = false
         imageChapter = false
