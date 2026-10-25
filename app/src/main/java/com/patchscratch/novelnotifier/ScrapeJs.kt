@@ -874,6 +874,59 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       return decodeSubstituted(cleaned);
     }
 
+    // --- content container selection ---------------------------------------
+    // MUST run before the cover-page logic below: the cover branch reads
+    // `best` to measure prose volume, and a `var best` declared later reads
+    // as hoisted undefined there — the cover branch then saw idxChars === 0
+    // on EVERY page (live-caught 2026-10-26: a 22K-char chapter hopped away
+    // as "thin" while its .entry-content sat full and visible).
+    // Comment sections can hold more paragraph text than the chapter itself
+    // (Wuxiaworld et al), and ancestor scoring alone would then crown the
+    // comments. When a known platform selector matches AND holds real visible
+    // paragraph text, start there; scoring stays the fallback for everything
+    // else. Selectors verified per platform reports 2026-10-11; validate any
+    // new host before adding to this list.
+    var KNOWN_SELECTORS = ['div.js-episode-body', 'div.chapter-inner', '.cha-words', '.novel-content',
+      '#chr-content', '.chapter-content', '#chapter-c', '.post-content',
+      '.entry-content', 'article', '#novelBody',
+      // JP natives (deterministic beats ancestor scoring; the shared image
+      // walk rides whichever container wins): Syosetu + R18 sisters,
+      // Kakuyomu's site body.
+      '#novel_honbun', 'div.widget-episodeBody'];
+    var best = null;
+    var bestScore = 0;
+    for (var ks = 0; ks < KNOWN_SELECTORS.length && !best; ks++) {
+      var cand = document.querySelector(KNOWN_SELECTORS[ks]);
+      if (!cand) continue;
+      var cps = cand.querySelectorAll('p');
+      var cvis = 0, cchars = 0;
+      for (var vp = 0; vp < cps.length; vp++) {
+        if (!nodeVisible(cps[vp])) continue;
+        var cvt = (cps[vp].innerText || '').trim();
+        if (cvt.length > 1) { cvis++; cchars += cvt.length; }
+      }
+      if (cvis >= 3 && cchars >= 400) { best = cand; bestScore = cchars; }
+      // Image-led chapters (illustration episodes, manga-style posts) have
+      // little text: a known container with real illustrations still wins.
+      else if (cvis >= 1 && cand.querySelectorAll('img').length >= 2) { best = cand; bestScore = 400; }
+    }
+    if (!best) {
+      var paras = Array.prototype.slice.call(document.querySelectorAll('p'));
+      var score = new Map();
+      paras.forEach(function(p) {
+        if (!nodeVisible(p)) return;
+        var text = (p.innerText || '').trim();
+        if (text.length < 2) return;
+        var climb = p.parentElement;
+        while (climb && climb !== document.body) {
+          var cur = score.get(climb) || 0;
+          score.set(climb, cur + text.length);
+          climb = climb.parentElement;
+        }
+      });
+      score.forEach(function(v, el) { if (v > bestScore) { best = el; bestScore = v; } });
+    }
+
     // --- cover-page detection (Wayne, 2026-10-20) -------------------------
     // Some hosts point the NU chapter link at the site INDEX, not the
     // chapter (verified: stabbingwithasyringe.home.blog — post list whose
@@ -934,6 +987,28 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       var wantedText = '${wanted.replace("\\", "\\\\").replace("'", "\\'")}';
       var wantedKey = parseKey(wantedText);
       var wantedRaw = wantedText.toLowerCase().replace(/\s+/g, ' ').trim();
+      // Prose volume (computed once for both the guard and the thin check).
+      var idxChars = (best ? (best.innerText || '') : '').trim().length;
+      // Settle guard (live case 2026-10-26): at ~1.3 s past page-finish the
+      // container EXISTS in the DOM (anchors already parse) but still reads
+      // innerText === 0 until the theme's CSS/JS lays it out — hopping on
+      // that phantom-empty page re-routed a 22K-char chapter to the site
+      // ToC. Zero-text-with-container = wait for the retry ladder; only a
+      // container-less page (pure link farm) may hop immediately.
+      if (best && idxChars === 0) return 'WAIT';
+      // Chapter-confirmation guard (live case 2026-10-26): a REAL chapter on
+      // a widget-heavy host carries BOTH real prose in the content container
+      // AND its own chapter identity in the document title ("… Volume 2
+      // Chapter 1 …"). When both hold, this page IS the wanted chapter — a
+      // foreign widget anchor that accidentally key-matches (reverse rule on
+      // another series' bare "Chapter 1") can only make us hop AWAY from the
+      // text. Prose alone can't gate this: index pages carry multi-K synopses
+      // (the series overview measures 9.8K chars), but their titles never
+      // parse to a chapter key.
+      var titleKey = parseKey(document.title || '');
+      var confirmedChapter = idxChars >= 1200 && wantedKey && titleKey &&
+        keyMatches(wantedKey, titleKey);
+      if (!confirmedChapter) {
       for (var wi = 0; wi < chapAnchors.length; wi++) {
         var ca = chapAnchors[wi];
         if (ca.href === location.href) continue;
@@ -943,19 +1018,15 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
         var textHit = !keyHit && wantedRaw.length > 2 &&
           ca.t.toLowerCase().replace(/\s+/g, ' ').indexOf(wantedRaw) >= 0;
         if (keyHit || textHit) {
-          return 'COVER-DIRECT:' + ca.href;
+          return 'COVER-DIRECT:' + ca.href + '|w=key ' + ca.k + ' idx=' + idxChars;
         }
       }
       // No wanted match here (or it's this page's own ToC self-link):
       // without real body volume this is a pure index — resolve via ToC.
-      // Prose check (live-fixed 2026-10-25): count the CONTENT container's
-      // innerText — the Syringe theme packs chapter prose in divs, so a
-      // <p>-tag-only count undercounted a 22K-char chapter as 832 and the
-      // real-chapter page was misread as a pure index.
-      var idxChars = (best ? (best.innerText || '') : '').trim().length;
       if (idxChars < 1200) {
-        if (tocLink && tocLink !== location.href) return 'COVER-TOC:' + tocLink;
-        return 'COVER';
+        if (tocLink && tocLink !== location.href) return 'COVER-TOC:' + tocLink + '|w=thin';
+        return 'COVER|w=thin idx=' + idxChars;
+      }
       }
       // else: real prose on the page (chapter with embedded ToC) — extract.
     }
@@ -971,18 +1042,25 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
     }
 function landingHop() {
       if (!best) return 'FAIL';
-      // From the always-in-scope `wanted` param — wantedText only exists
-      // when the cover branch above ran (its absence crashed the whole
-      // script: "reading 'length' of undefined", live-caught 2026-10-26).
-      var wantedRaw = (wanted || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      // Same settle guard as the cover branch: a container that exists but
+      // reads empty means layout hasn't run — never announce-hop from a
+      // page we haven't actually seen yet (retry ladder re-runs us).
+      if ((best.innerText || '').trim().length === 0) return 'WAIT';
+      // The Kotlin template inlines the label here (same escaping as the
+      // cover branch) — there is no JS `wanted` binding to read.
+      var wantedRaw = '${wanted.replace("\\", "\\\\").replace("'", "\\'")}'.toLowerCase().replace(/\s+/g, ' ').trim();
       var ps = best.querySelectorAll('p'), chars = 0, longs = 0;
       for (var lh = 0; lh < ps.length; lh++) {
         if (!nodeVisible(ps[lh])) continue;
         var lt = (ps[lh].innerText || '').trim();
         if (lt.length > 1) { chars += lt.length; if (lt.length > 80) longs++; }
       }
-      // Real chapter that failed for another reason — don't rewrite it.
+      // Real chapter that failed for another reason — don't rewrite it. The
+      // <p> tally undercounts div-packed prose (822 vs 22K on Syringe), so
+      // the container's own innerText gets a veto too (2026-10-26: that gap
+      // let landingHop re-route a full chapter to a sidebar widget link).
       if (longs >= 18 && chars >= 5000) return 'FAIL';
+      if ((best.innerText || '').trim().length >= 5000) return 'FAIL';
       var announcePath = /\/(announcements?|releases?|updates?|status|news)(\/|$)/i.test(location.pathname);
       var head = (best.innerText || '').slice(0, 1200);
       var announceText = /(here you go|here it is|click here|read (it )?here|is (now )?up|now available|new chapter|thanks for waiting|posted)/i.test(head);
@@ -1009,55 +1087,10 @@ function landingHop() {
       return 'FAIL';
     }
 
-    // --- known content containers (field-verified platform selectors) -------
-    // Comment sections can hold more paragraph text than the chapter itself
-    // (Wuxiaworld et al), and ancestor scoring alone would then crown the
-    // comments. When a known platform selector matches AND holds real visible
-    // paragraph text, start there; scoring stays the fallback for everything
-    // else. Selectors verified per platform reports 2026-10-11; validate any
-    // new host before adding to this list.
-    var KNOWN_SELECTORS = ['div.js-episode-body', 'div.chapter-inner', '.cha-words', '.novel-content',
-      '#chr-content', '.chapter-content', '#chapter-c', '.post-content',
-      '.entry-content', 'article', '#novelBody',
-      // JP natives (deterministic beats ancestor scoring; the shared image
-      // walk rides whichever container wins): Syosetu + R18 sisters,
-      // Kakuyomu's site body.
-      '#novel_honbun', 'div.widget-episodeBody'];
-    var best = null;
-    for (var ks = 0; ks < KNOWN_SELECTORS.length && !best; ks++) {
-      var cand = document.querySelector(KNOWN_SELECTORS[ks]);
-      if (!cand) continue;
-      var cps = cand.querySelectorAll('p');
-      var cvis = 0, cchars = 0;
-      for (var vp = 0; vp < cps.length; vp++) {
-        if (!nodeVisible(cps[vp])) continue;
-        var cvt = (cps[vp].innerText || '').trim();
-        if (cvt.length > 1) { cvis++; cchars += cvt.length; }
-      }
-      if (cvis >= 3 && cchars >= 400) best = cand;
-      // Image-led chapters (illustration episodes, manga-style posts) have
-      // little text: a known container with real illustrations still wins.
-      else if (cvis >= 1 && cand.querySelectorAll('img').length >= 2) best = cand;
-    }
-
-    if (!best) {
-      var paras = Array.prototype.slice.call(document.querySelectorAll('p'));
-      var score = new Map();
-      paras.forEach(function(p) {
-        if (!nodeVisible(p)) return;
-        var text = (p.innerText || '').trim();
-        if (text.length < 2) return;
-        var climb = p.parentElement;
-        while (climb && climb !== document.body) {
-          var cur = score.get(climb) || 0;
-          score.set(climb, cur + text.length);
-          climb = climb.parentElement;
-        }
-      });
-      var bestScore = 0;
-      score.forEach(function(v, el) { if (v > bestScore) { best = el; bestScore = v; } });
-      if (!best || bestScore < 400) return landingHop();
-    }
+    // Container came from the selection block near the top; a page whose
+    // best ancestor still scores under 400 has no extractable body — let
+    // the announcement/landing hop look for the real chapter link.
+    if (!best || bestScore < 400) return landingHop();
 
     // Title first: letters that appear ONLY in the heading (uppercase C, O…)
     // must be part of the derivation sample or they decode as gaps.

@@ -144,7 +144,8 @@ class EpubBulkService : Service() {
             val v = unwrapJsResult(raw)
             if (!v.startsWith("COVER-DIRECT:") && !v.startsWith("COVER-TOC:")) break
             hops++
-            lastLoadedUrl = v.substringAfter(':')
+            // Directives carry a "|w=…" why-suffix; the hop URL ends at the bar.
+            lastLoadedUrl = v.substringAfter(':').substringBefore('|')
             DebugLog.log("EPUB", "cover hop $hops: $lastLoadedUrl")
             raw = withTimeoutOrNull(60_000) {
                 suspendCancellableCoroutine<String> { cont ->

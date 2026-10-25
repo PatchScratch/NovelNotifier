@@ -609,21 +609,56 @@ fun ReaderScreen(
     // Cover-page hops per chapter URL (Wayne 2026-10-20): COVER-DIRECT /
     // COVER-TOC directives are followed at most twice — cover → ToC →
     // chapter — then the ladder gives up honestly instead of looping.
-    val coverHops = remember(target) { mutableMapOf<String, Int>() }
+    // remember(target, retryKey): a manual Retry gets a fresh hop budget and
+    // pending state (the old budget made Retry useless after a dead end).
+    val coverHops = remember(target, retryKey) { mutableMapOf<String, Int>() }
+    // Directive confirmation (live case 2026-10-26): at ~1.2 s past
+    // page-finish this host's pages expose readable anchors but no scored
+    // content container yet — a single early read mis-classified a 22K-char
+    // chapter as a thin cover and hopped away from it. A hop directive is
+    // followed only once the SAME page repeats it on a later ladder shot
+    // (~3 s apart); a page that settles changes its answer instead, and
+    // that settled answer wins. Keyed by the URL the directive came from.
+    val pendingDirective = remember(target, retryKey) { mutableMapOf<String, String>() }
     fun tryExtract(onDone: (() -> Unit)? = null) {
         val wv = webViewRef.value ?: return
         extracting = true
         wv.evaluateJavascript(chapterExtractJs(chapter.chapter, target.seriesTitle)) { res ->
             val directive = unwrapJsResult(res).takeIf { it.startsWith("COVER") }
+            // Directives carry a "|w=…" why-suffix for the trace; the hop
+            // target is everything between the scheme colon and the bar.
             val coverFollow = directive?.takeIf {
                 (it.startsWith("COVER-DIRECT:") || it.startsWith("COVER-TOC:")) &&
                     (coverHops[chapter.url] ?: 0) < 2
-            }?.substringAfter(':')
-            if (coverFollow != null) {
+            }?.substringAfter(':')?.substringBefore('|')
+            val pageKey = loadedUrl.ifBlank { chapter.url }
+            if (coverFollow != null && directive == pendingDirective[pageKey]) {
                 coverHops[chapter.url] = (coverHops[chapter.url] ?: 0) + 1
-                DebugLog.log("READER", "cover hop ${coverHops[chapter.url]}: $coverFollow")
+                DebugLog.log("READER", "cover hop ${coverHops[chapter.url]}: $directive")
+                pendingDirective.remove(pageKey)
                 extracting = false
                 wv.loadUrl(coverFollow)
+                return@evaluateJavascript
+            }
+            if (coverFollow != null) {
+                // First sighting — remember it and let the ladder re-ask
+                // once the page has had time to settle.
+                DebugLog.log("READER", "cover pending: $directive")
+                pendingDirective[pageKey] = directive!!
+                // Same DOM probe as the miss path: is the content container
+                // absent, or present-but-hidden (innerText 0 with live <p>)?
+                webViewRef.value?.evaluateJavascript(
+                    """(function(){
+                        var e = document.querySelector('.entry-content');
+                        if (!e) return 'es=none';
+                        var s = getComputedStyle(e);
+                        return 'es=' + (e.innerText || '').trim().length + '/' + e.querySelectorAll('p').length +
+                          ' disp=' + s.display + ' vis=' + s.visibility;
+                    })()"""
+                ) { d -> DebugLog.log("READER", "dom: " + unwrapJsResult(d).take(120)) }
+                extractResult = null
+                extracting = false
+                onDone?.invoke()
                 return@evaluateJavascript
             }
             extractResult = parseChapterExtract(res)
@@ -646,24 +681,31 @@ fun ReaderScreen(
                 }
             } else {
                 DebugLog.log("READER", "extract miss — js said: " + (res ?: "").take(120))
+                // Hop budget spent while the page still answers with a hop
+                // directive: fail once the directive is CONFIRMED (same one
+                // twice) — the first sighting may just be an unsettled page.
+                // The banner's Retry resets the budget for a fresh cycle.
+                if (directive != null) {
+                    if (directive == pendingDirective[pageKey]) {
+                        extractFailed = true
+                        pendingDirective.remove(pageKey)
+                    } else {
+                        pendingDirective[pageKey] = directive
+                    }
+                }
                 // Which extractor stage fails? Mirror nodeVisible's checks.
                 webViewRef.value?.evaluateJavascript(
                     """(function(){
-                        var c = document.querySelector('.chapter-content');
-                        if (!c) return 'NOCONTAINER';
-                        var ps = c.querySelectorAll('p'), vis = 0, chars = 0, h0 = [];
-                        for (var i = 0; i < ps.length; i++) {
-                          var p = ps[i], st = window.getComputedStyle(p);
-                          var r = p.getBoundingClientRect();
-                          if (i < 3) h0.push((r.height|0) + '/' + st.display + '/' + st.visibility + '/' + st.opacity);
-                          if (st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity) > 0.01 && r.height > 0) {
-                            var t = (p.innerText || '').trim();
-                            if (t.length > 1) { vis++; chars += t.length; }
-                          }
-                        }
-                        return 'cc=' + ps.length + ' vis=' + vis + ' chars=' + chars + ' first=' + h0.join(',');
+                        var e = document.querySelector('.entry-content');
+                        var b = document.body;
+                        return document.title.slice(0,40) + ' | es=' +
+                          (e ? ((e.innerText || '').trim().length + '/' + e.querySelectorAll('p').length) : 'none') +
+                          ' | body=' + (b ? (b.innerText || '').trim().length : -1) +
+                          ' | rs=' + document.readyState +
+                          ' | a=' + document.querySelectorAll('a[href]').length +
+                          ' | vw=' + window.innerWidth + 'x' + window.innerHeight;
                     })()"""
-                ) { d -> DebugLog.log("READER", "dom: " + unwrapJsResult(d).take(140)) }
+                ) { d -> DebugLog.log("READER", "dom: " + unwrapJsResult(d).take(160)) }
             }
             extracting = false
             onDone?.invoke()

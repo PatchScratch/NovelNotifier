@@ -508,7 +508,8 @@ class HostProbeService : Service() {
             val v = unwrapJsResult(raw)
             if (!v.startsWith("COVER-DIRECT:") && !v.startsWith("COVER-TOC:")) break
             coverHops++
-            loadTarget = v.substringAfter(':')
+            // Directives carry a "|w=…" why-suffix; the hop URL ends at the bar.
+            loadTarget = v.substringAfter(':').substringBefore('|')
             DebugLog.log("PROBE", "cover hop $coverHops for ${t.series}: $loadTarget")
             raw = withTimeoutOrNull(75_000) {
                 suspendCancellableCoroutine<String> { cont ->
