@@ -929,6 +929,7 @@ fun chapterExtractJs(wanted: String = "", seriesTitle: String = ""): String = ""
       }
       var wantedText = '${wanted.replace("\\", "\\\\").replace("'", "\\'")}';
       var wantedKey = parseKey(wantedText);
+      var wantedRaw = wantedText.toLowerCase().replace(/\s+/g, ' ').trim();
       for (var wi = 0; wi < chapAnchors.length; wi++) {
         var ca = chapAnchors[wi];
         if (ca.href === location.href) continue;
