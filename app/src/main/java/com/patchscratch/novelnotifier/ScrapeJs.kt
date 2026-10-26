@@ -1243,6 +1243,25 @@ function landingHop() {
     // were harvested (pure-text chapters keep the 3-paragraph floor).
     if (out.length < 3 && imgs.length === 0) return landingHop();
 
+    // Catalog guard (live case 2026-10-26, luminaretranslations.com): an
+    // NU link can land on the translator's SERIES CATALOG — a long page
+    // where nearly every visible <p> is a short listing row ("Chapter 3 /
+    // Afterword / 4 months ago"; measured 65 rows, 2 long). The paragraph
+    // WALKER still emits thousands of runs from divs, so the gate must
+    // measure <p> rows, not the emitted out[]. Plenty of rows with a
+    // collapsed long-prose share = a listing, not a chapter — refuse it.
+    // JP-native containers are exempt (dialogue chapters are legitimately
+    // mostly short lines), as are image-led chapters.
+    if (imgs.length === 0 &&
+        !best.matches('#novel_honbun, .widget-episodeBody, div.js-episode-body')) {
+      var gp, cps2 = best.querySelectorAll('p'), cvis2 = 0, clong2 = 0;
+      for (gp = 0; gp < cps2.length; gp++) {
+        var gt = (cps2[gp].innerText || '').trim();
+        if (gt.length > 1) { cvis2++; if (gt.length > 80) clong2++; }
+      }
+      if (cvis2 >= 20 && clong2 * 10 < cvis2) return landingHop();
+    }
+
     // Title was extracted before the paragraphs (it feeds the derivation
     // sample); decode it with the derived map when one exists.
     if (typeof derived !== 'undefined' && derived) {
