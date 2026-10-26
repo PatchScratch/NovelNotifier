@@ -1,0 +1,16 @@
+NovelNotifier 3.2 — smoother library, page-accurate reading, and a chapter-loading overhaul for translator sites.
+
+READING (all sites)
+• Chapter loading overhauled: NU redirect chains that pass through marker posts, cover pages or series catalogs now resolve to the real chapter instead of extracting the wrong page (the "What, Failure to Transition" case is fixed end-to-end). Cover hops are confirmed before following, so an early page state can no longer re-route a load.
+• Wrong-page protection: series catalog/listing pages are refused as chapters instead of saving a page of listing links; NU landing and redirect stubs are never extracted.
+• Anti-piracy junk text (same-color-as-background and split-word watermarks) is stripped from stored chapters.
+• When a chapter genuinely can't load you now get the failure notice quickly instead of ~30s of silence, and Retry works (it re-arms the redirect budget).
+
+LIBRARY
+• Grid and list scrolling is smooth on large libraries (heavy grouping/sorting is cached; covers stream in per tile).
+• A thin scrollbar indicator on the right edge of every grid and list shows where you are.
+• Paged ePub reading: font-size changes apply live, and re-opening a book resumes on the exact page you left.
+
+STABILITY
+• All library index writes run under one lock (renames can no longer be erased by a concurrent scan), and restoring a backup never overwrites a larger on-device ePub library.
+• Every shipped data-loss fix is locked in by an automated regression suite that gates releases.
