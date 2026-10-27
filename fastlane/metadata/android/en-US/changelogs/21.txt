@@ -1,0 +1,4 @@
+NovelNotifier 3.2.1 — fixes the library freeze reported on large libraries.
+
+• Fixed an "app isn't responding" freeze when scrolling large libraries: each grid tile's cover lookup scanned the whole cover folder, and the resulting allocation storm pushed the app into non-stop garbage collection. Cover lookups now use an index (one scan total) and never touch the disk during scrolling.
+• Verified on a 5,700-book library: scrolling stays smooth, memory back to normal (~60-100MB vs ~600MB), no freezes.

@@ -32,8 +32,8 @@ android {
         applicationId = "com.patchscratch.novelnotifier"
         minSdk = 26
         targetSdk = 37
-        versionCode = 20
-        versionName = "3.2"
+        versionCode = 21
+        versionName = "3.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
