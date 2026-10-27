@@ -1235,7 +1235,12 @@ object LocalLibraryStore {
                 } else tmp.delete()
             }
         }
-        if (compacted > 0) DebugLog.log("LOCALLIB", "compacted $compacted oversized cover(s)")
+        if (compacted > 0) {
+            DebugLog.log("LOCALLIB", "compacted $compacted oversized cover(s)")
+            // Renames (.png -> .jpg) bypass CoverStore's writers; drop its
+            // index so lookups don't chase deleted names.
+            CoverStore.invalidate()
+        }
     }
 
     private fun sourceAlive(context: Context, o: JSONObject): Boolean {

@@ -33,7 +33,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -109,10 +112,16 @@ fun CoverThumb(
     // NOT render as a gray tile — it counts as absent, so the app's
     // default no-cover placeholder shows until a real one lands (Wayne,
     // 2026-10-22: "if a cover genuinely does not exist, use the default").
-    val local = remember(seriesUrl, refreshKey) {
-        seriesUrl.takeIf { it.isNotBlank() }
-            ?.let { CoverStore.localFile(context, it) }
-            ?.takeIf { LocalLibraryStore.looksLikeImage(it) }
+    // Resolved OFF main: the lookup + magic-byte check are file I/O, and
+    // lazy-grid prefetch composes tiles in bursts — on the main thread that
+    // froze scrolling libraries outright (live ANR 2026-10-27).
+    var local by remember(seriesUrl, refreshKey) { mutableStateOf<File?>(null) }
+    LaunchedEffect(seriesUrl, refreshKey) {
+        local = seriesUrl.takeIf { it.isNotBlank() }?.let { su ->
+            withContext(Dispatchers.IO) {
+                CoverStore.localFile(context, su)?.takeIf { LocalLibraryStore.looksLikeImage(it) }
+            }
+        }
     }
     var openFull by remember { mutableStateOf(false) }
     Surface(

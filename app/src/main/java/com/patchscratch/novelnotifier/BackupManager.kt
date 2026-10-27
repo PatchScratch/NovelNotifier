@@ -220,6 +220,9 @@ object BackupManager {
                         val target = CoverStore.dir(context).resolve(name.substringAfterLast('/'))
                         target.writeBytes(zip.readBytes())
                         restoredCovers++
+                        // Covers landed out-of-band — the prefix index must
+                        // not keep serving the pre-restore view.
+                        CoverStore.invalidate()
                     }
                     name.startsWith("data/covers_ai/") -> {
                         val target = context.filesDir.resolve("covers_ai").apply { mkdirs() }

@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Cover images as local files (filesDir/covers/<seriesUrlHash>.<ext>), not just
@@ -26,10 +27,48 @@ object CoverStore {
     /** Filename prefix for a series — matches the series_cache hashing scheme. */
     private fun prefix(seriesUrl: String) = seriesUrl.hashCode().toUInt().toString()
 
+    // Prefix→file index over the covers dir: ONE listing, then O(1) lookups.
+    // localFile() used to listFiles() per call — harmless one-off, lethal on
+    // the grid: lazy-grid prefetch composes tiles in bursts, each tile's
+    // CoverThumb asked for its cover, and on a ~5K-cover library every scroll
+    // allocated millions of File objects on MAIN until the heap ceiling put
+    // the UI thread into a permanent GC (live ANR 2026-10-27, tablet).
+    // Readers may hit this map from any thread: ConcurrentHashMap, rebuilt
+    // by atomic swap (never mutated mid-flight), refreshed on a miss at most
+    // once every 10s so cover-less grids can't listing-storm either.
+    @Volatile private var coverIndex: ConcurrentHashMap<String, File>? = null
+    @Volatile private var indexBuiltAt = 0L
+
+    private fun index(context: Context): ConcurrentHashMap<String, File> =
+        coverIndex ?: rebuildIndex(context)
+
+    private fun rebuildIndex(context: Context): ConcurrentHashMap<String, File> =
+        synchronized(this) {
+            coverIndex?.let { return it }
+            val fresh = ConcurrentHashMap<String, File>()
+            dir(context).listFiles()?.forEach { fresh[it.name.substringBefore('.')] = it }
+            coverIndex = fresh
+            indexBuiltAt = System.currentTimeMillis()
+            fresh
+        }
+
+    /** Drop the index after out-of-band writes (backup restore, sweeps). */
+    fun invalidate() {
+        coverIndex = null
+    }
+
     fun localFile(context: Context, seriesUrl: String): File? {
         if (seriesUrl.isBlank()) return null
         val p = prefix(seriesUrl)
-        return dir(context).listFiles()?.firstOrNull { it.name.startsWith("$p.") }
+        index(context)[p]?.let { if (it.exists()) return it }
+        // Not indexed (or deleted since): maybe an out-of-band write landed.
+        // At most one rebuild per 10s — misses are common (cover-less series)
+        // and each rebuild is a full directory read.
+        if (System.currentTimeMillis() - indexBuiltAt > 10_000) {
+            coverIndex = null
+            return index(context)[p]?.takeIf { it.exists() }
+        }
+        return null
     }
 
     fun hasLocal(context: Context, seriesUrl: String): Boolean =
@@ -57,6 +96,7 @@ object CoverStore {
         dir(context).listFiles()?.forEach { if (it.name.startsWith("$p.")) it.delete() }
         val file = dir(context).resolve("$p.$ext")
         file.writeBytes(bytes)
+        coverIndex?.put(p, file)
         genMarker(context, seriesUrl).writeText("1")
         DebugLog.log("COVER", "stored generated ${file.name} (${bytes.size}B) '$seriesUrl'")
         return file
@@ -86,6 +126,7 @@ object CoverStore {
                 if (bytes.isEmpty() || bytes.size > MAX_BYTES) return@withContext CoverResult(null, false)
                 val file = dir(context).resolve("${prefix(seriesUrl)}.$ext")
                 file.writeBytes(bytes)
+                coverIndex?.put(prefix(seriesUrl), file)
                 DebugLog.log("COVER", "stored ${file.name} (${bytes.size}B) '$seriesUrl'")
                 CoverResult(file, false)
             } catch (e: Exception) {
