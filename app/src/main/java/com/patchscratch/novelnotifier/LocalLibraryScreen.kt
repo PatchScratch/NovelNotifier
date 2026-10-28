@@ -257,7 +257,12 @@ fun LocalLibraryHome(
                 } else onOpenSeries(b.seriesId)
             },
             unread = b.unread,
-            latestLabel = b.label
+            latestLabel = b.label,
+            // Shelf bubble: membership is single, so one name. `shelves`
+            // is already loaded in this screen — no per-row IO.
+            shelf = shelves.assign[b.seriesId]
+                ?.let { id -> shelves.cats.firstOrNull { it.id == id }?.name }
+                .orEmpty()
         )
     }
 
@@ -424,6 +429,9 @@ fun LocalLibraryHome(
                     heading = shelfFilter?.let { id ->
                         shelves.cats.firstOrNull { it.id == id }?.name
                     } ?: snap?.library?.name ?: "Library",
+                    // Scroll identity: each shelf view + the all-view keep
+                    // their own remembered position.
+                    scrollKey = "local:$libraryId/" + (shelfFilter ?: "all"),
                     rows = rows,
                 emptyMessage = when {
                     snap == null -> t("Loading library…", "ライブラリ読み込み中…")

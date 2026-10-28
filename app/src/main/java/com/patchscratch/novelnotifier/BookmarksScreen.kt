@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -69,8 +70,40 @@ data class BookmarkRow(
     val open: () -> Unit,
     // B2 unread parity: NU-home style badge + latest-chapter line.
     val unread: Int = 0,
-    val latestLabel: String = ""
+    val latestLabel: String = "",
+    // Shelf bubble (Wayne, 2026-10-29): the shelf/category name a series
+    // belongs to, shown as a small chip on tiles and rows. Empty = no chip
+    // (sites never set it; unshelved series show nothing).
+    val shelf: String = ""
 )
+
+/**
+ * Session-scoped scroll positions for list screens (Wayne, 2026-10-30:
+ * "remember list position when navigating back from series page —
+ * inconvenient to scroll all the way back in a large library"). Opening a
+ * series replaces the list composable, and a `remember`-held state dies
+ * with it; states keyed by list identity live here instead and survive the
+ * round trip. LRU-capped so wandering through many lists can't grow it
+ * unbounded; state objects are plain holders, safe to re-attach to a fresh
+ * lazy layout on return.
+ */
+object ListScrollMemory {
+    private const val MAX = 16
+    private val grids = LinkedHashMap<String, androidx.compose.foundation.lazy.grid.LazyGridState>()
+    private val lists = LinkedHashMap<String, androidx.compose.foundation.lazy.LazyListState>()
+
+    fun grid(key: String): androidx.compose.foundation.lazy.grid.LazyGridState = synchronized(this) {
+        grids.remove(key)?.let { grids[key] = it; return it }
+        while (grids.size >= MAX) grids.remove(grids.keys.first())
+        androidx.compose.foundation.lazy.grid.LazyGridState().also { grids[key] = it }
+    }
+
+    fun list(key: String): androidx.compose.foundation.lazy.LazyListState = synchronized(this) {
+        lists.remove(key)?.let { lists[key] = it; return it }
+        while (lists.size >= MAX) lists.remove(lists.keys.first())
+        androidx.compose.foundation.lazy.LazyListState().also { lists[key] = it }
+    }
+}
 
 @Composable
 private fun BookmarksBody(
@@ -80,7 +113,9 @@ private fun BookmarksBody(
     onBack: () -> Unit,
     // Long-press a row/tile to manage it (Syosetu: change category /
     // remove). Null for stores without a site write-back.
-    onManageRow: ((BookmarkRow) -> Unit)? = null
+    onManageRow: ((BookmarkRow) -> Unit)? = null,
+    // Scroll-restore identity for this list (see ListScrollMemory).
+    scrollKey: String = heading
 ) {
     val context = LocalContext.current
     var layoutMode by remember { mutableStateOf(loadLayoutMode(context.getSharedPreferences("novel_prefs", 0))) }
@@ -98,7 +133,7 @@ private fun BookmarksBody(
                 saveLayoutMode(context.getSharedPreferences("novel_prefs", 0), layoutMode)
             })
         }
-        BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode)
+        BookmarkRowsLayout(rows, emptyMessage, onManageRow, layoutMode, scrollKey = scrollKey)
     }
 }
 
@@ -131,7 +166,9 @@ fun BookmarkLibraryBody(
     // v3.2a: per-tile cover refresh (local libraries) — the backfill's
     // cover tick lands HERE, at tile render time, so covers stream in
     // without invalidating the caller's row build. Sites never pass it.
-    coverRefresh: Int = 0
+    coverRefresh: Int = 0,
+    // Scroll-restore identity for this list (see ListScrollMemory).
+    scrollKey: String = heading
 ) {
     val context = LocalContext.current
     var layoutMode by remember { mutableStateOf(loadLayoutMode(context.getSharedPreferences("novel_prefs", 0))) }
@@ -214,10 +251,10 @@ fun BookmarkLibraryBody(
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize()
             ) {
-                BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode, coverRefresh)
+                BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode, coverRefresh, scrollKey)
             }
         } else {
-            BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode, coverRefresh)
+            BookmarkRowsLayout(histRows, emptyMessage, onManageRow, layoutMode, coverRefresh, scrollKey)
         }
     }
 }
@@ -265,7 +302,8 @@ private fun BookmarkRowsLayout(
     emptyMessage: String,
     onManageRow: ((BookmarkRow) -> Unit)?,
     layoutMode: String,
-    coverRefresh: Int = 0
+    coverRefresh: Int = 0,
+    scrollKey: String = ""
 ) {
     if (rows.isEmpty()) {
         EmptyState(message = emptyMessage)
@@ -278,7 +316,10 @@ private fun BookmarkRowsLayout(
             widthDp >= 600 -> 4
             else -> 3
         }
-        val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+        // Session-held state: back from a series lands on the same tile
+        // instead of the top (ListScrollMemory). Keys include the layout
+        // mode so grid and list keep independent positions.
+        val gridState = ListScrollMemory.grid("$scrollKey/grid")
         Box(modifier = Modifier.fillMaxSize()) {
         LazyVerticalGrid(
             state = gridState,
@@ -309,6 +350,28 @@ private fun BookmarkRowsLayout(
                                 count = row.unread,
                                 modifier = Modifier.align(Alignment.TopEnd)
                             )
+                        }
+                        // Shelf bubble (Wayne, 2026-10-29): which shelf this
+                        // series lives in, at a glance while scrolling.
+                        if (row.shelf.isNotBlank()) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f),
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(4.dp)
+                            ) {
+                                Text(
+                                    row.shelf,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .widthIn(max = 120.dp)
+                                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
                         }
                     }
                     Text(
@@ -357,7 +420,7 @@ private fun BookmarkRowsLayout(
         )
         }
     } else {
-        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val listState = ListScrollMemory.list("$scrollKey/list")
         Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -402,6 +465,24 @@ private fun BookmarkRowsLayout(
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
                                     maxLines = 1
                                 )
+                            }
+                            if (row.shelf.isNotBlank()) {
+                                Surface(
+                                    shape = MaterialTheme.shapes.small,
+                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f),
+                                    modifier = Modifier.padding(top = 3.dp)
+                                ) {
+                                    Text(
+                                        row.shelf,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .widthIn(max = 160.dp)
+                                            .padding(horizontal = 6.dp, vertical = 1.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -508,6 +589,7 @@ fun SyosetuBookmarksScreen(
     }
     BookmarksBody(
         heading = if (category.isBlank()) t("All", "すべて") + " (${shown.size})" else "$category (${shown.size})",
+        scrollKey = "syosetu/cat/" + category,
         rows = shown.map { bm ->
             BookmarkRow(
                 title = bm.title,
@@ -596,6 +678,7 @@ fun KakuyomuBookmarksScreen(
     BookmarksBody(
         heading = if (categoryId.isBlank()) t("Bookmarks", "ブックマーク") + " (${shown.size})"
         else "$catName (${shown.size})",
+        scrollKey = "kakuyomu/cat/" + categoryId,
         rows = shown.map { work ->
             BookmarkRow(
                 title = work.title,

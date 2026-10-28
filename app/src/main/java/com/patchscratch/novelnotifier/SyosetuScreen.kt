@@ -202,6 +202,7 @@ fun SyosetuHome(
         BookmarkLibraryBody(
             heading = if (selectedCategory.isBlank()) t("All", "すべて") + " (${visible.size})"
             else "$selectedCategory (${visible.size})",
+            scrollKey = "syosetu/" + selectedCategory.ifBlank { "all" },
             rows = sortBookmarks(visible).map { bm ->
                 BookmarkRow(
                     title = bm.title,

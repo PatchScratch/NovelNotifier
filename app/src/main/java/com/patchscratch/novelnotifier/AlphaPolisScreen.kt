@@ -191,6 +191,7 @@ fun AlphaPolisHome(
         BookmarkLibraryBody(
             heading = if (selName == null) t("All", "すべて") + " (${visible.size})"
                 else "$selName (${visible.size})",
+            scrollKey = "alphapolis/" + selectedCategoryId.ifBlank { "all" },
             rows = sortWorks(visible).map { w ->
                 BookmarkRow(
                     title = w.title,

@@ -217,6 +217,7 @@ fun KakuyomuHome(
         BookmarkLibraryBody(
             heading = if (selectedCategoryId.isBlank()) t("All", "すべて") + " (${visible.size})"
             else (categories.cats.firstOrNull { it.id == selectedCategoryId }?.name ?: "") + " (${visible.size})",
+            scrollKey = "kakuyomu/" + selectedCategoryId.ifBlank { "all" },
             rows = sortWorks(visible).map { work ->
                 BookmarkRow(
                     title = work.title,

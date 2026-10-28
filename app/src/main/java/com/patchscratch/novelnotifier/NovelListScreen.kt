@@ -397,6 +397,9 @@ fun NovelListScreen(
                             else -> 3
                         }
                         LazyVerticalGrid(
+                            // Session-held state: back from a series lands
+                            // on the same tile (ListScrollMemory).
+                            state = ListScrollMemory.grid("nu/" + vm.selectedListId.ifBlank { "reading" }),
                             columns = GridCells.Fixed(columns),
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(8.dp),
@@ -414,6 +417,7 @@ fun NovelListScreen(
                         }
                     } else {
                         LazyColumn(
+                            state = ListScrollMemory.list("nu/" + vm.selectedListId.ifBlank { "reading" }),
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                         ) {
