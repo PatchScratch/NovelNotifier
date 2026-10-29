@@ -1,0 +1,4 @@
+NovelNotifier 3.2.2 — two quality-of-life upgrades for large libraries.
+
+• Shelf bubbles: series tiles (and list rows) now show a small chip naming the shelf the series belongs to — see where things live at a glance while scrolling. Unshelved series show nothing.
+• Scroll restore: opening a series and coming back now returns you to the same spot in the list instead of jumping to the top. Each list keeps its own position (library shelves, NU lists, every site's home and categories).
