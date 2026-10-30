@@ -83,6 +83,10 @@ fun LocalLibraryHome(
     var showMissingCleanup by remember { mutableStateOf(false) }
     // B3: drawer-shelf filter; null = all books.
     var shelfFilter by remember { mutableStateOf<String?>(null) }
+    // Unshelved-only view (Wayne, 2026-10-30: "filter out books already
+    // added to shelves to ease sorting") — works through the remainder
+    // instead of rescanning shelved series.
+    var unshelvedOnly by remember { mutableStateOf(false) }
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
     var sortMode by remember { mutableStateOf(loadSortMode(prefs)) }
 
@@ -200,7 +204,7 @@ fun LocalLibraryHome(
         val coverKey: String, val unread: Int, val label: String
     )
     val built = remember(
-        s, shelves, shelfFilter, searchQuery, sortMode, nsfwUnlocked
+        s, shelves, shelfFilter, unshelvedOnly, searchQuery, sortMode, nsfwUnlocked
     ) {
         if (s == null) emptyList() else {
             val sidMap = s.seriesIdOf
@@ -209,6 +213,7 @@ fun LocalLibraryHome(
             s.series
                 .filter { sr -> (shelves.assign[sr.id]?.let { it !in hiddenShelfIds } ?: true) }
                 .filter { sr -> shelfFilter == null || shelves.assign[sr.id] == shelfFilter }
+                .filter { sr -> !unshelvedOnly || shelves.assign[sr.id] == null }
                 .filter { sr -> bySeries[sr.id].orEmpty().isNotEmpty() }
                 .filter { sr -> sr.name.contains(searchQuery, ignoreCase = true) }
                 .sortedWith(
@@ -391,9 +396,22 @@ fun LocalLibraryHome(
                                 selected = shelfFilter == cat.id,
                                 onClick = {
                                     shelfFilter = if (shelfFilter == cat.id) null else cat.id
+                                    unshelvedOnly = false
                                 }
                             )
                         }
+                        // Sorting helper: only what still needs a home.
+                        val unshelvedCount = snap?.series?.count {
+                            assignments[it.id] == null
+                        } ?: 0
+                        NavigationDrawerItem(
+                            label = { Text(t("Unshelved  ($unshelvedCount)", "未分類  ($unshelvedCount)")) },
+                            selected = unshelvedOnly,
+                            onClick = {
+                                unshelvedOnly = !unshelvedOnly
+                                if (unshelvedOnly) shelfFilter = null
+                            }
+                        )
                     }
 
                     NavigationDrawerItem(
@@ -426,12 +444,19 @@ fun LocalLibraryHome(
                     )
                 }
                 BookmarkLibraryBody(
-                    heading = shelfFilter?.let { id ->
-                        shelves.cats.firstOrNull { it.id == id }?.name
-                    } ?: snap?.library?.name ?: "Library",
+                    heading = when {
+                        unshelvedOnly -> t("Unshelved", "未分類")
+                        shelfFilter != null ->
+                            shelves.cats.firstOrNull { it.id == shelfFilter }?.name ?: ""
+                        else -> snap?.library?.name ?: "Library"
+                    },
                     // Scroll identity: each shelf view + the all-view keep
                     // their own remembered position.
-                    scrollKey = "local:$libraryId/" + (shelfFilter ?: "all"),
+                    scrollKey = "local:$libraryId/" + when {
+                        unshelvedOnly -> "unshelved"
+                        shelfFilter != null -> shelfFilter!!
+                        else -> "all"
+                    },
                     rows = rows,
                 emptyMessage = when {
                     snap == null -> t("Loading library…", "ライブラリ読み込み中…")
