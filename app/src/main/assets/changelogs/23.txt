@@ -1,0 +1,5 @@
+NovelNotifier 3.2.3 — stability: fixes the freezes and the black screen after merging series.
+
+• Fixed freezes while scrolling or sorting large libraries when accessibility-linked apps are connected (screen mirroring / remote-control tools): library grids, site lists and the series-merge picker no longer build accessibility data for every one of thousands of items.
+• Fixed a hang when a watched-folder scan imported new books: imports no longer read entire books into memory — the library stays responsive during background scans.
+• Merging series: the grid now refreshes immediately after a merge (no stale tile), and a series that was merged away shows "This series was merged into another or removed" with a back button instead of a blank black page.
