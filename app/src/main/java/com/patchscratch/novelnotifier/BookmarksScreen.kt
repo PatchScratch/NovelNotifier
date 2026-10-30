@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -324,7 +325,19 @@ private fun BookmarkRowsLayout(
         LazyVerticalGrid(
             state = gridState,
             columns = GridCells.Fixed(columns),
-            modifier = Modifier.fillMaxSize(),
+            // Semantics prune (live ANRs 2026-10-29/30, tablet): with an
+            // a11y client bound (Wayne runs RustDesk + Link to Windows),
+            // Compose answers scroll/relayout events by walking the whole
+            // semantics tree — and for a lazy grid that MATERIALIZES fake
+            // nodes for EVERY item (5,736 in the big library; RssHwm hit
+            // 1.2GB, main thread died GCing Rect allocations; triggered by
+            // shelf moves rebuilding rows mid-scroll). clearAndSetSemantics
+            // prunes the subtree so the walk is O(1). Tradeoff: TalkBack
+            // can no longer browse individual tiles — acceptable for now,
+            // revisit with a Compose upgrade.
+            modifier = Modifier
+                .fillMaxSize()
+                .clearAndSetSemantics { },
             contentPadding = PaddingValues(8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -424,7 +437,10 @@ private fun BookmarkRowsLayout(
         Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            // Same semantics prune as the grid (see above).
+            modifier = Modifier
+                .fillMaxSize()
+                .clearAndSetSemantics { },
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {

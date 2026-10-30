@@ -52,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -401,7 +402,11 @@ fun NovelListScreen(
                             // on the same tile (ListScrollMemory).
                             state = ListScrollMemory.grid("nu/" + vm.selectedListId.ifBlank { "reading" }),
                             columns = GridCells.Fixed(columns),
-                            modifier = Modifier.fillMaxSize(),
+                            // Semantics prune — see BookmarksScreen's grid
+                            // for the a11y-fake-node ANR this prevents.
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clearAndSetSemantics { },
                             contentPadding = PaddingValues(8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -418,7 +423,9 @@ fun NovelListScreen(
                     } else {
                         LazyColumn(
                             state = ListScrollMemory.list("nu/" + vm.selectedListId.ifBlank { "reading" }),
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clearAndSetSemantics { },
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             items(shownNovels.size) { index ->
