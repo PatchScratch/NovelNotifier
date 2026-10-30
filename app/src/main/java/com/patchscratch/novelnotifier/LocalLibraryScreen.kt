@@ -380,12 +380,18 @@ fun LocalLibraryHome(
                         // B3: tapping a shelf filters the grid (the NU
                         // reading-list rows' behavior); tapping it again
                         // clears back to all books. Hidden shelves list
-                        // only while the NSFW unlock is live.
-                        if (shelfFilter != null) {
+                        // only while the NSFW unlock is live. Also the exit
+                        // from the Unshelved view (Wayne, 2026-10-30: "the
+                        // option for All Books is not there when browsing
+                        // Unshelved — I have to get into a shelf first").
+                        if (shelfFilter != null || unshelvedOnly) {
                             NavigationDrawerItem(
                                 label = { Text(t("All books", "すべての本")) },
                                 selected = false,
-                                onClick = { shelfFilter = null }
+                                onClick = {
+                                    shelfFilter = null
+                                    unshelvedOnly = false
+                                }
                             )
                         }
                         shelves.cats.filter { !it.hidden || nsfwUnlocked }.forEach { cat ->
