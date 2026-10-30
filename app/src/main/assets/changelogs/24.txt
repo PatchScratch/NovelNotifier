@@ -1,0 +1,4 @@
+NovelNotifier 3.2.4 — Unshelved view for faster shelf sorting.
+
+• New "Unshelved (N)" row in the library drawer: shows only series that don't belong to any shelf, so sorting sessions work through the remainder instead of re-scanning what's already filed. Keeps its own scroll position; switches off when you pick a specific shelf.
+• "All books" now appears in the drawer whenever a filter is active — including while browsing Unshelved — and returns you to the full library in one tap.
