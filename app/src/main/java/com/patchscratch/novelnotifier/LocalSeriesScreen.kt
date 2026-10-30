@@ -2,6 +2,7 @@ package com.patchscratch.novelnotifier
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -23,6 +24,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +50,10 @@ fun LocalSeriesScreen(
     val prefs = context.getSharedPreferences("novel_prefs", android.content.Context.MODE_PRIVATE)
     val scope = rememberCoroutineScope()
     var series by remember(seriesId) { mutableStateOf<LocalLibraryStore.LocalSeries?>(null) }
+    // True once the initial index read finished — separates "still
+    // loading" (render nothing) from "loaded and the series is GONE"
+    // (render the merged/removed notice, not a black screen).
+    var initialLoadDone by remember(seriesId) { mutableStateOf(false) }
     var volumes by remember(seriesId) { mutableStateOf<List<LocalLibraryStore.LocalBook>>(emptyList()) }
     var shelves by remember(seriesId) { mutableStateOf(CategoryState()) }
     var readPos by remember(seriesId) { mutableStateOf<Map<String, Int>>(emptyMap()) }
@@ -88,10 +94,24 @@ fun LocalSeriesScreen(
                 nextTitles = LocalLibraryStore.chapterTitlesR(context, v)
                     .ifEmpty { LocalLibraryStore.chapterTitles(context, v) }
             }
+            initialLoadDone = true
         }
     }
 
-    val s = series ?: return
+    val s = series ?: run {
+        if (!initialLoadDone) return
+        // The series row no longer exists — typically opened from a stale
+        // grid tile after a merge. Say so and offer the way out instead of
+        // a dead black page (live case 2026-10-30).
+        Column(modifier = Modifier.fillMaxSize().screenInsets()) {
+            TextButton(onClick = onBack) { Text("‹ " + t("Library", "ライブラリ")) }
+            EmptyState(message = t(
+                "This series was merged into another or removed.",
+                "このシリーズは統合または削除されました。"
+            ))
+        }
+        return
+    }
     val vol1 = volumes.firstOrNull()
     // Series cover: the pinned volume when set, else volume 1.
     val coverVol =
@@ -598,9 +618,15 @@ fun SeriesPickerDialog(
                 val filtered = if (query.isBlank()) series
                 else series.filter { it.name.contains(query, ignoreCase = true) }
                 LazyColumn(
+                    // Semantics prune — see BookmarksScreen's grid. This
+                    // dialog lists the WHOLE library (thousands of series);
+                    // with an a11y client bound (RustDesk / Link to
+                    // Windows) every search keystroke re-walked fake nodes
+                    // for all of them (live ANR 23:20 during a merge).
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 420.dp)
+                        .clearAndSetSemantics { }
                 ) {
                     items(filtered, key = { it.id }) { s ->
                         TextButton(onClick = { onPick(s) }) {

@@ -1492,6 +1492,8 @@ object LocalLibraryStore {
                 if (o.optString("id") == id) { fn(o); break }
             }
         }
+        // Series metadata (name, cover pin…) feeds the grid — let it reload.
+        libraryTick++
     }
 
     /**
@@ -1504,6 +1506,10 @@ object LocalLibraryStore {
         if (fromId == toId) return
         seriesVolumesOf(context, fromId).forEach { moveBookToSeries(context, it.id, toId) }
         deleteSeries(context, fromId)
+        // The emptied series disappears — grids must drop its stale tile
+        // (live case 2026-10-30: the stale tile opened a BLACK series
+        // page after Wayne merged).
+        libraryTick++
     }
 
     /** Deletes the series AND every volume in it (epub files only when copied). */
@@ -1518,6 +1524,7 @@ object LocalLibraryStore {
             }
             root.put("series", keep)
         }
+        libraryTick++
     }
 
     /**
