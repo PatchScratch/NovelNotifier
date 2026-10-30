@@ -524,9 +524,19 @@ object LocalLibraryStore {
     suspend fun import(
         context: Context, libraryId: String, source: Uri, linkInPlace: Boolean = false
     ): LocalBook? {
-        val bytes = runCatching {
+        // Size WITHOUT slurping (live OOM 2026-10-30 23:28: a folder-rescan
+        // import read a whole linked epub into the heap and every UI scroll
+        // died GCing against the 512MB ceiling). Full bytes are now loaded
+        // lazily and ONLY when truly needed — the Readium-failed zip parse
+        // or a copy-mode store. Link imports that parse cleanly never read
+        // the book into memory at all.
+        val docSize = runCatching {
+            context.contentResolver.openAssetFileDescriptor(source, "r")?.use { it.length } ?: -1L
+        }.getOrDefault(-1L)
+        var slurped: ByteArray? = null
+        fun fullBytes(): ByteArray? = slurped ?: runCatching {
             context.contentResolver.openInputStream(source)?.use { it.readBytes() }
-        }.getOrNull() ?: return null
+        }.getOrNull()?.also { slurped = it }
         val lib = library(context, libraryId) ?: return null
         val bookId = UUID.randomUUID().toString().take(10)
         // Readium parse: metadata, spine titles, cover — open, extract,
@@ -545,7 +555,7 @@ object LocalLibraryStore {
                 )
             }
         }
-        if (parsed == null) parsed = parseEpub(bytes)
+        if (parsed == null) parsed = fullBytes()?.let { parseEpub(it) }
         val parsedFinal = parsed ?: return null
         val title = parsedFinal.title.ifBlank { "book-$bookId" }
         // Content-signature duplicate check: the same epub can arrive under
@@ -561,7 +571,7 @@ object LocalLibraryStore {
                 if (o.optString("title") != title) continue
                 if (o.optInt("chapters", 0) != parsedFinal.chapterTitles.size) continue
                 val knownSize = o.optLong("bytes", -1L)
-                if (knownSize != -1L && knownSize != bytes.size.toLong()) continue
+                if (knownSize != -1L && docSize != -1L && knownSize != docSize) continue
                 if (volumeNumber(title) == Int.MAX_VALUE && knownSize == -1L) continue
                 return LocalBook(
                     id = o.optString("id"), libraryId = lib.id,
@@ -586,7 +596,7 @@ object LocalLibraryStore {
             }
             source.toString() to ""
         } else {
-            storeBytes(context, lib, fileName, bytes, bookId)
+            storeBytes(context, lib, fileName, fullBytes() ?: return null, bookId)
         }
         parsedFinal.coverBytes?.let { cov ->
             runCatching {
@@ -637,7 +647,7 @@ object LocalLibraryStore {
                     .put("opfPath", parsedFinal.opfPath).put("chapters", book.chapterCount)
                     .put("addedAt", book.addedAt).put("ref", linkInPlace)
                     .put("seriesId", seriesId)
-                    .put("bytes", bytes.size.toLong())
+                    .put("bytes", if (docSize != -1L) docSize else (slurped?.size?.toLong() ?: -1L))
             )
             writeIndex(context, rootNow)
             book
