@@ -654,10 +654,28 @@ fun LocalLibraryHome(
                     val targets = selectedIds
                     selectedIds = emptySet()
                     scope.launch {
+                        var kept = 0
                         withContext(Dispatchers.IO) {
-                            targets.forEach { LocalLibraryStore.deleteSeries(context, it, LocalLibraryStore.DeleteMode.TRASH) }
+                            targets.forEach {
+                                kept += LocalLibraryStore.deleteSeries(
+                                    context, it, LocalLibraryStore.DeleteMode.TRASH
+                                )
+                            }
                         }
                         reload()
+                        // Files that could not be moved stay in the library
+                        // on purpose (index must match disk) — say so, or
+                        // the "deleted" series looks resurrected.
+                        if (kept > 0) {
+                            android.widget.Toast.makeText(
+                                context,
+                                t(
+                                    "$kept volume(s) could not be moved to Trash — left in place and kept in the library",
+                                    "${kept}巻をTrashへ移動できませんでした — 元の場所に残し、ライブラリにも残しています"
+                                ),
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 }) { Text(t("Move to Trash", "Trashへ移動"), color = MaterialTheme.colorScheme.error) }
             },

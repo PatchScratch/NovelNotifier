@@ -484,7 +484,23 @@ fun LocalSeriesScreen(
                 TextButton(onClick = {
                     showDelete = false
                     scope.launch(Dispatchers.IO) {
-                        LocalLibraryStore.deleteSeries(context, s.id, LocalLibraryStore.DeleteMode.TRASH)
+                        val kept = LocalLibraryStore.deleteSeries(
+                            context, s.id, LocalLibraryStore.DeleteMode.TRASH
+                        )
+                        if (kept > 0) {
+                            // Files that could not be move stay in the
+                            // library on purpose (index must match disk).
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    t(
+                                        "$kept volume(s) could not be moved to Trash — left in place and kept in the library",
+                                        "${kept}巻をTrashへ移動できませんでした — 元の場所に残し、ライブラリにも残しています"
+                                    ),
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
                     }
                     onBack()
                 }) { Text(t("Move to Trash", "Trashへ移動"), color = MaterialTheme.colorScheme.error) }

@@ -103,6 +103,11 @@ object BackupManager {
         val prefs = context.getSharedPreferences("novel_prefs", Context.MODE_PRIVATE)
         val prefValues = backupPrefValues(prefs)
         val customThemeFile = context.filesDir.resolve("custom_theme.json")
+        // ENOSPC hard-killed the app mid-export (tablet 2026-11-01: full SD
+        // card, fatal IOException at zip.write). Fail softly, and remove the
+        // half-written zip — it has no central directory and is pure dead
+        // weight on the very disk that ran out of space.
+        runCatching {
         ZipOutputStream(output.buffered()).use { zip ->
             fun put(name: String, bytes: ByteArray) {
                 zip.putNextEntry(ZipEntry(name))
@@ -149,6 +154,13 @@ object BackupManager {
             }
         }
         DebugLog.log("BACKUP", "exported ${manifest.optJSONObject("counts")}")
+        }.getOrElse { e ->
+            DebugLog.log("BACKUP", "export failed: ${e.javaClass.simpleName}: ${e.message}")
+            runCatching {
+                androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)?.delete()
+            }
+            return@withContext "Backup failed — ${e.message ?: e.javaClass.simpleName}. Is the destination full?"
+        }
         "Backup saved — ${CoverStore.count(context)} covers, ${manifest.optJSONObject("counts")?.optInt("seriesCacheFiles") ?: 0} series caches"
     }
 
