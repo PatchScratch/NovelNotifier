@@ -194,7 +194,8 @@ object LocalLibraryStore {
         runCatching {
             context.contentResolver.takePersistableUriPermission(
                 Uri.parse(treeUri),
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
         }
     }
@@ -667,7 +668,8 @@ object LocalLibraryStore {
     ): Pair<Int, Int> {
         runCatching {
             context.contentResolver.takePersistableUriPermission(
-                treeUri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                treeUri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
         }
         // Remember the folder (Wayne's Calibre flow, 2026-10-22: fresh
@@ -901,7 +903,156 @@ object LocalLibraryStore {
         return "" to f.absolutePath
     }
 
-    fun deleteBook(context: Context, bookId: String) = mutateIndex(context) { root ->
+    enum class DeleteMode { REMOVE, TRASH }
+
+    // --- v3.3 trash ---------------------------------------------------------
+    // Every storage location keeps its own .Trash: app-private libraries
+    // under filesDir, SAF trees at the tree root. Moves stay INSIDE one
+    // provider (DocumentsContract.moveDocument can't cross volumes), which
+    // is why the trash rides the same tree the file already lives in.
+
+    private const val TRASH_DIR = ".Trash"
+
+    /** The .Trash child of a SAF tree root, creating it when needed. */
+    private fun treeTrashDir(context: Context, treeUri: Uri): androidx.documentfile.provider.DocumentFile? =
+        runCatching {
+            val root = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
+                ?: return null
+            root.findFile(TRASH_DIR) ?: root.createDirectory(TRASH_DIR)
+        }.getOrNull()
+
+    /**
+     * Move a book's epub into the .Trash of its own storage location.
+     * Returns false when the file could not be moved (per-file picker
+     * links hold only a read grant; a failed move NEVER falls through to
+     * deleting the user's file).
+     */
+    private fun moveBookFileToTrash(context: Context, d: JSONObject): Boolean = runCatching {
+        val storedUri = d.optString("storedUri")
+        val storedPath = d.optString("storedPath")
+        val bookId = d.optString("id")
+        when {
+            storedPath.isNotBlank() -> {
+                val src = File(storedPath)
+                if (!src.isFile) return@runCatching true  // nothing to move
+                val trash = File(src.parentFile, TRASH_DIR).apply { mkdirs() }
+                var target = File(trash, src.name)
+                if (target.exists()) target = File(trash, "$bookId-${src.name}")
+                if (src.renameTo(target)) {
+                    DebugLog.log("LOCALLIB", "trashed file ${target.name}")
+                    true
+                } else false
+            }
+            storedUri.startsWith("content://") -> {
+                val docUri = Uri.parse(storedUri)
+                val docId = android.provider.DocumentsContract.getDocumentId(docUri)
+                    ?: return@runCatching false
+                val parentId = docId.substringBeforeLast('/') ?: return@runCatching false
+                if (parentId == docId) return@runCatching false
+                val parentUri = android.provider.DocumentsContract
+                    .buildDocumentUriUsingTree(docUri, parentId)
+                val trash = treeTrashDir(context, docUri) ?: return@runCatching false
+                // moveDocument keeps the source name; a same-name child in
+                // the trash makes it fail — which fail-safes to "file kept
+                // in place", never to data loss.
+                val moved = android.provider.DocumentsContract.moveDocument(
+                    context.contentResolver, docUri, parentUri, trash.uri
+                )
+                if (moved != null) {
+                    DebugLog.log("LOCALLIB", "trashed SAF ${docId.substringAfterLast('/')}")
+                    true
+                } else false
+            }
+            else -> true  // nothing stored to move
+        }
+    }.getOrDefault(false)
+
+    /** All .Trash roots we know about: SAF trees (library storage + linked
+     *  folders) and app-private library dirs. Deduped by tree. */
+    private fun trashRoots(context: Context): List<Any> {
+        val out = mutableListOf<Any>()
+        val seenTrees = mutableSetOf<String>()
+        val root = readIndex(context)
+        (root.optJSONArray("libraries") ?: JSONArray()).let { arr ->
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.optString("storageUri")?.takeIf { it.isNotBlank() }?.let {
+                    if (seenTrees.add(it)) out.add(Uri.parse(it))
+                }
+            }
+        }
+        (root.optJSONArray("folders") ?: JSONArray()).let { arr ->
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.optString("uri")?.takeIf { it.isNotBlank() }?.let {
+                    if (seenTrees.add(it)) out.add(Uri.parse(it))
+                }
+            }
+        }
+        File(context.filesDir, "local_libraries").listFiles()?.forEach { out.add(it) }
+        return out
+    }
+
+    /** (fileCount, totalBytes) across every trash root. */
+    fun trashStats(context: Context): Pair<Int, Long> {
+        var count = 0
+        var bytes = 0L
+        trashRoots(context).forEach { r ->
+            runCatching {
+                when (r) {
+                    is Uri -> {
+                        val trash = androidx.documentfile.provider.DocumentFile
+                            .fromTreeUri(context, r)?.findFile(TRASH_DIR) ?: return@runCatching
+                        trash.listFiles().forEach {
+                            count++; bytes += it.length()
+                        }
+                    }
+                    is File -> {
+                        val trash = File(r, TRASH_DIR)
+                        trash.listFiles()?.forEach {
+                            count++; bytes += it.length()
+                        }
+                    }
+                }
+            }
+        }
+        return count to bytes
+    }
+
+    /**
+     * THE permanent path (Wayne's safety brake — the only one). Empties
+     * every trash root; returns what was destroyed for the toast.
+     */
+    fun emptyTrash(context: Context): Pair<Int, Long> {
+        var count = 0
+        var bytes = 0L
+        trashRoots(context).forEach { r ->
+            runCatching {
+                when (r) {
+                    is Uri -> {
+                        val trash = androidx.documentfile.provider.DocumentFile
+                            .fromTreeUri(context, r)?.findFile(TRASH_DIR) ?: return@runCatching
+                        trash.listFiles().forEach {
+                            bytes += it.length()
+                            if (it.delete()) count++
+                        }
+                    }
+                    is File -> {
+                        val trash = File(r, TRASH_DIR)
+                        trash.listFiles()?.forEach {
+                            bytes += it.length()
+                            if (it.delete()) count++
+                        }
+                    }
+                }
+            }
+        }
+        DebugLog.log("LOCALLIB", "trash emptied: $count files, $bytes bytes")
+        return count to bytes
+    }
+
+    fun deleteBook(context: Context, bookId: String) =
+        deleteBook(context, bookId, DeleteMode.REMOVE)
+
+    fun deleteBook(context: Context, bookId: String, mode: DeleteMode) = mutateIndex(context) { root ->
         val arr = root.optJSONArray("books") ?: return@mutateIndex
         val keep = JSONArray()
         var deleted: JSONObject? = null
@@ -915,20 +1066,29 @@ object LocalLibraryStore {
             // LINKED books: the epub is the user's own file somewhere on the
             // device — delete only OUR cache and release the read grant.
             // Copied books: remove the library's copy as before.
-            val linked = d.optBoolean("ref", false)
+            // v3.3 file management (Wayne's locked design, 2026-10-23):
+            // nothing is permanently deleted from the library UI. REMOVE
+            // keeps every file where it is; TRASH moves the epub into a
+            // .Trash folder. Settings → Empty Trash is the ONLY path that
+            // destroys files.
             runCatching {
-                if (!linked) {
-                    when {
-                        d.optString("storedUri").startsWith("content://") ->
-                            androidx.documentfile.provider.DocumentFile
-                                .fromSingleUri(context, Uri.parse(d.optString("storedUri")))?.delete()
-                        d.optString("storedPath").isNotBlank() -> File(d.optString("storedPath")).delete()
+                when (mode) {
+                    DeleteMode.REMOVE ->
+                        if (d.optString("storedUri").startsWith("content://")) {
+                            context.contentResolver.releasePersistableUriPermission(
+                                Uri.parse(d.optString("storedUri")),
+                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                    DeleteMode.TRASH -> {
+                        moveBookFileToTrash(context, d)
+                        if (d.optString("storedUri").startsWith("content://")) {
+                            context.contentResolver.releasePersistableUriPermission(
+                                Uri.parse(d.optString("storedUri")),
+                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
                     }
-                } else if (d.optString("storedUri").startsWith("content://")) {
-                    context.contentResolver.releasePersistableUriPermission(
-                        Uri.parse(d.optString("storedUri")),
-                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
                 }
             }
             File(context.cacheDir, "ll_$bookId.epub").delete()
@@ -1523,8 +1683,8 @@ object LocalLibraryStore {
     }
 
     /** Deletes the series AND every volume in it (epub files only when copied). */
-    fun deleteSeries(context: Context, id: String) {
-        seriesVolumesOf(context, id).forEach { deleteBook(context, it.id) }
+    fun deleteSeries(context: Context, id: String, mode: DeleteMode = DeleteMode.REMOVE) {
+        seriesVolumesOf(context, id).forEach { deleteBook(context, it.id, mode) }
         mutateIndex(context) { root ->
             val arr = root.optJSONArray("series") ?: return@mutateIndex
             val keep = JSONArray()

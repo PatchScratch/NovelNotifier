@@ -200,6 +200,10 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
+        // v3.3 file management: THE permanent-removal path (Wayne's safety
+        // brake). Library deletes only ever move files to .Trash.
+        TrashSection()
+
         SettingsSection(
             when (site) {
                 "kakuyomu" -> "Kakuyomu カクヨム"
@@ -1156,6 +1160,58 @@ private fun NsfwLockedHint(onClick: () -> Unit) {
  * translation, TTS, display, sync, backup, notifications, checks) reads as
  * a panel. Content lambdas keep the section bodies exactly as they were.
  */
+@Composable
+private fun TrashSection() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var stats by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Pair<Int, Long>?>(null) }
+    var confirming by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var result by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        stats = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.patchscratch.novelnotifier.LocalLibraryStore.trashStats(context)
+        }
+    }
+    val (count, bytes) = stats ?: (0 to 0L)
+    SettingsSection(t("Trash", "Trash")) {
+        Text(t(
+            "Deleted books move here first. Emptying the Trash permanently deletes $count file(s), about ${"%.1f".format(bytes / 1_000_000.0)} MB. This is the only permanent removal.",
+            "削除した本はまずここに移動します。Trashを空にすると${count}件のファイル（約${"%.1f".format(bytes / 1_000_000.0)}MB）を完全に削除します。完全削除はここだけです。"
+        ), style = MaterialTheme.typography.bodySmall)
+        Row {
+            TextButton(
+                onClick = { confirming = true },
+                enabled = count > 0
+            ) { Text(t("Empty Trash", "Trashを空にする"), color = MaterialTheme.colorScheme.error) }
+        }
+    }
+    if (confirming) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text(t("Empty Trash?", "Trashを空にする？")) },
+            text = { Text(t(
+                "Permanently delete $count file(s), about ${"%.1f".format(bytes / 1_000_000.0)} MB. This cannot be undone.",
+                "${count}件のファイル（約${"%.1f".format(bytes / 1_000_000.0)}MB）を完全に削除します。元に戻せません。"
+            )) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirming = false
+                    val (n, b) = com.patchscratch.novelnotifier.LocalLibraryStore.emptyTrash(context)
+                    result = t("Deleted $n file(s), ${"%.1f".format(b / 1_000_000.0)} MB",
+                        "${n}件を削除（${"%.1f".format(b / 1_000_000.0)}MB）")
+                    stats = 0 to 0L
+                }) { Text(t("Delete forever", "完全に削除"), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = false }) { Text("Cancel") }
+            }
+        )
+    }
+    if (result.isNotBlank()) {
+        Text(result, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+    }
+}
+
 @Composable
 private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Card(

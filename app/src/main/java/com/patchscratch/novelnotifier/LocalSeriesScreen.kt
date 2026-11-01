@@ -470,25 +470,37 @@ fun LocalSeriesScreen(
     }
 
     if (showDelete) {
+        // v3.3: trash-first; permanent removal only via Settings → Empty Trash.
         AlertDialog(
             onDismissRequest = { showDelete = false },
             title = { Text(t("Delete series?", "シリーズを削除？")) },
             text = { Text(
                 t(
-                    "Removes the series and its ${volumes.size} volume(s) from this library. Linked files on the device are NOT deleted.",
-                    "このライブラリからシリーズと全${volumes.size}巻を削除します。リンク済みの端末内ファイルは削除されません。"
+                    "Remove the series and its ${volumes.size} volume(s) from this library. Files can be moved to the Trash (emptied only from Settings) or left in place.",
+                    "このライブラリからシリーズと全${volumes.size}巻を削除します。ファイルはTrashへ移動（SettingsからのEmpty Trashでのみ完全削除）またはそのまま残せます。"
                 )
             ) },
             confirmButton = {
                 TextButton(onClick = {
                     showDelete = false
                     scope.launch(Dispatchers.IO) {
-                        LocalLibraryStore.deleteSeries(context, s.id)
+                        LocalLibraryStore.deleteSeries(context, s.id, LocalLibraryStore.DeleteMode.TRASH)
                     }
                     onBack()
-                }) { Text(t("Delete", "削除"), color = MaterialTheme.colorScheme.error) }
+                }) { Text(t("Move to Trash", "Trashへ移動"), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { showDelete = false }) { Text("Cancel") } }
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        showDelete = false
+                        scope.launch(Dispatchers.IO) {
+                            LocalLibraryStore.deleteSeries(context, s.id, LocalLibraryStore.DeleteMode.REMOVE)
+                        }
+                        onBack()
+                    }) { Text(t("Remove only", "ライブラリからのみ")) }
+                    TextButton(onClick = { showDelete = false }) { Text("Cancel") }
+                }
+            }
         )
     }
 }

@@ -638,12 +638,15 @@ fun LocalLibraryHome(
 
     // Batch delete (multi-select action bar).
     if (showDeleteSelected) {
+        // v3.3 file management (Wayne's locked design): nothing is deleted
+        // outright from here. Trash-first default; permanent removal lives
+        // ONLY in Settings → Empty Trash.
         AlertDialog(
             onDismissRequest = { showDeleteSelected = false },
             title = { Text(t("Delete ${selectedIds.size} series?", "${selectedIds.size}件のシリーズを削除？")) },
             text = { Text(t(
-                "Removes the selected series and all their volumes from this library. Linked files on the device are NOT deleted.",
-                "選択したシリーズと全巻をこのライブラリから削除します。リンク済みの端末内ファイルは削除されません。"
+                "Remove the selected series and all their volumes from this library. Files can be moved to the Trash (emptied only from Settings) or left in place.",
+                "選択したシリーズと全巻をこのライブラリから削除します。ファイルはTrashへ移動（SettingsからのEmpty Trashでのみ完全削除）またはそのまま残せます。"
             )) },
             confirmButton = {
                 TextButton(onClick = {
@@ -652,14 +655,27 @@ fun LocalLibraryHome(
                     selectedIds = emptySet()
                     scope.launch {
                         withContext(Dispatchers.IO) {
-                            targets.forEach { LocalLibraryStore.deleteSeries(context, it) }
+                            targets.forEach { LocalLibraryStore.deleteSeries(context, it, LocalLibraryStore.DeleteMode.TRASH) }
                         }
                         reload()
                     }
-                }) { Text(t("Delete", "削除"), color = MaterialTheme.colorScheme.error) }
+                }) { Text(t("Move to Trash", "Trashへ移動"), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteSelected = false }) { Text("Cancel") }
+                Row {
+                    TextButton(onClick = {
+                        showDeleteSelected = false
+                        val targets = selectedIds
+                        selectedIds = emptySet()
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                targets.forEach { LocalLibraryStore.deleteSeries(context, it, LocalLibraryStore.DeleteMode.REMOVE) }
+                            }
+                            reload()
+                        }
+                    }) { Text(t("Remove only", "ライブラリからのみ")) }
+                    TextButton(onClick = { showDeleteSelected = false }) { Text("Cancel") }
+                }
             }
         )
     }
