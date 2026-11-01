@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Desktop companion LAN server (user-enabled from Settings). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- In-app self-update: install the APK the updater downloads from
          GitHub Releases (user confirms each install on the system sheet). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -53,6 +55,18 @@
             android:name=".EpubBulkService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Desktop companion management API: a tiny authenticated JSON
+             server on the LAN (Settings → Desktop companion). All mutations
+             ride the app's locked store paths; nothing else is exported. -->
+        <service
+            android:name=".LanApiService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled LAN management API for the desktop companion app" />
+        </service>
 
         <!-- Share offline ePub books with other e-reader apps. -->
         <provider

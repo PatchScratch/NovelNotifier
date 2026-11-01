@@ -1048,6 +1048,78 @@ fun SettingsScreen(
         }
         }
 
+        SettingsSection(t("Desktop companion", "デスクトップコンパニオン")) {
+        // LAN management API for the desktop companion app (2026-11-01):
+        // phone = source of truth, desktop = remote control. Every remote
+        // mutation rides the app's locked store paths.
+        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+        var lanEnabled by remember { mutableStateOf(LanApi.isEnabled(context)) }
+        var lanToken by remember { mutableStateOf(LanApi.token(context)) }
+        val addresses = remember(lanEnabled) { LanApi.lanAddresses(context) }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    lanEnabled = !lanEnabled
+                    LanApi.setEnabled(context, lanEnabled)
+                }
+                .padding(vertical = 4.dp)
+        ) {
+            Switch(
+                checked = lanEnabled,
+                onCheckedChange = {
+                    lanEnabled = it
+                    LanApi.setEnabled(context, it)
+                }
+            )
+            Text(
+                t("Allow management from the desktop app (LAN)", "デスクトップアプリからの管理を許可（LAN）"),
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+        if (lanEnabled && addresses.isNotEmpty()) {
+            Text(
+                text = addresses.joinToString("\n") { "http://$it:${LanApi.PORT}" },
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+        }
+        Text(
+            text = t(
+                "The desktop companion manages this library over your home network. Keep this screen's address and pairing token handy; everything the desktop changes goes through the app's own locked operations. Empty Trash stays here in Settings.",
+                "デスクトップコンパニオンは家庭内ネットワーク経由でこのライブラリを管理します。この画面のアドレスとペアリングトークンを控えてください。デスクトップからの変更はすべてアプリ内の保護された操作を通ります。ゴミ箱を空にするのはここの設定のみです。"
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = t("Pairing token", "ペアリングトークン"),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(lanToken)) }) {
+                Text(t("Copy", "コピー"))
+            }
+            TextButton(onClick = {
+                lanToken = LanApi.regenerateToken(context)
+            }) { Text(t("Regenerate", "再生成")) }
+        }
+        Text(
+            text = lanToken,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        Text(
+            text = t(
+                "After a reboot, open the app once (or toggle this switch) to bring the server back up.",
+                "再起動後はアプリを一度開く（またはこのスイッチを切り替える）とサーバーが戻ります。"
+            ),
+            style = MaterialTheme.typography.bodySmall
+        )
+        }
+
         SettingsSection(t("Notifications", "通知")) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

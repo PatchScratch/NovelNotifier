@@ -93,6 +93,9 @@ android {
 }
 
 dependencies {
+    // LAN server for the desktop companion app (Settings → Desktop
+    // companion). Core module only — no file-serving, just our JSON API.
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
     // Japanese tokenizer for the long-press dictionary (embeds IPADIC)
     implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
     // SAF tree file management for the Local Library storage locations.
