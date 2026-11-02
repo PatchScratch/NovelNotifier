@@ -22,23 +22,35 @@ index of its own.
   (the auto-grouping misses). Suggestions only; **every merge needs your
   confirm** — the companion never merges or deletes on its own.
 
-## Run it (Linux)
+## Install / run (Linux)
 
-Requirements: a JDK 21+ toolchain (Gradle resolves one automatically with
-the foojay resolver) and the phone + desktop on the same LAN.
+**AppImage is the preferred package** (Wayne, 2026-11-02). Build it with one
+command — it runs `packageAppImage` (jlink runtime) and wraps the result
+into a portable single-file AppImage with appimagetool:
 
 ```bash
 cd companion
-./gradlew run
+dev/build-appimage.sh
+# → dist/NovelNotifierCompanion-<version>-x86_64.AppImage
 ```
+
+`chmod +x` and run it, or register a menu entry pointing `Exec=` at it (the
+script's repo has the icon at `companion/icon-512.png`). The script needs
+`appimagetool` (downloads to ~/.cache if not on PATH) and libfuse2 at
+runtime — standard on most desktops.
+
+For development iteration, `./gradlew run` starts the unbundled app faster
+than repackaging.
+
+Windows: `gradlew packageMsi` on a Windows machine (jpackage cannot
+cross-build installers from Linux).
+
+## Pairing with the phone
 
 On the phone: Settings → **Desktop companion** → enable, note the
 `http://<ip>:8790` address and the pairing token, and type both into the
 companion's connect screen. The pairing config is saved locally under
 `~/.novelnotifier-companion.json` (host + token only; never synced).
-
-Windows: same `gradlew run` (or `gradlew.bat run`); packaging targets
-(Deb/AppImage/Msi) are declared for later releases.
 
 ## Security model
 
