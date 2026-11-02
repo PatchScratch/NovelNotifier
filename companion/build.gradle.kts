@@ -13,6 +13,10 @@ plugins {
 }
 
 kotlin {
+    // Toolchain 21 resolves to the foojay-provisioned Temurin JDK (full —
+    // Ubuntu's system java-21 is headless: no jlink/jpackage, and the
+    // packaging tasks refuse without them). Run packaging as:
+    //   ./gradlew packageAppImage -Dorg.gradle.java.home=~/.gradle/jdks/eclipse_adoptium-21-amd64-linux.2
     jvmToolchain(21)
 }
 
@@ -36,15 +40,21 @@ compose.desktop {
     application {
         mainClass = "com.patchscratch.novelnotifier.companion.MainKt"
         nativeDistributions {
-            // Linux is the priority target (Wayne's desktop); keep the
-            // other formats declared so the same build packages anywhere.
-            targetFormats(TargetFormat.Deb, TargetFormat.AppImage, TargetFormat.Msi)
+            // Linux is the priority target (Wayne's desktop). Msi/Exe are
+            // built from a Windows machine later — jpackage cannot produce
+            // them on Linux, so they stay out of targetFormats.
+            targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "NovelNotifierCompanion"
             packageVersion = "0.1.0"
             // The companion is a remote control; it ships no browser engine
             // and stores only the pairing config (host + token) locally.
             vendor = "PatchScratch"
             licenseFile = rootProject.file("../LICENSE")
+            linux {
+                // Rendered from art/shiba-app-icon.svg (ImageMagick) — keep
+                // the PNG in-tree so packaging never needs the SVG toolchain.
+                iconFile = rootProject.file("icon-512.png")
+            }
         }
     }
 }
