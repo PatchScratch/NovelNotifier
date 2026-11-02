@@ -364,12 +364,18 @@ fun ConnectScreen(state: AppState) {
                     // trimmed runtime) escapes every catch above and would
                     // strand the UI on "Connecting…" forever — the live
                     // 0.1.1 bug. Anything that kills the job unrecovered
-                    // resets the button and shows why.
+                    // resets the button and shows why. The full cause chain
+                    // is included: a bare "NoClassDefFoundError" hid WHICH
+                    // class was missing (Wayne's report, 2026-11-02) — the
+                    // message usually names it.
                     connectJob?.invokeOnCompletion { cause ->
                         if (cause != null && cause !is kotlinx.coroutines.CancellationException) {
                             scope.launch {
                                 connecting = false
-                                error = "Connection failed: ${cause.message ?: cause.javaClass.simpleName}"
+                                val chain = generateSequence(cause) { it.cause }
+                                    .mapNotNull { it.message ?: it.javaClass.simpleName }
+                                    .joinToString(" → ")
+                                error = "Connection failed ($APP_VERSION): $chain"
                             }
                         }
                     }
@@ -979,10 +985,14 @@ fun App(state: AppState) {
     }
 }
 
+/** Keep in sync with packageVersion in build.gradle.kts — shown in the
+ *  window title and error messages so a screenshot names its build. */
+const val APP_VERSION = "0.1.4"
+
 fun main() {
     application {
         Window(
-            title = "NovelNotifier Companion",
+            title = "NovelNotifier Companion $APP_VERSION",
             state = rememberWindowState(width = 1400.dp, height = 880.dp),
             onCloseRequest = { exitApplication() },
             // The TASKBAR shows the WINDOW's icon (_NET_WM_ICON on Linux) —
