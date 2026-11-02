@@ -16,6 +16,14 @@ class NovelApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         DebugLog.init(this)
         DebugLog.log("APP", "process start")
+        // Desktop companion server: the toggle's pref survives reboots and
+        // reinstalls, but the SERVICE does not — revive it whenever the app
+        // process comes up (app launch = foreground, so the FGS start is
+        // allowed). Without this the companion couldn't connect until the
+        // user re-toggled Settings (live case, tablet 2026-11-02).
+        if (LanApi.isEnabled(this)) {
+            runCatching { startForegroundService(android.content.Intent(this, LanApiService::class.java)) }
+        }
     }
 
     override fun newImageLoader(): ImageLoader {

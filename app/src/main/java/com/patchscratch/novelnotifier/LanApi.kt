@@ -161,11 +161,25 @@ class LanApiServer(private val ctx: Context) : NanoHTTPD("0.0.0.0", LanApi.PORT)
         }
     }
 
+    /**
+     * Request body as JSON. The companion sends Content-Type: application/
+     * json (arrives via parseBody's "postData"); a plain `curl -d` sends
+     * urlencoded fields, which NanoHTTPD decodes into [IHTTPSession.parms]
+     * (NOT the files map) — fold those back into the object so ad-hoc curl
+     * tests work too (caught live against the tablet 2026-11-02: every curl
+     * without the header died with "name required").
+     */
     private fun body(session: IHTTPSession): JSONObject {
         val files = HashMap<String, String>()
         session.parseBody(files)
-        val raw = files["postData"] ?: ""
-        return if (raw.isBlank()) JSONObject() else JSONObject(raw)
+        val raw = files.remove("postData").orEmpty()
+        if (raw.isNotBlank()) return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+        val obj = JSONObject()
+        session.parameters.forEach { (k, values) ->
+            // Skip NanoHTTPD internals ("NanoHttpd.QUERY_STRING" etc).
+            if (!k.startsWith("NanoHttpd.")) values.firstOrNull()?.let { obj.put(k, it) }
+        }
+        return obj
     }
 
     private fun json(status: Response.Status, o: JSONObject): Response =
