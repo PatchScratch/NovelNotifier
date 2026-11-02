@@ -984,7 +984,12 @@ fun main() {
         Window(
             title = "NovelNotifier Companion",
             state = rememberWindowState(width = 1400.dp, height = 880.dp),
-            onCloseRequest = { exitApplication() }
+            onCloseRequest = { exitApplication() },
+            // The TASKBAR shows the WINDOW's icon (_NET_WM_ICON on Linux) —
+            // without this the dock falls back to the generic Java mark even
+            // though the menu entry carries the right one (live report,
+            // Wayne 2026-11-02).
+            icon = androidx.compose.ui.res.painterResource("icon.png")
         ) {
             App(remember { AppState() })
         }
