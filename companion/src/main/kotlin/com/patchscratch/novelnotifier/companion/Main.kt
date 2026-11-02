@@ -987,7 +987,7 @@ fun App(state: AppState) {
 
 /** Keep in sync with packageVersion in build.gradle.kts — shown in the
  *  window title and error messages so a screenshot names its build. */
-const val APP_VERSION = "0.1.4"
+const val APP_VERSION = "0.1.5"
 
 fun main() {
     application {

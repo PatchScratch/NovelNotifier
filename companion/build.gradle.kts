@@ -29,6 +29,12 @@ dependencies {
     implementation(compose.materialIconsExtended)
     // Same JSON library the Android app speaks — one contract, zero drift.
     implementation("org.json:json:20240303")
+    // Dispatchers.Main for desktop (the Swing EDT). CMP 1.9's desktop bundle
+    // no longer carries it transitively — without this, packaged builds die
+    // on first Dispatchers.Main use with "Module with the main dispatcher is
+    // missing" (Wayne's live report, 2026-11-02). Version MUST match the
+    // resolved kotlinx-coroutines-core (1.8.1).
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.1")
     testImplementation(kotlin("test"))
 }
 
@@ -45,7 +51,7 @@ compose.desktop {
             // them on Linux, so they stay out of targetFormats.
             targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "NovelNotifierCompanion"
-            packageVersion = "0.1.4"
+            packageVersion = "0.1.5"
             // The companion is a remote control; it ships no browser engine
             // and stores only the pairing config (host + token) locally.
             vendor = "PatchScratch"
