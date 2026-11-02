@@ -287,6 +287,16 @@ fun ConnectScreen(state: AppState) {
     var token by remember { mutableStateOf(state.config.token) }
     var error by remember { mutableStateOf("") }
     var connecting by remember { mutableStateOf(false) }
+    // The attempt is cancellable and hard-capped: an unreachable address
+    // must give up in seconds with something the user can act on.
+    val scope = rememberCoroutineScope()
+    var connectJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    fun cancelConnect() {
+        connectJob?.cancel()
+        connectJob = null
+        connecting = false
+    }
 
     Column(
         Modifier.fillMaxSize().padding(48.dp),
@@ -303,39 +313,76 @@ fun ConnectScreen(state: AppState) {
         OutlinedTextField(
             host, { host = it },
             label = { Text("Phone address (e.g. 192.168.0.217:8790)") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(0.6f)
+            singleLine = true, modifier = Modifier.fillMaxWidth(0.6f),
+            enabled = !connecting
         )
         OutlinedTextField(
             token, { token = it },
             label = { Text("Pairing token (phone: Settings → Desktop companion)") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(0.6f).padding(top = 8.dp)
+            singleLine = true, modifier = Modifier.fillMaxWidth(0.6f).padding(top = 8.dp),
+            enabled = !connecting
         )
-        Button(
-            onClick = {
-                connecting = true; error = ""
-                kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        val candidate = CompanionApi("http://${host.trim()}", token.trim())
-                        val st = candidate.status()
-                        val config = state.config.copy(host = host.trim(), token = token.trim())
-                        withContext(Dispatchers.Main) {
-                            state.api = candidate
-                            state.status = st
-                            state.config = config
-                            CompanionConfig.save(config)
-                            connecting = false
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            connecting = false
-                            error = e.message ?: "Connection failed"
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 24.dp)
+        ) {
+            Button(
+                onClick = {
+                    connecting = true; error = ""
+                    connectJob = scope.launch(Dispatchers.IO) {
+                        try {
+                            val candidate = CompanionApi("http://${host.trim()}", token.trim())
+                            // 8s probe + a 10s wall clock cap covering DNS and
+                            // anything the socket timeouts don't reach.
+                            val st = kotlinx.coroutines.withTimeout(10_000) {
+                                candidate.status(timeoutMs = 8_000)
+                            }
+                            val config = state.config.copy(host = host.trim(), token = token.trim())
+                            withContext(Dispatchers.Main) {
+                                state.api = candidate
+                                state.status = st
+                                state.config = config
+                                CompanionConfig.save(config)
+                                connecting = false
+                            }
+                        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                            // MUST precede CancellationException — it subclasses it.
+                            withContext(Dispatchers.Main) {
+                                connecting = false
+                                error = "Timed out after 10 s — is the address right and the phone's companion server on?"
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                connecting = false
+                                error = e.message ?: "Connection failed"
+                            }
                         }
                     }
-                }
-            },
-            enabled = host.isNotBlank() && token.isNotBlank() && !connecting,
-            modifier = Modifier.padding(top = 24.dp)
-        ) { Text(if (connecting) "Connecting…" else "Connect") }
+                    // Safety net: an Error (e.g. NoClassDefFoundError from a
+                    // trimmed runtime) escapes every catch above and would
+                    // strand the UI on "Connecting…" forever — the live
+                    // 0.1.1 bug. Anything that kills the job unrecovered
+                    // resets the button and shows why.
+                    connectJob?.invokeOnCompletion { cause ->
+                        if (cause != null && cause !is kotlinx.coroutines.CancellationException) {
+                            scope.launch {
+                                connecting = false
+                                error = "Connection failed: ${cause.message ?: cause.javaClass.simpleName}"
+                            }
+                        }
+                    }
+                },
+                enabled = host.isNotBlank() && token.isNotBlank() && !connecting
+            ) { Text(if (connecting) "Connecting…" else "Connect") }
+            if (connecting) {
+                Spacer(Modifier.width(12.dp))
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(12.dp))
+                OutlinedButton(onClick = { cancelConnect() }) { Text("Cancel") }
+            }
+        }
         if (error.isNotEmpty()) {
             Text(
                 error, color = MaterialTheme.colorScheme.error,
@@ -887,25 +934,32 @@ fun App(state: AppState) {
                     ) {
                         Text(
                             "NovelNotifier Companion — ${connected?.device ?: ""} (v${connected?.appVersion ?: "?"})",
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(Modifier.weight(1f))
                         if (state.busy) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                         }
+                        // The message takes whatever is left and ellipsizes —
+                        // the action buttons stay pinned right and visible at
+                        // any window width (Disconnect used to get pushed out
+                        // by long status text).
                         Text(
                             state.message,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                            modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
                         )
-                        Spacer(Modifier.width(12.dp))
                         OutlinedButton(onClick = { state.showSuggestions = true }) { Text("Merge suggestions") }
                         IconButton(onClick = { state.data?.library?.let { loadLibrary(state, it.id) } }) {
                             Icon(Icons.Filled.Refresh, "Refresh")
                         }
                         TextButton(onClick = {
                             state.api = null; state.status = null; state.data = null
+                            state.selection = emptySet(); state.detailId = null
                         }) { Text("Disconnect") }
                     }
                 }

@@ -23,10 +23,10 @@ class CompanionApi(baseUrl: String, private val token: String) {
         .connectTimeout(Duration.ofSeconds(5))
         .build()
 
-    private fun request(path: String, method: String = "GET", body: String? = null): String {
+    private fun request(path: String, method: String = "GET", body: String? = null, timeoutMs: Long = 60_000): String {
         val builder = HttpRequest.newBuilder()
             .uri(URI.create("$base$path"))
-            .timeout(Duration.ofSeconds(60))
+            .timeout(Duration.ofMillis(timeoutMs))
             .header("Authorization", "Bearer $token")
             .header("Accept", "application/json")
         when (method) {
@@ -53,8 +53,13 @@ class CompanionApi(baseUrl: String, private val token: String) {
 
     // ---------------------------------------------------------------- reads
 
-    fun status(): DeviceStatus {
-        val o = JSONObject(request("/api/v1/status"))
+    /**
+     * The pairing probe. [timeoutMs] is deliberately configurable so the
+     * connect screen can bound the whole attempt tightly — an unreachable
+     * LAN address must fail in seconds, not the general 60s request cap.
+     */
+    fun status(timeoutMs: Long = 60_000): DeviceStatus {
+        val o = JSONObject(request("/api/v1/status", timeoutMs = timeoutMs))
         return DeviceStatus(
             device = o.optString("device"),
             appVersion = o.optString("appVersion"),

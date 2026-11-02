@@ -124,4 +124,25 @@ class ApiClientTest {
     fun `wrong token surfaces as auth error`(): Unit {
         CompanionApi("http://127.0.0.1:${server.address.port}", "wrong").status()
     }
+
+    @Test(timeout = 10_000)
+    fun `unresponsive server fails within the probe timeout`() {
+        // A socket that accepts connections and never answers — the classic
+        // "wrong IP, something else listening" case the connect screen must
+        // survive in seconds.
+        val silent = java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))
+        try {
+            val url = "http://127.0.0.1:${silent.localPort}"
+            val start = System.currentTimeMillis()
+            try {
+                CompanionApi(url, "t").status(timeoutMs = 1_500)
+                throw AssertionError("expected ApiException")
+            } catch (e: ApiException) {
+                val elapsed = System.currentTimeMillis() - start
+                assertTrue("gave up too slowly: ${elapsed}ms", elapsed < 5_000)
+            }
+        } finally {
+            silent.close()
+        }
+    }
 }

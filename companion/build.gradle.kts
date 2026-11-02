@@ -45,11 +45,15 @@ compose.desktop {
             // them on Linux, so they stay out of targetFormats.
             targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "NovelNotifierCompanion"
-            packageVersion = "0.1.0"
+            packageVersion = "0.1.2"
             // The companion is a remote control; it ships no browser engine
             // and stores only the pairing config (host + token) locally.
             vendor = "PatchScratch"
             licenseFile = rootProject.file("../LICENSE")
+            // java.net.http.HttpClient (the API client) lives in java.net.http —
+            // jlink trimming dropped it silently (NoClassDefFoundError at
+            // connect time in the 0.1.1 AppImage); pin it explicitly (the MODULE is java.net.http; jdk.httpclient does not exist).
+            modules("java.net.http")
             linux {
                 // Rendered from art/shiba-app-icon.svg (ImageMagick) — keep
                 // the PNG in-tree so packaging never needs the SVG toolchain.
