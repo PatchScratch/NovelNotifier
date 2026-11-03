@@ -51,7 +51,7 @@ compose.desktop {
             // them on Linux, so they stay out of targetFormats.
             targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "NovelNotifierCompanion"
-            packageVersion = "0.1.6"
+            packageVersion = "0.1.7"
             // The companion is a remote control; it ships no browser engine
             // and stores only the pairing config (host + token) locally.
             vendor = "PatchScratch"

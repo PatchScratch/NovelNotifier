@@ -768,6 +768,7 @@ fun DetailPane(state: AppState, modifier: Modifier) {
     var deleteSeries by remember { mutableStateOf<String?>(null) } // "remove" | "trash"
     var moveVolume by remember { mutableStateOf<Volume?>(null) }
     var deleteVolume by remember { mutableStateOf<Pair<Volume, String>?>(null) } // volume to mode
+    var renameSuggested by remember { mutableStateOf<SeriesRow?>(null) }
 
     Column(modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(12.dp)) {
         Row {
@@ -846,7 +847,7 @@ fun DetailPane(state: AppState, modifier: Modifier) {
         }
         if (involving.isNotEmpty()) {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("Merge suggestions", style = MaterialTheme.typography.titleSmall)
+            Text("Merge suggestions (✎ renames either side)", style = MaterialTheme.typography.titleSmall)
             involving.take(8).forEach { sug ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -858,6 +859,14 @@ fun DetailPane(state: AppState, modifier: Modifier) {
                         maxLines = 2, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
+                    IconButton(
+                        onClick = { renameSuggested = sug.from },
+                        modifier = Modifier.size(24.dp)
+                    ) { Icon(Icons.Filled.Edit, "Rename \"${sug.from.name}\"", Modifier.size(14.dp)) }
+                    IconButton(
+                        onClick = { renameSuggested = sug.into },
+                        modifier = Modifier.size(24.dp)
+                    ) { Icon(Icons.Filled.Edit, "Rename \"${sug.into.name}\"", Modifier.size(14.dp)) }
                     TextButton(onClick = {
                         mutate(state, "Merging series") { seriesMerge(sug.from.id, sug.into.id) }
                     }) { Text("Merge") }
@@ -947,19 +956,30 @@ fun DetailPane(state: AppState, modifier: Modifier) {
             onDismiss = { deleteVolume = null }
         )
     }
+    renameSuggested?.let { target ->
+        TextEditDialog("Rename series", target.name, onConfirm = { name ->
+            val t = target
+            renameSuggested = null
+            mutate(state, "Renaming \"${t.name}\"") { seriesRename(t.id, name) }
+        }, onDismiss = { renameSuggested = null })
+    }
 }
 
 @Composable
 fun SuggestionsPanel(state: AppState, onDismiss: () -> Unit) {
     val d = state.data ?: return onDismiss()
     val suggestions = remember(d) { MergeSuggestions.forSeries(d.series) }
+    // Rename-in-place (Wayne, 2026-11-03): some suggestions are better fixed
+    // by renaming one side than by merging — the pair falls out of the list
+    // when the refreshed names no longer match.
+    var renaming by remember { mutableStateOf<SeriesRow?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Merge suggestions (${suggestions.size})") },
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
                 Text(
-                    "Title-similarity candidates only — every merge needs your confirm.",
+                    "Title-similarity candidates only — every merge needs your confirm. ✎ renames either side instead of merging.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp)
@@ -980,6 +1000,14 @@ fun SuggestionsPanel(state: AppState, onDismiss: () -> Unit) {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            IconButton(
+                                onClick = { renaming = sug.from },
+                                modifier = Modifier.size(28.dp)
+                            ) { Icon(Icons.Filled.Edit, "Rename \"${sug.from.name}\"", Modifier.size(15.dp)) }
+                            IconButton(
+                                onClick = { renaming = sug.into },
+                                modifier = Modifier.size(28.dp)
+                            ) { Icon(Icons.Filled.Edit, "Rename \"${sug.into.name}\"", Modifier.size(15.dp)) }
                             TextButton(onClick = {
                                 mutate(state, "Merging \"${sug.from.name}\"") {
                                     seriesMerge(sug.from.id, sug.into.id)
@@ -992,6 +1020,13 @@ fun SuggestionsPanel(state: AppState, onDismiss: () -> Unit) {
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
     )
+    renaming?.let { target ->
+        TextEditDialog("Rename series", target.name, onConfirm = { name ->
+            val t = target
+            renaming = null
+            mutate(state, "Renaming \"${t.name}\"") { seriesRename(t.id, name) }
+        }, onDismiss = { renaming = null })
+    }
 }
 
 // ---------------------------------------------------------------- window
@@ -1068,7 +1103,7 @@ fun App(state: AppState) {
 
 /** Keep in sync with packageVersion in build.gradle.kts — shown in the
  *  window title and error messages so a screenshot names its build. */
-const val APP_VERSION = "0.1.6"
+const val APP_VERSION = "0.1.7"
 
 fun main() {
     application {
