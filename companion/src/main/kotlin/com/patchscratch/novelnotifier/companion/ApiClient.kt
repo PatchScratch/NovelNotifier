@@ -145,6 +145,12 @@ class CompanionApi(baseUrl: String, private val token: String) {
     fun seriesMerge(fromId: String, toId: String) =
         post("series/merge", JSONObject().put("fromId", fromId).put("toId", toId))
 
+    /** Series + all its volumes to another library (index-level on the
+     *  phone — files stay in their storage location; lands Unshelved). */
+    fun seriesMoveToLibrary(seriesId: String, toLibraryId: String) =
+        post("series/moveToLibrary", JSONObject().put("seriesId", seriesId)
+            .put("toLibraryId", toLibraryId))
+
     fun moveBook(bookId: String, seriesId: String?) =
         post("series/moveBook", JSONObject().put("bookId", bookId)
             .put("seriesId", seriesId ?: JSONObject.NULL))

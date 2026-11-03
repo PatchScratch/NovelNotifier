@@ -1794,6 +1794,49 @@ object LocalLibraryStore {
     }
 
     /**
+     * Move a series WITH all its volumes to another library (Wayne, 2026-11-03:
+     * desktop companion cross-library moves — e.g. consolidating a stray
+     * series out of a residue library). Index-level only: epub files stay in
+     * their storage location (storedUri keeps working regardless of which
+     * library owns the entry — deleteLibrary itself re-keys the same way).
+     * The series leaves its old library's shelf behind (shelves are
+     * per-library; it lands Unshelved in the target).
+     */
+    fun moveSeriesToLibrary(context: Context, seriesId: String, toLibraryId: String) {
+        mutateIndex(context) { root ->
+            val libs = root.optJSONArray("libraries") ?: return@mutateIndex
+            if ((0 until libs.length()).none { i -> libs.optJSONObject(i)?.optString("id") == toLibraryId })
+                return@mutateIndex
+            val seriesArr = root.optJSONArray("series") ?: return@mutateIndex
+            for (i in 0 until seriesArr.length()) {
+                val o = seriesArr.optJSONObject(i) ?: continue
+                if (o.optString("id") == seriesId) { o.put("libraryId", toLibraryId); break }
+            }
+            val books = root.optJSONArray("books") ?: return@mutateIndex
+            for (i in 0 until books.length()) {
+                val b = books.optJSONObject(i) ?: continue
+                if (b.optString("seriesId") == seriesId) b.put("libraryId", toLibraryId)
+            }
+        }
+        // Shelf membership belongs to the OLD library's category store —
+        // clear it wherever it sits (shelves are per-library; the series
+        // lands Unshelved in the target).
+        runCatching {
+            val libArr = readIndex(context).optJSONArray("libraries")
+            for (i in 0 until (libArr?.length() ?: 0)) {
+                val libId = libArr!!.optJSONObject(i)?.optString("id") ?: continue
+                val site = "local:$libId"
+                val state = CategoryStore.load(context, site)
+                if (state.assign.containsKey(seriesId)) {
+                    CategoryStore.save(context, site,
+                        state.copy(assign = state.assign - seriesId))
+                }
+            }
+        }
+        libraryTick++
+    }
+
+    /**
      * Auto-grouping key: the title with its trailing volume token stripped
      * ("Re:Zero −Starting Life− Vol. 2" → "Re:Zero −Starting Life−").
      * Lowercased for MATCHING only — display name = [strippedTitle].

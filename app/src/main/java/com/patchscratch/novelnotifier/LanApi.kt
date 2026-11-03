@@ -52,6 +52,7 @@ import java.util.Collections
  *   POST /api/v1/series/description   {seriesId, description}
  *   POST /api/v1/series/merge         {fromId, toId}          (same library)
  *   POST /api/v1/series/moveBook      {bookId, seriesId|null} (null = new solo series)
+ *   POST /api/v1/series/moveToLibrary {seriesId, toLibraryId} (index-level; files stay put)
  *   POST /api/v1/series/delete        {seriesId, mode: remove|trash}
  *   POST /api/v1/book/meta            {bookId, title?, author?, description?}
  *   POST /api/v1/book/delete          {bookId, mode: remove|trash}
@@ -323,6 +324,16 @@ class LanApiServer(private val ctx: Context) : NanoHTTPD("0.0.0.0", LanApi.PORT)
                 if (LocalLibraryStore.book(ctx, bookId) == null) return bad("unknown bookId")
                 val seriesId = body.opt("seriesId")?.let { it as? String }?.takeIf { it.isNotBlank() }
                 LocalLibraryStore.moveBookToSeries(ctx, bookId, seriesId)
+                ok()
+            }
+            "series/moveToLibrary" -> {
+                val id = body.optString("seriesId")
+                val toLib = body.optString("toLibraryId")
+                val series = LocalLibraryStore.seriesList(ctx).firstOrNull { it.id == id }
+                    ?: return bad("unknown seriesId")
+                if (LocalLibraryStore.library(ctx, toLib) == null) return bad("unknown toLibraryId")
+                if (series.libraryId == toLib) return bad("series already in that library")
+                LocalLibraryStore.moveSeriesToLibrary(ctx, id, toLib)
                 ok()
             }
             "series/delete" -> {

@@ -279,6 +279,45 @@ fun SeriesPickerDialog(
     )
 }
 
+/** Picker for cross-library moves: the phone's library list. */
+@Composable
+fun LibraryPickerDialog(
+    title: String,
+    libraries: List<LibRef>,
+    excludeId: String,
+    onPick: (LibRef) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                Text(
+                    "The series and all its volumes move; epub files stay where they are and it lands Unshelved in the target.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                LazyColumn {
+                    items(libraries.filter { it.id != excludeId }, key = { it.id }) { lib ->
+                        Text(
+                            lib.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(lib) }
+                                .padding(vertical = 8.dp, horizontal = 4.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
 // ---------------------------------------------------------------- screens
 
 @Composable
@@ -681,6 +720,30 @@ fun SeriesListPane(state: AppState, modifier: Modifier) {
                         }
                     }
                     Spacer(Modifier.width(8.dp))
+                    var moveLibOpen by remember { mutableStateOf(false) }
+                    val otherLibraries = (state.status?.libraries ?: emptyList())
+                        .filter { it.id != d.library.id }
+                    Box {
+                        OutlinedButton(
+                            onClick = { moveLibOpen = true },
+                            enabled = otherLibraries.isNotEmpty()
+                        ) { Text("Move to library…") }
+                        DropdownMenu(moveLibOpen, { moveLibOpen = false }) {
+                            otherLibraries.forEach { lib ->
+                                DropdownMenuItem(
+                                    text = { Text(lib.name) },
+                                    onClick = {
+                                        moveLibOpen = false
+                                        val ids = state.selection.toList()
+                                        mutate(state, "Moving ${ids.size} series to ${lib.name}") {
+                                            ids.forEach { seriesMoveToLibrary(it, lib.id) }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
                     OutlinedButton(onClick = { state.selection = emptySet() }) { Text("Clear") }
                 }
             }
@@ -701,6 +764,7 @@ fun DetailPane(state: AppState, modifier: Modifier) {
     var rename by remember { mutableStateOf(false) }
     var editDesc by remember { mutableStateOf(false) }
     var mergeInto by remember { mutableStateOf(false) }
+    var moveToLibrary by remember { mutableStateOf(false) }
     var deleteSeries by remember { mutableStateOf<String?>(null) } // "remove" | "trash"
     var moveVolume by remember { mutableStateOf<Volume?>(null) }
     var deleteVolume by remember { mutableStateOf<Pair<Volume, String>?>(null) } // volume to mode
@@ -721,6 +785,9 @@ fun DetailPane(state: AppState, modifier: Modifier) {
                 }
                 Row {
                     TextButton(onClick = { mergeInto = true }) { Text("Merge into…") }
+                    TextButton(onClick = { moveToLibrary = true }) { Text("Move to library…") }
+                }
+                Row {
                     TextButton(
                         onClick = { deleteSeries = "trash" },
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
@@ -810,6 +877,20 @@ fun DetailPane(state: AppState, modifier: Modifier) {
             editDesc = false
             mutate(state, "Saving description") { seriesSetDescription(s.id, desc) }
         }, onDismiss = { editDesc = false })
+    }
+    if (moveToLibrary) {
+        LibraryPickerDialog(
+            "Move \"${s.name}\" to library…",
+            state.status?.libraries ?: emptyList(),
+            excludeId = d.library.id,
+            onPick = { lib ->
+                moveToLibrary = false
+                mutate(state, "Moving \"${s.name}\" to ${lib.name}") {
+                    seriesMoveToLibrary(s.id, lib.id)
+                }
+            },
+            onDismiss = { moveToLibrary = false }
+        )
     }
     if (mergeInto) {
         SeriesPickerDialog(
@@ -987,7 +1068,7 @@ fun App(state: AppState) {
 
 /** Keep in sync with packageVersion in build.gradle.kts — shown in the
  *  window title and error messages so a screenshot names its build. */
-const val APP_VERSION = "0.1.5"
+const val APP_VERSION = "0.1.6"
 
 fun main() {
     application {
