@@ -42,8 +42,13 @@ runtime — standard on most desktops.
 For development iteration, `./gradlew run` starts the unbundled app faster
 than repackaging.
 
-Windows: `gradlew packageMsi` on a Windows machine (jpackage cannot
-cross-build installers from Linux).
+Windows: `dev/build-windows-zip.sh` cross-builds a **windows-x64 zip from
+Linux** (jpackage can't produce Windows packages on a Linux host, and CMP
+1.9's cross-platform property is ignored): the OS-agnostic app jars with the
+Windows skiko native swapped in, a bundled Temurin 21 Windows runtime, and a
+`NovelNotifierCompanion.bat` launcher — unzip and run, no Java install
+needed. Artifacts cache under `~/.cache/novelnotifier-companion/`. A proper
+`packageMsi` still wants a Windows machine.
 
 ## Pairing with the phone
 
