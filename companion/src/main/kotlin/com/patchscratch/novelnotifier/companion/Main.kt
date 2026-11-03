@@ -71,6 +71,7 @@ class AppState {
     var message by mutableStateOf("")
     var busy by mutableStateOf(false)
     var showSuggestions by mutableStateOf(false)
+    var showMergePicker by mutableStateOf(false)
 }
 
 /** Series currently visible under filter+query+sort (pure in-memory). */
@@ -233,10 +234,12 @@ fun SeriesPickerDialog(
     candidates: List<SeriesRow>,
     excludeId: String,
     onPick: (SeriesRow) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    excludeIds: Set<String> = emptySet()
 ) {
     var q by remember { mutableStateOf("") }
-    val filtered = remember(q, candidates) {
+    val excluded = remember(excludeId, excludeIds) { excludeIds + excludeId }
+    val filtered = remember(q, candidates, excluded) {
         val needle = q.trim().lowercase()
         if (needle.isEmpty()) candidates
         else candidates.filter { it.name.lowercase().contains(needle) }
@@ -251,7 +254,7 @@ fun SeriesPickerDialog(
                     singleLine = true, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                 )
                 LazyColumn {
-                    items(filtered.filter { it.id != excludeId }, key = { it.id }) { s ->
+                    items(filtered.filter { it.id !in excluded }, key = { it.id }) { s ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -681,6 +684,8 @@ fun SeriesListPane(state: AppState, modifier: Modifier) {
 
         // Bulk bar
         if (state.selection.isNotEmpty()) {
+            var mergeTarget by remember(state.selection) { mutableStateOf<SeriesRow?>(null) }
+            var confirmMerge by remember(state.selection) { mutableStateOf<SeriesRow?>(null) }
             Surface(tonalElevation = 4.dp) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -744,8 +749,42 @@ fun SeriesListPane(state: AppState, modifier: Modifier) {
                         }
                     }
                     Spacer(Modifier.width(8.dp))
+                    OutlinedButton(onClick = { state.showMergePicker = true }) {
+                        Text("Merge into…")
+                    }
+                    Spacer(Modifier.width(8.dp))
                     OutlinedButton(onClick = { state.selection = emptySet() }) { Text("Clear") }
                 }
+            }
+            // Multi-select merge: pick ONE target, every selected series
+            // merges into it (same-library only, like all merges).
+            if (state.showMergePicker) {
+                SeriesPickerDialog(
+                    "Merge ${state.selection.size} series into…",
+                    d.series, excludeId = "",
+                    excludeIds = state.selection,
+                    onPick = { target ->
+                        state.showMergePicker = false
+                        confirmMerge = target
+                    },
+                    onDismiss = { state.showMergePicker = false }
+                )
+            }
+            confirmMerge?.let { target ->
+                val ids = state.selection.filter { it != target.id }
+                ConfirmDialog(
+                    "Merge ${ids.size} series into \"${target.name}\"?",
+                    "Every selected series' volumes move into \"${target.name}\" and the emptied entries go away. No files are touched.",
+                    danger = true,
+                    onConfirm = {
+                        val t = target
+                        confirmMerge = null
+                        mutate(state, "Merging ${ids.size} series into \"${t.name}\"") {
+                            ids.forEach { seriesMerge(it, t.id) }
+                        }
+                    },
+                    onDismiss = { confirmMerge = null }
+                )
             }
         }
     }
@@ -1103,7 +1142,7 @@ fun App(state: AppState) {
 
 /** Keep in sync with packageVersion in build.gradle.kts — shown in the
  *  window title and error messages so a screenshot names its build. */
-const val APP_VERSION = "0.1.7"
+const val APP_VERSION = "0.1.8"
 
 fun main() {
     application {
